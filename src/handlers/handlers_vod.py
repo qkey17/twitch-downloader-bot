@@ -9,12 +9,18 @@ from telegram.ext import ContextTypes
 
 from src.database import database as db
 from src.workers.download_worker import download_and_send
+from src.config import HTML_PUBLISH_MODE
+from src.html_publisher import (
+    is_local_html_reference,
+    local_published_html_status,
+)
 from src.ui.ui import CB_FMT_HTML_ONLINE, build_format_keyboard
 from .handlers_state import (
     extract_vod_id_strict,
     is_busy,
     set_pending,
-    set_busy,
+    begin_download,
+    finish_download,
     get_pending,
     clear_pending,
     pending_expired,
@@ -23,6 +29,12 @@ from .handlers_state import (
 from src.ui.ui_history import build_history_page
 from src.ui.ui_labels import CHAT_GENERIC, VOD_LINK, CANCEL
 from src.ui.ui_constants import CB_PENDING_CANCEL
+
+
+_FORMAT_PROMPT_TEXT = (
+    "В современной культуре термин «казуал» иногда используется в пренебрежительном контексте, "
+    "однако чаще всего это просто описание стиля игры — легкого и непринужденного, без фанатизма."
+)
 
 
 def _make_item(meta, stats, vod_url, fmt):
@@ -35,6 +47,7 @@ def _make_item(meta, stats, vod_url, fmt):
         "unique_users": stats.get("unique_users"),
         "vod_url": vod_url,
         "fmt": fmt,
+        "html_url": meta.get("html_url"),
     }
 
 
@@ -45,11 +58,47 @@ def _build_card(item):
     return cards[0]
 
 
+async def _restore_format_prompt(message):
+    try:
+        await message.edit_text(
+            text=_FORMAT_PROMPT_TEXT,
+            reply_markup=build_format_keyboard(),
+        )
+    except Exception:
+        logging.exception("Could not restore format selection after task startup failed")
+
+
+def _cache_entry_has_usable_output(cached: dict | None, fmt: str) -> bool:
+    if not cached:
+        return False
+    if fmt != "html_online":
+        return True
+
+    meta = cached.get("meta") or {}
+    html_url = cached.get("html_url") or meta.get("html_url")
+    if not html_url:
+        return False
+
+    if HTML_PUBLISH_MODE == "local":
+        return is_local_html_reference(html_url) and local_published_html_status(html_url) is True
+
+    # Unknown URLs may belong to a separate storage service; only invalidate
+    # entries that this local publisher can verify as missing or unreadable.
+    return local_published_html_status(html_url) is not False
+
+
+def _html_button_url(html_ref: str | None) -> str | None:
+    if HTML_PUBLISH_MODE != "public" or not html_ref or is_local_html_reference(html_ref):
+        return None
+    return html_ref
+
+
 async def _edit_progress_message_with_card(context, chat_id: int, message_id: int, item: dict, html_url: str | None = None):
     text, kb = _build_card(item)
     if not text:
         return
 
+    html_url = _html_button_url(html_url)
     html_btn = InlineKeyboardButton(CHAT_GENERIC, url=html_url) if html_url else None
     vod_btn = InlineKeyboardButton(VOD_LINK, url=item.get("vod_url"))
 
@@ -82,6 +131,7 @@ async def _send_card_with_buttons(context, chat_id, item, html_url=None):
     if not text:
         return
 
+    html_url = _html_button_url(html_url)
     html_btn = InlineKeyboardButton(CHAT_GENERIC, url=html_url) if html_url else None
     vod_btn = InlineKeyboardButton(VOD_LINK, url=item.get("vod_url"))
 
@@ -135,8 +185,7 @@ async def vod_link_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_pending(context, vod_url=vod_url, vod_id=vod_id)
 
     await update.message.reply_text(
-        "В современной культуре термин «казуал» иногда используется в пренебрежительном контексте, "
-        "однако чаще всего это просто описание стиля игры — легкого и непринужденного, без фанатизма.",
+        _FORMAT_PROMPT_TEXT,
         reply_markup=build_format_keyboard()
     )
 
@@ -194,7 +243,11 @@ async def vod_format_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     vod_id = pending["vod_id"]
 
     cached = db.get_cache(vod_id, fmt)
-    if cached and not db.cache_is_expired(cached):
+    if (
+        cached
+        and not db.cache_is_expired(cached)
+        and _cache_entry_has_usable_output(cached, fmt)
+    ):
         clear_pending(context)
         db.add_user_history(update.effective_user.id, int(cached["id"]))
 
@@ -213,6 +266,7 @@ async def vod_format_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "title": meta.get("title") or "Без названия",
             "created_at": meta.get("created_at"),
             "length_seconds": meta.get("length_seconds") or 0,
+            "html_url": html_url,
         }
 
         safe_stats = {
@@ -234,42 +288,67 @@ async def vod_format_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _send_card_with_buttons(context, q.message.chat_id, item, html_url)
         return
 
-    clear_pending(context)
-    set_busy(context, True)
+    operation_id = begin_download(context)
+    try:
+        await q.message.edit_text(
+            text="Загрузка...",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(CANCEL, callback_data=CB_PENDING_CANCEL)]
+            ])
+        )
+    except BaseException:
+        try:
+            await _restore_format_prompt(q.message)
+        finally:
+            finish_download(context, operation_id)
+        raise
 
-    await q.message.edit_text(
-        text="Загрузка...",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton(CANCEL, callback_data=CB_PENDING_CANCEL)]
-        ])
-    )
-
-    progress_msg = q.message
-
-    context.application.create_task(_runner(
+    runner_coro = _runner(
         context=context,
         chat_id=q.message.chat_id,
-        progress_message_id=progress_msg.message_id,
+        progress_message_id=q.message.message_id,
         vod_url=vod_url,
         vod_id=vod_id,
         fmt=fmt,
         user_id=update.effective_user.id,
-    ))
-
-
-async def _runner(context, chat_id: int, progress_message_id: int, vod_url: str, vod_id: str, fmt: str, user_id: int):
+        operation_id=operation_id,
+    )
     try:
-        meta, stats, files, public_html_url = await download_and_send(
+        context.application.create_task(runner_coro)
+    except BaseException:
+        runner_coro.close()
+        try:
+            await _restore_format_prompt(q.message)
+        finally:
+            finish_download(context, operation_id)
+        raise
+
+    clear_pending(context)
+
+
+async def _runner(
+    context,
+    chat_id: int,
+    progress_message_id: int,
+    vod_url: str,
+    vod_id: str,
+    fmt: str,
+    user_id: int,
+    operation_id: str | None = None,
+):
+    try:
+        meta, stats, files, html_result_ref = await download_and_send(
             context=context,
             chat_id=chat_id,
             progress_message_id=progress_message_id,
             vod_url=vod_url,
             vod_id=vod_id,
             fmt=fmt,
+            operation_id=operation_id,
         )
 
-        if fmt == "html_online" and public_html_url:
-            meta["html_url"] = public_html_url
+        if fmt == "html_online" and html_result_ref:
+            meta["html_url"] = html_result_ref
 
         cache_id = db.upsert_cache(
             vod_id=vod_id,
@@ -282,7 +361,7 @@ async def _runner(context, chat_id: int, progress_message_id: int, vod_url: str,
         db.add_user_history(user_id, cache_id)
 
         item = _make_item(meta, stats, vod_url, fmt)
-        html_url = public_html_url
+        html_url = html_result_ref
 
         await _edit_progress_message_with_card(
             context=context,
@@ -332,7 +411,7 @@ async def _runner(context, chat_id: int, progress_message_id: int, vod_url: str,
                 text=f"Ошибка: {type(e).__name__}: {e}",
             )
     finally:
-        set_busy(context, False)
+        finish_download(context, operation_id)
 
 
 __all__ = [

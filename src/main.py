@@ -1,4 +1,3 @@
-import os
 import aiohttp
 import logging
 from .log_setup import setup_logging
@@ -13,7 +12,8 @@ from telegram.ext import (
 )
 
 from src.database import database as db
-from .config import ENV_TOKEN
+from .config import ConfigurationError, get_telegram_bot_token, validate_credentials
+from .html_publisher import cleanup_stale_html_temp_files
 from src.handlers.handlers import (
     start_command,
     about_command,
@@ -32,10 +32,11 @@ from src.handlers.handlers import (
 
 async def history_command(update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    items = db.get_history_for_user(user_id, limit=10, offset=0)
-    if not items:
+    total_items = db.get_history_count(user_id)
+    if not total_items:
         await update.effective_message.reply_text("История пуста.")
         return
+    items = db.get_history_for_user(user_id, limit=1, offset=0)
 
     from src.history.history_view import _send_history_cards
 
@@ -44,11 +45,17 @@ async def history_command(update, context: ContextTypes.DEFAULT_TYPE):
         context=context,
         items=items,
         page=0,
+        total_items=total_items,
     )
 
 
 async def post_init(app: Application):
     db.init_db()
+    removed_temp_files = cleanup_stale_html_temp_files()
+    if removed_temp_files:
+        logging.getLogger("tcd").info(
+            "Removed %s stale HTML publication temp file(s)", removed_temp_files
+        )
     app.bot_data["aiohttp"] = aiohttp.ClientSession()
 
     await app.bot.set_my_commands([
@@ -68,10 +75,12 @@ def main():
     log = logging.getLogger("tcd")
     log.info("Bot starting…")
 
-    token = os.getenv(ENV_TOKEN)
-    if not token:
-        log.error("Missing env var: %s", ENV_TOKEN)
-        raise RuntimeError(f"Set {ENV_TOKEN} env var")
+    try:
+        token = get_telegram_bot_token()
+        validate_credentials()
+    except ConfigurationError as exc:
+        log.error("Configuration error: %s", exc)
+        raise
 
     app = (
         Application.builder()
@@ -103,8 +112,8 @@ def main():
 
     app.add_handler(CallbackQueryHandler(ui_buttons, pattern=r"^ui:(history)$"))
     app.add_handler(CallbackQueryHandler(history_page_callback, pattern=r"^ui:histpage:\d+$"))
-    app.add_handler(CallbackQueryHandler(history_files_callback, pattern=r"^ui:histfiles:\d+$"))
-    app.add_handler(CallbackQueryHandler(history_vod_callback, pattern=r"^ui:histvod:\d+$"))
+    app.add_handler(CallbackQueryHandler(history_files_callback, pattern=r"^ui:histfiles:(?:h\d+|\d+)$"))
+    app.add_handler(CallbackQueryHandler(history_vod_callback, pattern=r"^ui:histvod:(?:h\d+|\d+)$"))
     app.add_handler(CallbackQueryHandler(noop_callback, pattern=r"^noop$"))
 
     app.run_polling(drop_pending_updates=True)

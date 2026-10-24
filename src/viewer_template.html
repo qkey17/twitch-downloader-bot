@@ -1101,11 +1101,20 @@ window.addEventListener("resize", ()=>{
   syncPanelState(PANEL_EXPANDED, false);
 });
 
+let vodOverlay = null;
+let vodOverlayToken = 0;
+
 function openVodOverlay(){
   if(!meta.thumbnail_full_url && !meta.thumbnail_preview_url) return;
 
+  const token = ++vodOverlayToken;
+  if(vodOverlay){
+    vodOverlay.remove();
+  }
+
   const overlay = document.createElement("div");
   overlay.className = "snapshot-overlay";
+  vodOverlay = overlay;
 
   const panel = document.createElement("div");
   panel.className = "snapshot-panel";
@@ -1154,6 +1163,10 @@ function openVodOverlay(){
 
   overlay.addEventListener("click", ()=>{
     overlay.remove();
+    if(vodOverlay === overlay){
+      vodOverlay = null;
+      vodOverlayToken++;
+    }
     document.body.style.overflow = "";
   });
 
@@ -1164,13 +1177,19 @@ function openVodOverlay(){
 
   // ЗАГРУЗКА КАРТИНКИ
   const full = new Image();
-  full.src = meta.thumbnail_full_url || meta.thumbnail_preview_url;
-
   full.onload = ()=>{
+    if(token !== vodOverlayToken || vodOverlay !== overlay || !overlay.isConnected) return;
     preview.src = full.src;
     loader.remove();
     actions.classList.add("is-ready");
   };
+  full.onerror = ()=>{
+    if(token !== vodOverlayToken || vodOverlay !== overlay || !overlay.isConnected) return;
+    loader.classList.remove("snapshot-loader");
+    loader.textContent = "Не удалось загрузить изображение";
+    actions.classList.add("is-ready");
+  };
+  full.src = meta.thumbnail_full_url || meta.thumbnail_preview_url;
 }
 
 elVodCard.addEventListener("click", openVodOverlay);

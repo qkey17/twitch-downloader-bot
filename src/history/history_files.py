@@ -4,6 +4,9 @@ from src.database import database as db
 import json
 from src.ui.ui_history import build_history_page
 from src.ui.ui_labels import CHAT_GENERIC
+from src.config import HTML_PUBLISH_MODE
+from src.html_publisher import is_local_html_reference, local_published_html_status
+from src.history.history_callbacks import _history_id_from_callback, _reply_history_not_found
 
 
 async def send_cached_files(context, chat_id: int, files: list[dict]):
@@ -22,23 +25,21 @@ async def history_files_callback(update, context: ContextTypes.DEFAULT_TYPE):
     if not data.startswith("ui:histfiles:"):
         return
 
-    try:
-        idx = int(data[len("ui:histfiles:"):])
-    except ValueError:
+    history_id = _history_id_from_callback(data, "ui:histfiles:")
+    if history_id is None:
+        await _reply_history_not_found(update, context)
         return
 
-    items = db.get_history_for_user(update.effective_user.id, limit=10, offset=0)
-    if idx < 0 or idx >= len(items):
-        await q.message.reply_text("Запрос не найден.")
+    hist = db.get_history_entry_for_user(update.effective_user.id, history_id)
+    if not hist:
+        await _reply_history_not_found(update, context)
         return
 
-    vod_id = items[idx]["vod_id"]
-    fmt = items[idx]["fmt"]
+    vod_id = hist["vod_id"]
+    fmt = hist["fmt"]
     cached = db.get_cache(vod_id, fmt)
 
     # Готовим данные карточки
-    hist = items[idx]
-
     meta_raw = cached.get("meta") if cached else None
     stats_raw = cached.get("stats") if cached else None
 
@@ -55,21 +56,29 @@ async def history_files_callback(update, context: ContextTypes.DEFAULT_TYPE):
         "vod_url": hist.get("vod_url"),
         "fmt": fmt,
         "html_url": (cached.get("html_url") if cached else None),
+        "history_id": hist.get("history_id"),
     }
 
     # HTML online — вместо "Открыть HTML:" показываем карточку с кнопкой
     if fmt == "html_online":
         html_url = item.get("html_url")
-        if not html_url:
+        is_local = is_local_html_reference(html_url)
+        if is_local and local_published_html_status(html_url) is not True:
+            await q.message.reply_text("Локальный HTML-файл не найден.")
+            return
+        if not is_local and (not html_url or HTML_PUBLISH_MODE != "public"):
             await q.message.reply_text("Ссылка не найдена.")
             return
 
         cards, _ = build_history_page([item], page=0, per_page=1)
         text, kb = cards[0]
 
-        extra_rows = [[InlineKeyboardButton(CHAT_GENERIC, url=html_url)]]
-        merged = (kb.inline_keyboard if kb else []) + extra_rows
-        kb_final = InlineKeyboardMarkup(merged)
+        if is_local:
+            kb_final = kb
+        else:
+            extra_rows = [[InlineKeyboardButton(CHAT_GENERIC, url=html_url)]]
+            merged = (kb.inline_keyboard if kb else []) + extra_rows
+            kb_final = InlineKeyboardMarkup(merged)
 
         await context.bot.send_message(
             chat_id=q.message.chat_id,

@@ -1,6 +1,6 @@
 import base64
 import logging
-from typing import Dict, Tuple
+from typing import Callable, Dict, Tuple
 
 import aiohttp
 
@@ -16,27 +16,45 @@ async def fetch_7tv_emote_map(session: aiohttp.ClientSession, channel_id: str) -
         return {}
     try:
         url = f"https://7tv.io/v3/users/twitch/{channel_id}"
-        async with session.get(url) as r:
+        async with session.get(url, timeout=10) as r:
             if r.status != 200:
                 return {}
             data = await r.json()
 
+        if not isinstance(data, dict):
+            return {}
+        emote_set = data.get("emote_set") or {}
+        if not isinstance(emote_set, dict):
+            return {}
+        emotes = emote_set.get("emotes") or []
+        if not isinstance(emotes, list):
+            return {}
+
         out: Dict[str, str] = {}
-        for e in (data.get("emote_set", {}) or {}).get("emotes", []):
+        for e in emotes:
+            if not isinstance(e, dict):
+                continue
             name = e.get("name")
-            host = (e.get("data") or {}).get("host") or {}
-            if not name or not host:
+            emote_data = e.get("data") or {}
+            if not isinstance(emote_data, dict):
+                continue
+            host = emote_data.get("host") or {}
+            if not isinstance(host, dict) or not isinstance(host.get("url"), str):
+                continue
+            if not isinstance(name, str) or not name:
                 continue
 
             files = host.get("files") or []
+            if not isinstance(files, list):
+                continue
             file = None
             for f in files:
-                if f.get("name") == "1x.webp":
+                if isinstance(f, dict) and f.get("name") == "1x.webp":
                     file = f
                     break
             if not file and files:
-                file = files[0]
-            if not file:
+                file = next((f for f in files if isinstance(f, dict) and isinstance(f.get("name"), str)), None)
+            if not file or not isinstance(file.get("name"), str):
                 continue
 
             out[name] = f"https:{host['url']}/{file['name']}"
@@ -49,70 +67,140 @@ async def fetch_7tv_emote_map(session: aiohttp.ClientSession, channel_id: str) -
 # BTTV
 # =========================
 
-async def fetch_bttv_emote_map(session: aiohttp.ClientSession, channel_id: str) -> Dict[str, str]:
+async def fetch_bttv_emote_map(
+    session: aiohttp.ClientSession,
+    channel_id: str,
+    cancel_check: Callable[[], bool] | None = None,
+) -> Dict[str, str]:
     out: Dict[str, str] = {}
+    if cancel_check and cancel_check():
+        return out
     try:
-        async with session.get("https://api.betterttv.net/3/cached/emotes/global") as r:
-            if r.status == 200:
-                data = await r.json()
-                for e in data:
-                    out[e["code"]] = f"https://images.weserv.nl/?url=cdn.betterttv.net/emote/{e['id']}/1x"
-
-        if not channel_id:
-            return out
-
-        async with session.get(f"https://api.betterttv.net/3/cached/users/twitch/{channel_id}") as r:
+        async with session.get("https://api.betterttv.net/3/cached/emotes/global", timeout=10) as r:
+            global_data = await r.json() if r.status == 200 else None
             if r.status != 200:
+                logging.warning("BTTV global emotes HTTP %s", r.status)
+    except Exception as exc:
+        logging.warning("BTTV global emotes request failed: %s", type(exc).__name__)
+        global_data = None
+
+    if cancel_check and cancel_check():
+        return out
+    if global_data is not None:
+        if isinstance(global_data, list):
+            for e in global_data:
+                if isinstance(e, dict) and isinstance(e.get("code"), str) and e.get("code") and e.get("id"):
+                    out[e["code"]] = f"https://images.weserv.nl/?url=cdn.betterttv.net/emote/{e['id']}/1x"
+        else:
+            logging.warning("BTTV returned an unexpected global emotes response")
+
+    if not channel_id:
+        return out
+    if cancel_check and cancel_check():
+        return out
+    try:
+        async with session.get(
+            f"https://api.betterttv.net/3/cached/users/twitch/{channel_id}",
+            timeout=10,
+        ) as r:
+            if r.status != 200:
+                logging.warning("BTTV channel emotes HTTP %s", r.status)
                 return out
             data = await r.json()
-
-        for e in data.get("channelEmotes", []):
-            out[e["code"]] = f"https://images.weserv.nl/?url=cdn.betterttv.net/emote/{e['id']}/1x"
-        for e in data.get("sharedEmotes", []):
-            out[e["code"]] = f"https://images.weserv.nl/?url=cdn.betterttv.net/emote/{e['id']}/1x"
-
+    except Exception as exc:
+        logging.warning("BTTV channel emotes request failed: %s", type(exc).__name__)
         return out
-    except Exception:
+
+    if cancel_check and cancel_check():
         return out
+    if not isinstance(data, dict):
+        logging.warning("BTTV returned an unexpected channel emotes response")
+        return out
+    for collection in (data.get("channelEmotes", []), data.get("sharedEmotes", [])):
+        if not isinstance(collection, list):
+            continue
+        for e in collection:
+            if isinstance(e, dict) and isinstance(e.get("code"), str) and e.get("code") and e.get("id"):
+                out[e["code"]] = f"https://images.weserv.nl/?url=cdn.betterttv.net/emote/{e['id']}/1x"
+    return out
 
 
 # =========================
 # FFZ
 # =========================
 
-async def fetch_ffz_emote_map(session: aiohttp.ClientSession, channel_name: str) -> Dict[str, str]:
+_FFZ_REQUEST_TIMEOUT_S = 3
+
+async def fetch_ffz_emote_map(
+    session: aiohttp.ClientSession,
+    channel_name: str,
+    cancel_check: Callable[[], bool] | None = None,
+) -> Dict[str, str]:
     out: Dict[str, str] = {}
+    if cancel_check and cancel_check():
+        return out
     try:
-        async with session.get("https://api.frankerfacez.com/v1/set/global") as r:
-            if r.status == 200:
-                data = await r.json()
-                sets = data.get("sets", {})
-                for s in sets.values():
-                    for e in s.get("emoticons", []):
-                        urls = e.get("urls", {})
-                        url = urls.get("1") or urls.get("2") or urls.get("4")
-                        if url:
-                            out[e["name"]] = "https:" + url
-
-        if not channel_name:
-            return out
-
-        async with session.get(f"https://api.frankerfacez.com/v1/room/{channel_name}") as r:
+        async with session.get(
+            "https://api.frankerfacez.com/v1/set/global",
+            timeout=_FFZ_REQUEST_TIMEOUT_S,
+        ) as r:
+            global_data = await r.json() if r.status == 200 else None
             if r.status != 200:
+                logging.warning("FFZ global emotes HTTP %s", r.status)
+    except Exception as exc:
+        logging.warning("FFZ global emotes request failed: %s", type(exc).__name__)
+        global_data = None
+
+    if cancel_check and cancel_check():
+        return out
+    if global_data is not None:
+        if isinstance(global_data, dict) and isinstance(global_data.get("sets", {}), dict):
+            for s in global_data.get("sets", {}).values():
+                if not isinstance(s, dict) or not isinstance(s.get("emoticons", []), list):
+                    continue
+                for e in s.get("emoticons", []):
+                    if not isinstance(e, dict) or not isinstance(e.get("urls", {}), dict):
+                        continue
+                    urls = e.get("urls", {})
+                    url = urls.get("1") or urls.get("2") or urls.get("4")
+                    if isinstance(e.get("name"), str) and e.get("name") and isinstance(url, str) and url:
+                        out[e["name"]] = "https:" + url
+        else:
+            logging.warning("FFZ returned an unexpected global emotes response")
+
+    if not channel_name:
+        return out
+    if cancel_check and cancel_check():
+        return out
+    try:
+        async with session.get(
+            f"https://api.frankerfacez.com/v1/room/{channel_name}",
+            timeout=_FFZ_REQUEST_TIMEOUT_S,
+        ) as r:
+            if r.status != 200:
+                logging.warning("FFZ channel emotes HTTP %s", r.status)
                 return out
             data = await r.json()
-
-        sets = data.get("sets", {})
-        for s in sets.values():
-            for e in s.get("emoticons", []):
-                urls = e.get("urls", {})
-                url = urls.get("1") or urls.get("2") or urls.get("4")
-                if url:
-                    out[e["name"]] = "https:" + url
-
+    except Exception as exc:
+        logging.warning("FFZ channel emotes request failed: %s", type(exc).__name__)
         return out
-    except Exception:
+
+    if cancel_check and cancel_check():
         return out
+    if not isinstance(data, dict) or not isinstance(data.get("sets", {}), dict):
+        logging.warning("FFZ returned an unexpected channel emotes response")
+        return out
+    for s in data.get("sets", {}).values():
+        if not isinstance(s, dict) or not isinstance(s.get("emoticons", []), list):
+            continue
+        for e in s.get("emoticons", []):
+            if not isinstance(e, dict) or not isinstance(e.get("urls", {}), dict):
+                continue
+            urls = e.get("urls", {})
+            url = urls.get("1") or urls.get("2") or urls.get("4")
+            if isinstance(e.get("name"), str) and e.get("name") and isinstance(url, str) and url:
+                out[e["name"]] = "https:" + url
+    return out
 
 
 # =========================
@@ -133,9 +221,14 @@ async def fetch_twitch_global_emote_map(session: aiohttp.ClientSession) -> Dict[
         logging.warning("Twitch global emotes error: %s", e)
         return {}
 
-    out: Dict[str, str] = {}
+    if not isinstance(data, dict) or not isinstance(data.get("data", []), list):
+        logging.warning("Twitch returned an unexpected global emotes response")
+        return {}
 
+    out: Dict[str, str] = {}
     for e in data.get("data", []) or []:
+        if not isinstance(e, dict):
+            continue
         name = e.get("name")
         emote_id = e.get("id")
         if not name or not emote_id:
@@ -165,12 +258,22 @@ async def _fetch_twitch_badge_map(session: aiohttp.ClientSession, url: str) -> D
 
     out: Dict[str, str] = {}
 
+    if not isinstance(data, dict) or not isinstance(data.get("data", []), list):
+        logging.warning("Twitch returned an unexpected badges response")
+        return {}
     for badge_set in data.get("data", []) or []:
+        if not isinstance(badge_set, dict):
+            continue
         set_id = str(badge_set.get("set_id") or "").strip().lower()
         if not set_id:
             continue
 
-        for version in badge_set.get("versions", []) or []:
+        versions = badge_set.get("versions", []) or []
+        if not isinstance(versions, list):
+            continue
+        for version in versions:
+            if not isinstance(version, dict):
+                continue
             version_id = str(version.get("id") or "").strip()
             if not version_id:
                 continue
@@ -222,7 +325,13 @@ async def fetch_twitch_channel_emote_maps(
     name_map: Dict[str, str] = {}
     id_map: Dict[str, str] = {}
 
+    if not isinstance(data, dict) or not isinstance(data.get("data", []), list):
+        logging.warning("Twitch returned an unexpected channel emotes response")
+        return {}, {}
+
     for e in data.get("data", []) or []:
+        if not isinstance(e, dict):
+            continue
         name = e.get("name")
         emote_id = e.get("id")
         images = e.get("images") or {}

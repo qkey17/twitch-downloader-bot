@@ -2,6 +2,24 @@ from telegram import Update, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 
+def _history_id_from_callback(data: str, prefix: str) -> int | None:
+    suffix = data[len(prefix):]
+    # Numeric suffixes are legacy position-based callbacks and must never be
+    # reinterpreted as a current row identifier.
+    if not suffix.startswith("h") or not suffix[1:].isdigit():
+        return None
+    history_id = int(suffix[1:])
+    return history_id if history_id > 0 else None
+
+
+async def _reply_history_not_found(update, context):
+    message = update.callback_query.message
+    try:
+        await message.reply_text("Запрос не найден.")
+    except Exception:
+        await context.bot.send_message(chat_id=message.chat_id, text="Запрос не найден.")
+
+
 async def ui_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -11,11 +29,18 @@ async def ui_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # локальные импорты чтобы избежать циклических зависимостей
     from src.database import database as db
     from src.ui.ui import CB_UI_HISTORY, CB_HIST_PAGE, CB_HIST_VOD_PREFIX, CB_HIST_FILES_PREFIX
-    from history_view import _send_history_cards
+    from src.history.history_view import _send_history_cards
 
     if data == CB_UI_HISTORY:
-        items = db.get_history_for_user(user_id, limit=10, offset=0)
-        await _send_history_cards(chat_id=q.message.chat_id, context=context, items=items, page=0)
+        total_items = db.get_history_count(user_id)
+        items = db.get_history_for_user(user_id, limit=1, offset=0)
+        await _send_history_cards(
+            chat_id=q.message.chat_id,
+            context=context,
+            items=items,
+            page=0,
+            total_items=total_items,
+        )
         return
 
     if data.startswith(CB_HIST_VOD_PREFIX):
@@ -36,20 +61,17 @@ async def history_vod_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     from src.database import database as db
     from src.ui.ui import CB_HIST_VOD_PREFIX
 
-    try:
-        idx = int(data[len(CB_HIST_VOD_PREFIX):])
-    except Exception:
+    history_id = _history_id_from_callback(data, CB_HIST_VOD_PREFIX)
+    if history_id is None:
+        await _reply_history_not_found(update, context)
         return
 
-    items = db.get_history_for_user(update.effective_user.id, limit=10, offset=0)
-    if idx < 0 or idx >= len(items):
-        try:
-            await q.message.reply_text("Запрос не найден.")
-        except Exception:
-            await context.bot.send_message(chat_id=q.message.chat_id, text="Запрос не найден.")
+    item = db.get_history_entry_for_user(update.effective_user.id, history_id)
+    if not item:
+        await _reply_history_not_found(update, context)
         return
 
-    vod_url = items[idx].get("vod_url")
+    vod_url = item.get("vod_url")
     if not vod_url:
         try:
             await q.message.reply_text("Ссылка не найдена.")
@@ -78,8 +100,17 @@ async def history_page_callback(update: Update, context: ContextTypes.DEFAULT_TY
     # build_history_page может быть в ui — импорт локально
     from src.ui.ui import build_history_page
 
-    items = db.get_history_for_user(update.effective_user.id, limit=10, offset=0)
-    cards, nav_kb = build_history_page(items, page=page, per_page=1)
+    total_items = db.get_history_count(update.effective_user.id)
+    if total_items:
+        last_page = total_items - 1
+        page = max(0, min(page, last_page))
+    items = db.get_history_for_user(update.effective_user.id, limit=1, offset=page)
+    cards, nav_kb = build_history_page(
+        items,
+        page=page,
+        per_page=1,
+        total_items=total_items,
+    )
 
     if not cards:
         try:

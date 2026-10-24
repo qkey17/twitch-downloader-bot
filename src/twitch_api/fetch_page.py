@@ -2,7 +2,7 @@ from typing import Optional, Any, Dict, List, Tuple
 from src.config import VIDEO_COMMENTS_HASH
 import aiohttp
 
-from .client import gql_post_json
+from .client import TwitchAPIError, gql_post_json
 
 async def gql_fetch_page(
     session: aiohttp.ClientSession,
@@ -10,6 +10,7 @@ async def gql_fetch_page(
     vod_id: str,
     cursor: Optional[str],
     start_offset: int,
+    page_number: int = 1,
 ) -> Tuple[List[dict], Optional[str], bool]:
     headers = {
         "Client-Id": client_id,
@@ -30,13 +31,33 @@ async def gql_fetch_page(
         },
     }]
 
-    data = await gql_post_json(session, headers, payload)
-    item = data[0] if isinstance(data, list) and data else {}
-    video = ((item.get("data") or {}).get("video") or {})
-    comments = (video.get("comments") or {})
-    edges = comments.get("edges") or []
-    page_info = comments.get("pageInfo") or {}
-    has_next = bool(page_info.get("hasNextPage"))
+    data = await gql_post_json(session, headers, payload, page_number=page_number)
+    if not isinstance(data, list) or len(data) != 1 or not isinstance(data[0], dict):
+        raise TwitchAPIError("Twitch returned an unexpected comments response")
+
+    response_data = data[0].get("data")
+    if not isinstance(response_data, dict):
+        raise TwitchAPIError("Twitch comments response has no data object")
+    video = response_data.get("video")
+    if not isinstance(video, dict):
+        raise TwitchAPIError("Twitch VOD was not found or is unavailable")
+    comments = video.get("comments")
+    if not isinstance(comments, dict):
+        raise TwitchAPIError("Twitch comments response has no comments object")
+
+    edges = comments.get("edges")
+    page_info = comments.get("pageInfo")
+    if not isinstance(edges, list) or not isinstance(page_info, dict):
+        raise TwitchAPIError("Twitch returned an unexpected comments page")
+    if any(not isinstance(edge, dict) or not isinstance(edge.get("node"), dict) for edge in edges):
+        raise TwitchAPIError("Twitch returned an invalid comment entry")
+
+    has_next_value = page_info.get("hasNextPage")
+    if not isinstance(has_next_value, bool):
+        raise TwitchAPIError("Twitch returned invalid comments pagination metadata")
+    has_next = has_next_value
     next_cursor = edges[-1].get("cursor") if edges else None
+    if has_next and not next_cursor:
+        raise TwitchAPIError("Twitch comments page has no continuation cursor")
 
     return edges, next_cursor, has_next

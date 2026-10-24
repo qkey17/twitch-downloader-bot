@@ -2,7 +2,13 @@ from telegram import InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 
-async def _send_history_cards(chat_id: int, context: ContextTypes.DEFAULT_TYPE, items: list, page: int):
+async def _send_history_cards(
+    chat_id: int,
+    context: ContextTypes.DEFAULT_TYPE,
+    items: list,
+    page: int,
+    total_items: int | None = None,
+):
     """Send a single history card (one stream per page) with combined action + navigation buttons.
 
     Импорты делаем локально, чтобы избежать циклических зависимостей при старте.
@@ -12,7 +18,12 @@ async def _send_history_cards(chat_id: int, context: ContextTypes.DEFAULT_TYPE, 
     from src.ui.ui import build_history_page
 
     # build page with a single item per page
-    cards, nav_kb = build_history_page(items, page=page, per_page=1)
+    cards, nav_kb = build_history_page(
+        items,
+        page=page,
+        per_page=1,
+        total_items=total_items,
+    )
 
     if not cards:
         await context.bot.send_message(chat_id=chat_id, text="История пуста.")

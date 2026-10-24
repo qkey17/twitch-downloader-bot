@@ -1,5 +1,6 @@
 # Virtual environments
 .venv/
+.venv-*/
 venv/
 
 # Python cache
@@ -11,9 +12,20 @@ __pycache__/
 
 # Env files
 .env
+.env.*
+!.env.example
+*.secret
+*.secrets
 
 # Build/output
 _out/
+.chat_*.html.*.tmp
+/tests/tdb-*/
+
+# Logs
+logs/
+*.log
+*.log.*
 
 # Databases
 *src/db
@@ -24,3 +36,12 @@ _out/
 *.db
 *.sqlite
 *.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm

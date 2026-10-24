@@ -1,12 +1,29 @@
 import asyncio
+import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 import aiohttp
 
-from src.config import TWITCH_CLIENT_ID, TWITCH_ACCESS_TOKEN
+from .client import TwitchAPIError, get_api_headers
 
-async def resolve_thumbnail(session, thumb_template):
+
+def _check_cancel(cancel_check: Callable[[], bool] | None) -> None:
+    if cancel_check is not None and cancel_check():
+        raise RuntimeError("Загрузка была отменена.")
+
+
+async def _sleep_with_cancel(delay: float, cancel_check: Callable[[], bool] | None) -> None:
+    end_time = asyncio.get_running_loop().time() + delay
+    while True:
+        _check_cancel(cancel_check)
+        remaining = end_time - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            return
+        await asyncio.sleep(min(0.1, remaining))
+
+
+async def resolve_thumbnail(session, thumb_template, cancel_check: Callable[[], bool] | None = None):
     sizes = [
         (1920, 1080),
         (1280, 720),
@@ -15,13 +32,16 @@ async def resolve_thumbnail(session, thumb_template):
     ]
 
     for w, h in sizes:
+        _check_cancel(cancel_check)
         url = thumb_template.replace("%{width}", str(w)).replace("%{height}", str(h))
         try:
-            async with session.get(url) as resp:
-                if resp.status == 200:
-                    return url
-        except:
+            async with session.get(url, timeout=5) as resp:
+                status = resp.status
+        except Exception:
             continue
+        _check_cancel(cancel_check)
+        if status == 200:
+            return url
 
     return thumb_template.replace("%{width}", "480").replace("%{height}", "270")
 
@@ -115,7 +135,12 @@ def render_message(node: dict) -> str:
     return "".join((f.get("text") or "") for f in fragments).strip()
 
 
-async def fetch_vod_meta(session: aiohttp.ClientSession, client_id: str, vod_id: str) -> VodMeta:
+async def fetch_vod_meta(
+    session: aiohttp.ClientSession,
+    client_id: str,
+    vod_id: str,
+    cancel_check: Callable[[], bool] | None = None,
+) -> VodMeta:
     from .client import gql_post_json
     headers = {
         "Client-Id": client_id,
@@ -138,41 +163,78 @@ async def fetch_vod_meta(session: aiohttp.ClientSession, client_id: str, vod_id:
     }
     """
     meta = VodMeta(vod_id=vod_id)
+    data = None
     for attempt in range(3):
+        _check_cancel(cancel_check)
         try:
             payload = {"query": query, "variables": {"id": vod_id}}
             data = await gql_post_json(session, headers, payload)
-            video = ((data.get("data") or {}).get("video") or {})
-            meta.title = video.get("title")
-            meta.length_seconds = video.get("lengthSeconds")
-            meta.created_at = video.get("createdAt")
-            owner = video.get("owner") or {}
-            meta.channel = owner.get("displayName") or owner.get("login")
-            meta.channel_login = owner.get("login")
-            meta.channel_id = owner.get("id")
+        except TwitchAPIError as exc:
+            _check_cancel(cancel_check)
+            if not exc.retryable or attempt == 2:
+                raise
+            await _sleep_with_cancel(
+                exc.retry_after if exc.retry_after is not None else 0.2 * (attempt + 1),
+                cancel_check,
+            )
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            _check_cancel(cancel_check)
+            if attempt == 2:
+                raise TwitchAPIError("Twitch metadata request failed after retries") from exc
+            await _sleep_with_cancel(0.2 * (attempt + 1), cancel_check)
+        else:
+            _check_cancel(cancel_check)
+            break
 
-            try:
-                helix_url = f"https://api.twitch.tv/helix/videos?id={vod_id}"
-                helix_headers = {
-                    "Client-Id": TWITCH_CLIENT_ID,
-                    "Authorization": f"Bearer {TWITCH_ACCESS_TOKEN}",
-                }
+    response_data = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(response_data, dict) or "video" not in response_data:
+        raise TwitchAPIError("Twitch returned an unexpected VOD metadata response")
+    video = response_data.get("video")
+    if video is not None and not isinstance(video, dict):
+        raise TwitchAPIError("Twitch returned invalid VOD metadata")
 
-                async with session.get(helix_url, headers=helix_headers) as resp:
-                    data2 = await resp.json()
-                    videos = data2.get("data") or []
-                    if videos:
-                        thumb = videos[0].get("thumbnail_url")
-                        if thumb:
-                            preview = thumb.replace("%{width}", "480").replace("%{height}", "270")
-                            full = await resolve_thumbnail(session, thumb)
+    # A valid null video is Twitch's response for a missing or unavailable VOD.
+    if video is None:
+        return meta
+    if "lengthSeconds" not in video or not isinstance(video.get("lengthSeconds"), int):
+        raise TwitchAPIError("Twitch returned incomplete VOD metadata")
+    if "owner" not in video:
+        raise TwitchAPIError("Twitch returned incomplete VOD owner metadata")
 
-                            meta.thumbnail_preview_url = preview
-                            meta.thumbnail_full_url = full or preview
-            except Exception:
-                pass
+    meta.title = video.get("title")
+    meta.length_seconds = video.get("lengthSeconds")
+    meta.created_at = video.get("createdAt")
+    owner = video.get("owner") or {}
+    if not isinstance(owner, dict):
+        raise TwitchAPIError("Twitch returned invalid VOD owner metadata")
+    meta.channel = owner.get("displayName") or owner.get("login")
+    meta.channel_login = owner.get("login")
+    meta.channel_id = owner.get("id")
 
-            return meta
-        except Exception:
-            await asyncio.sleep(0.2 * (attempt + 1))
+    # Thumbnail enrichment is optional and must not invalidate required metadata.
+    _check_cancel(cancel_check)
+    try:
+        helix_url = f"https://api.twitch.tv/helix/videos?id={vod_id}"
+        helix_headers = get_api_headers()
+        async with session.get(helix_url, headers=helix_headers, timeout=10) as resp:
+            if resp.status != 200:
+                return meta
+            data2 = await resp.json()
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, TypeError) as exc:
+        logging.warning("Optional Twitch thumbnail lookup failed: %s", type(exc).__name__)
+        return meta
+
+    _check_cancel(cancel_check)
+    if not isinstance(data2, dict) or not isinstance(data2.get("data", []), list):
+        logging.warning("Twitch returned an unexpected thumbnail metadata response")
+        return meta
+    videos = data2.get("data") or []
+    if videos and isinstance(videos[0], dict):
+        thumb = videos[0].get("thumbnail_url")
+        if thumb and isinstance(thumb, str):
+            preview = thumb.replace("%{width}", "480").replace("%{height}", "270")
+            full = await resolve_thumbnail(session, thumb, cancel_check=cancel_check)
+            meta.thumbnail_preview_url = preview
+            meta.thumbnail_full_url = full or preview
+
     return meta

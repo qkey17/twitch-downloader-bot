@@ -1,9 +1,10 @@
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 from collections import Counter
 
+from src.config import HTML_PUBLISH_MODE
 from src.html_renderer import render_viewer_html
-from src.html_publisher import publish_html
+from src.html_publisher import publish_html, publish_html_local
 from src.twitch_api import (
     fetch_7tv_emote_map,
     fetch_bttv_emote_map,
@@ -26,9 +27,14 @@ async def build_html_result(
     out_dir: Path,
     chat_rows: List[Dict],
     token_counter: Counter,
+    cancel_check: Callable[[], bool] | None = None,
 ):
+    def check_cancelled():
+        if cancel_check is not None and cancel_check():
+            raise RuntimeError("Загрузка была отменена.")
+
     sent_files: List[Dict[str, str]] = []
-    public_html_url: Optional[str] = None
+    html_result_ref: Optional[str] = None
 
     cdn_emotes: Dict[str, str] = {}
     combined_map: Dict[str, str] = {}
@@ -37,26 +43,36 @@ async def build_html_result(
 
     # 7TV
     if meta.channel_id:
+        check_cancelled()
         m = await fetch_7tv_emote_map(session, meta.channel_id)
+        check_cancelled()
         combined_map.update(m)
 
     # BTTV
     if meta.channel_id:
-        m = await fetch_bttv_emote_map(session, meta.channel_id)
+        check_cancelled()
+        m = await fetch_bttv_emote_map(session, meta.channel_id, cancel_check=cancel_check)
+        check_cancelled()
         combined_map.update(m)
 
     # FFZ
     if meta.channel:
-        m = await fetch_ffz_emote_map(session, meta.channel)
+        check_cancelled()
+        m = await fetch_ffz_emote_map(session, meta.channel, cancel_check=cancel_check)
+        check_cancelled()
         combined_map.update(m)
 
     # Twitch Global
+    check_cancelled()
     m = await fetch_twitch_global_emote_map(session)
+    check_cancelled()
     combined_map.update(m)
 
     # Twitch Channel
     if meta.channel_id:
+        check_cancelled()
         name_map, id_map = await fetch_twitch_channel_emote_maps(session, meta.channel_id)
+        check_cancelled()
         combined_map.update(name_map)
         twitch_emote_id_map.update(id_map)
         # Channel/subscriber emotes should be available even if the text scan misses
@@ -65,9 +81,13 @@ async def build_html_result(
         cdn_emotes.update(id_map)
 
     # Twitch badges
+    check_cancelled()
     badge_images.update(await fetch_twitch_global_badge_map(session))
+    check_cancelled()
     if meta.channel_id:
+        check_cancelled()
         badge_images.update(await fetch_twitch_channel_badge_map(session, str(meta.channel_id)))
+        check_cancelled()
 
     targets = set()
     targets_by_id = set()
@@ -97,6 +117,7 @@ async def build_html_result(
     for emote_id in targets_by_id:
         cdn_emotes[emote_id] = twitch_emote_id_map[emote_id]
 
+    check_cancelled()
     html_text = render_viewer_html(
         chat_rows=chat_rows,
         title=(meta.title or "—"),
@@ -112,6 +133,12 @@ async def build_html_result(
         badge_images=badge_images,
     )
 
-    public_html_url = publish_html(html_text)
+    check_cancelled()
+    if HTML_PUBLISH_MODE == "local":
+        html_result_ref = publish_html_local(html_text)
+    elif HTML_PUBLISH_MODE == "public":
+        html_result_ref = publish_html(html_text)
+    else:
+        raise ValueError(f"Unsupported HTML publication mode: {HTML_PUBLISH_MODE}")
 
-    return sent_files, public_html_url
+    return sent_files, html_result_ref

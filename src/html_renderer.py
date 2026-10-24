@@ -37,5 +37,5 @@ def render_viewer_html(
         "rows": chat_rows,
     }
 
-    data_json = json.dumps(payload, ensure_ascii=False).replace("</script>", "<\\/script>")
+    data_json = json.dumps(payload, ensure_ascii=False).replace("<", "\\u003c")
     return template.replace("{{CHAT_DATA_JSON}}", data_json)

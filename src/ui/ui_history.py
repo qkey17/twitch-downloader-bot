@@ -3,15 +3,28 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from .ui_constants import *
 from .ui_formatters import _fmt_dt_utc, _fmt_len
 from .ui_labels import CHAT_GENERIC, FILES, VOD_LINK, label_for_fmt
+from src.config import HTML_PUBLISH_MODE
+from src.html_publisher import (
+    is_local_html_reference,
+    local_html_relative_path,
+    local_published_html_status,
+)
 
 
 def _format_button(it: dict, idx: int):
     url = it.get("html_url")
 
-    if url:
+    if is_local_html_reference(url):
+        return None
+    if url and HTML_PUBLISH_MODE == "public":
         return InlineKeyboardButton(CHAT_GENERIC, url=url)
 
-    return InlineKeyboardButton(FILES, callback_data=f"{CB_HIST_FILES_PREFIX}{idx}")
+    if it.get("fmt") == "html_online":
+        return None
+
+    history_id = it.get("history_id")
+    callback_id = f"h{history_id}" if history_id is not None else str(idx)
+    return InlineKeyboardButton(FILES, callback_data=f"{CB_HIST_FILES_PREFIX}{callback_id}")
 
 
 def _fmt_date_ru(dt: str) -> str:
@@ -25,19 +38,22 @@ def _fmt_date_ru(dt: str) -> str:
         return dt
 
 
-def build_history_page(items: list[dict], page: int, per_page: int):
-    total = len(items)
+def build_history_page(items: list[dict], page: int, per_page: int, total_items: int | None = None):
+    total = len(items) if total_items is None else max(0, int(total_items))
     pages = max(1, (total + per_page - 1) // per_page)
     page = max(0, min(page, pages - 1))
 
-    start = page * per_page
-    end = min(start + per_page, total)
-    page_items = items[start:end]
+    if total_items is None:
+        start = page * per_page
+        end = min(start + per_page, total)
+        page_items = items[start:end]
+    else:
+        page_items = items[:per_page]
 
     cards = []
 
     for i, it in enumerate(page_items):
-        idx = start + i
+        idx = page * per_page + i
 
         channel = html.escape(it.get("channel") or "—")
         vod_title = html.escape(it.get("title") or "Без названия")
@@ -53,7 +69,18 @@ def build_history_page(items: list[dict], page: int, per_page: int):
         users = it.get("unique_users") or 0
         fmt = it.get("fmt") or "—"
 
-        fmt_text = label_for_fmt(fmt)
+        html_ref = it.get("html_url")
+        local_html_path = (
+            local_html_relative_path(html_ref)
+            if local_published_html_status(html_ref) is True
+            else None
+        )
+        if local_html_path:
+            fmt_text = "📄 Локальный HTML"
+        elif fmt == "html_online" and HTML_PUBLISH_MODE == "local":
+            fmt_text = "📄 HTML-файл недоступен локально"
+        else:
+            fmt_text = label_for_fmt(fmt)
 
         text = (
             f"🟣 {channel}\n"
@@ -62,6 +89,8 @@ def build_history_page(items: list[dict], page: int, per_page: int):
             f"🗓 {dt}\n"
             f"{fmt_text}"
         )
+        if local_html_path:
+            text += f"\nHTML сохранён локально: <code>{html.escape(local_html_path)}</code>"
 
         buttons = []
         main_btn = _format_button(it, idx)
