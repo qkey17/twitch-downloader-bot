@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 from collections import Counter
@@ -89,56 +90,76 @@ async def build_html_result(
         badge_images.update(await fetch_twitch_channel_badge_map(session, str(meta.channel_id)))
         check_cancelled()
 
-    targets = set()
-    targets_by_id = set()
+    def render_and_publish():
+        targets = set()
+        targets_by_id = set()
 
-    for row in chat_rows:
-        text = row.get("text") or ""
-        for word in text.split():
-            if word in combined_map:
-                targets.add(word)
+        for row in chat_rows:
+            text = row.get("text") or ""
+            for word in text.split():
+                if word in combined_map:
+                    targets.add(word)
 
-        for fragment in row.get("fragments") or []:
-            if not isinstance(fragment, dict):
+            for fragment in row.get("fragments") or []:
+                if not isinstance(fragment, dict):
+                    continue
+                frag_text = (fragment.get("text") or "").strip()
+                if frag_text and frag_text in combined_map:
+                    targets.add(frag_text)
+
+                emote = fragment.get("emote") or {}
+                if isinstance(emote, dict):
+                    emote_id = emote.get("emoteID") or emote.get("id")
+                    if emote_id and str(emote_id) in twitch_emote_id_map:
+                        targets_by_id.add(str(emote_id))
+
+        # HTML ONLINE — используем CDN ссылки эмоутов
+        for name in targets:
+            cdn_emotes[name] = combined_map[name]
+        for emote_id in targets_by_id:
+            cdn_emotes[emote_id] = twitch_emote_id_map[emote_id]
+
+        check_cancelled()
+        html_text = render_viewer_html(
+            chat_rows=chat_rows,
+            title=(meta.title or "—"),
+            channel=(meta.channel or "—"),
+            vod_url=vod_url,
+            created_at=meta.created_at,
+            thumbnail_preview_url=meta.thumbnail_preview_url,
+            thumbnail_full_url = meta.thumbnail_full_url,
+            mode="online",
+            channel_id=meta.channel_id,
+            local_emotes={},
+            cdn_emotes=cdn_emotes,
+            badge_images=badge_images,
+        )
+
+        check_cancelled()
+        if HTML_PUBLISH_MODE == "local":
+            html_result_ref = publish_html_local(html_text)
+        elif HTML_PUBLISH_MODE == "public":
+            html_result_ref = publish_html(html_text)
+        else:
+            raise ValueError(f"Unsupported HTML publication mode: {HTML_PUBLISH_MODE}")
+
+        return html_result_ref
+
+    # Retain and await the thread job even on task cancellation: the global
+    # download slot and shutdown must outlive all writes by this operation.
+    work = asyncio.create_task(asyncio.to_thread(render_and_publish))
+    try:
+        html_result_ref = await asyncio.shield(work)
+    except asyncio.CancelledError:
+        while not work.done():
+            try:
+                await asyncio.shield(work)
+            except asyncio.CancelledError:
                 continue
-            frag_text = (fragment.get("text") or "").strip()
-            if frag_text and frag_text in combined_map:
-                targets.add(frag_text)
-
-            emote = fragment.get("emote") or {}
-            if isinstance(emote, dict):
-                emote_id = emote.get("emoteID") or emote.get("id")
-                if emote_id and str(emote_id) in twitch_emote_id_map:
-                    targets_by_id.add(str(emote_id))
-
-    # HTML ONLINE — используем CDN ссылки эмоутов
-    for name in targets:
-        cdn_emotes[name] = combined_map[name]
-    for emote_id in targets_by_id:
-        cdn_emotes[emote_id] = twitch_emote_id_map[emote_id]
-
-    check_cancelled()
-    html_text = render_viewer_html(
-        chat_rows=chat_rows,
-        title=(meta.title or "—"),
-        channel=(meta.channel or "—"),
-        vod_url=vod_url,
-        created_at=meta.created_at,
-        thumbnail_preview_url=meta.thumbnail_preview_url,
-        thumbnail_full_url = meta.thumbnail_full_url,
-        mode="online",
-        channel_id=meta.channel_id,
-        local_emotes={},
-        cdn_emotes=cdn_emotes,
-        badge_images=badge_images,
-    )
-
-    check_cancelled()
-    if HTML_PUBLISH_MODE == "local":
-        html_result_ref = publish_html_local(html_text)
-    elif HTML_PUBLISH_MODE == "public":
-        html_result_ref = publish_html(html_text)
-    else:
-        raise ValueError(f"Unsupported HTML publication mode: {HTML_PUBLISH_MODE}")
+            except Exception:
+                break
+        if not work.cancelled():
+            work.exception()  # Retrieve a possible failure before propagating cancellation.
+        raise
 
     return sent_files, html_result_ref

@@ -140,6 +140,7 @@ class LocalCompletionMessageTestCase(unittest.IsolatedAsyncioTestCase):
         context = SimpleNamespace(bot=bot)
 
         with patch.object(handlers_vod, "HTML_PUBLISH_MODE", "local"), \
+             patch("src.config.HISTORY_ENABLED", True), \
              patch.object(handlers_vod, "download_and_send", new=AsyncMock(return_value=(
                  meta, {"messages": 5, "unique_users": 2, "parts": 0}, [], html_ref
              ))), \

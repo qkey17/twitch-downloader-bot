@@ -6,6 +6,7 @@ from src.config import VOD_URL_RE, PENDING_TTL_SECONDS
 
 
 _ACTIVE_OPERATION_KEY = "vod_active_operation"
+_GLOBAL_OPERATION_KEY = "vod_global_operation"
 _CANCEL_OPERATION_KEY = "vod_cancel"
 CANCELLED_MESSAGE = "Загрузка была отменена."
 
@@ -23,9 +24,13 @@ def set_busy(context: ContextTypes.DEFAULT_TYPE, v: bool):
     context.user_data["vod_busy"] = v
 
 
-def begin_download(context: ContextTypes.DEFAULT_TYPE) -> str:
-    """Reserve this user's download state and discard any stale cancel request."""
+def begin_download(context: ContextTypes.DEFAULT_TYPE) -> str | None:
+    """Atomically reserve the single application slot, without awaiting or queuing."""
+    bot_data = context.application.bot_data
+    if bot_data.get(_GLOBAL_OPERATION_KEY) is not None or is_busy(context):
+        return None
     operation_id = uuid.uuid4().hex
+    bot_data[_GLOBAL_OPERATION_KEY] = operation_id
     context.user_data[_ACTIVE_OPERATION_KEY] = operation_id
     context.user_data["vod_busy"] = True
     context.user_data.pop(_CANCEL_OPERATION_KEY, None)
@@ -42,6 +47,9 @@ def finish_download(context: ContextTypes.DEFAULT_TYPE, operation_id: str | None
         return True
     if context.user_data.get(_ACTIVE_OPERATION_KEY) != operation_id:
         return False
+    bot_data = context.application.bot_data
+    if bot_data.get(_GLOBAL_OPERATION_KEY) == operation_id:
+        bot_data.pop(_GLOBAL_OPERATION_KEY, None)
     context.user_data["vod_busy"] = False
     context.user_data.pop(_ACTIVE_OPERATION_KEY, None)
     context.user_data.pop(_CANCEL_OPERATION_KEY, None)
@@ -62,6 +70,7 @@ def get_pending(context: ContextTypes.DEFAULT_TYPE) -> Optional[dict]:
 
 def clear_pending(context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("vod_pending", None)
+    context.user_data.pop("vod_link_lookup", None)
 
 
 def pending_expired(p: dict) -> bool:

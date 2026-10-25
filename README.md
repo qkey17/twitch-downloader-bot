@@ -47,6 +47,7 @@ Required:
 
 Optional:
 
+- `TCD_HISTORY_ENABLED` — defaults to `false`; set `true` to enable personal download history (case-insensitive). When disabled, `/history` is hidden from the command menu, manual requests and old history buttons report that history is disabled, and new personal history rows are not recorded. Existing rows and the technical VOD cache are preserved; enabling the setting on restart restores history access.
 - `TCD_DB_PATH` — SQLite path. Without it, the database is `vod_history.db` in the project root.
 - `TCD_LOG_LEVEL` — logging level; defaults to `INFO`.
 - `TCD_HTML_PUBLISH_MODE` — defaults to `local`; local mode saves HTML under `_out` and does not create a public link.
@@ -64,6 +65,8 @@ python -m src.main
 ```
 
 The startup sequence validates required credentials, initializes SQLite, creates the shared HTTP session, registers Telegram handlers, and starts long polling.
+
+Each bot process permits one active VOD download/generation/publication at a time for all users. A second processing request receives a busy message; there is no waiting queue. Selecting a format does not reserve the slot until processing starts. Usable cached results remain available to other users while processing runs. Run only one bot instance: this limit is in memory and does not coordinate multiple processes. Commands remain available during network waits and HTML preparation; large chats still require the existing in-memory data structures and can use substantial RAM.
 
 ## Local data and output
 

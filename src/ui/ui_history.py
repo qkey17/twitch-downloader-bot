@@ -1,4 +1,5 @@
 import html
+from src import config
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from .ui_constants import *
 from .ui_formatters import _fmt_dt_utc, _fmt_len
@@ -20,6 +21,9 @@ def _format_button(it: dict, idx: int):
         return InlineKeyboardButton(CHAT_GENERIC, url=url)
 
     if it.get("fmt") == "html_online":
+        return None
+
+    if not config.HISTORY_ENABLED:
         return None
 
     history_id = it.get("history_id")

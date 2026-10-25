@@ -12,6 +12,7 @@ from telegram.ext import (
 )
 
 from src.database import database as db
+from src import config
 from .config import ConfigurationError, get_telegram_bot_token, validate_credentials
 from .html_publisher import cleanup_stale_html_temp_files
 from src.handlers.handlers import (
@@ -31,6 +32,9 @@ from src.handlers.handlers import (
 
 
 async def history_command(update, context: ContextTypes.DEFAULT_TYPE):
+    if not config.HISTORY_ENABLED:
+        await update.effective_message.reply_text("История отключена.")
+        return
     user_id = update.effective_user.id
     total_items = db.get_history_count(user_id)
     if not total_items:
@@ -58,10 +62,12 @@ async def post_init(app: Application):
         )
     app.bot_data["aiohttp"] = aiohttp.ClientSession()
 
-    await app.bot.set_my_commands([
+    commands = [
         BotCommand("about", "Описание и как пользоваться"),
-        BotCommand("history", "История скачиваний"),
-    ])
+    ]
+    if config.HISTORY_ENABLED:
+        commands.append(BotCommand("history", "История скачиваний"))
+    await app.bot.set_my_commands(commands)
 
 
 async def post_shutdown(app: Application):
@@ -102,7 +108,9 @@ def main():
     app.add_handler(CommandHandler("cancel", cancel_command))
 
     # link entry
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, vod_link_entry), group=0)
+    # Metadata HTTP waits must not hold up commands/cancellation for other users.
+    # Other updates remain sequential; the link handler guards its user state.
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, vod_link_entry, block=False), group=0)
 
     # callbacks
     app.add_handler(CallbackQueryHandler(vod_format_chosen, pattern=r"^vodfmt:html_online$"))

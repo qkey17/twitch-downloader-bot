@@ -1,5 +1,13 @@
 from telegram import Update, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+from src import config
+
+
+async def _answer_if_history_disabled(query) -> bool:
+    if not config.HISTORY_ENABLED:
+        await query.answer("История отключена.")
+        return True
+    return False
 
 
 def _history_id_from_callback(data: str, prefix: str) -> int | None:
@@ -22,6 +30,8 @@ async def _reply_history_not_found(update, context):
 
 async def ui_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
+    if await _answer_if_history_disabled(q):
+        return
     await q.answer()
     data = q.data or ""
     user_id = update.effective_user.id
@@ -55,6 +65,8 @@ async def ui_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def history_vod_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
+    if await _answer_if_history_disabled(q):
+        return
     await q.answer()
     data = q.data or ""
 
@@ -87,6 +99,8 @@ async def history_vod_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def history_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
+    if await _answer_if_history_disabled(q):
+        return
     await q.answer()
     data = q.data or ""
 

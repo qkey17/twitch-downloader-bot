@@ -6,7 +6,9 @@ from src.ui.ui_history import build_history_page
 from src.ui.ui_labels import CHAT_GENERIC
 from src.config import HTML_PUBLISH_MODE
 from src.html_publisher import is_local_html_reference, local_published_html_status
-from src.history.history_callbacks import _history_id_from_callback, _reply_history_not_found
+from src.history.history_callbacks import (
+    _answer_if_history_disabled, _history_id_from_callback, _reply_history_not_found,
+)
 
 
 async def send_cached_files(context, chat_id: int, files: list[dict]):
@@ -20,6 +22,8 @@ async def send_cached_files(context, chat_id: int, files: list[dict]):
 
 async def history_files_callback(update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
+    if await _answer_if_history_disabled(q):
+        return
     await q.answer()
     data = q.data or ""
     if not data.startswith("ui:histfiles:"):

@@ -103,7 +103,7 @@ class TaskLifecycleTestCase(unittest.IsolatedAsyncioTestCase):
 
         def accept_task(coro):
             coro.close()
-            return object()
+            return SimpleNamespace(add_done_callback=Mock())
 
         context.application.create_task.side_effect = accept_task
         await self.start_format_selection(context, update)
@@ -342,6 +342,9 @@ class TaskLifecycleTestCase(unittest.IsolatedAsyncioTestCase):
                 )
             )
             await started.wait()
+            # Simulate a delayed old task finishing after its reservation was
+            # released. A live reservation itself must no longer be overwritten.
+            finish_download(context, old_operation)
             new_operation = begin_download(context)
             self.assertFalse(is_cancelled(context, new_operation))
             self.assertFalse(finish_download(context, None))

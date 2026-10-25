@@ -85,6 +85,9 @@ PROGRESS_INTERVAL = 3.0
 # Pending selection TTL
 PENDING_TTL_SECONDS = 180
 
+# Personal history is independent of the technical VOD cache.
+HISTORY_ENABLED = os.getenv("TCD_HISTORY_ENABLED", "false").strip().lower() == "true"
+
 # DB file
 DB_PATH = os.getenv("TCD_DB_PATH") or str(PROJECT_ROOT / "vod_history.db")
 

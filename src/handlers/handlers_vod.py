@@ -8,6 +8,7 @@ from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 
 from src.database import database as db
+from src import config
 from src.workers.download_worker import download_and_send
 from src.config import HTML_PUBLISH_MODE
 from src.html_publisher import (
@@ -167,27 +168,36 @@ async def vod_link_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not vod_id:
         return
 
-    if is_busy(context):
+    if is_busy(context) or context.user_data.get("vod_link_lookup"):
         await update.message.reply_text("Я уже качаю чат. Подожди завершения.")
         return
 
     client_id = get_client_id()
     session = context.application.bot_data["aiohttp"]
 
-    meta = await fetch_vod_meta(session, client_id, vod_id)
+    # Only link lookup is non-blocking in PTB. Keep the same user's dialog
+    # serialized while metadata is awaited, without reserving the download slot.
+    lookup = object()
+    context.user_data["vod_link_lookup"] = lookup
+    try:
+        meta = await fetch_vod_meta(session, client_id, vod_id)
+        if context.user_data.get("vod_link_lookup") is not lookup:
+            return
 
-    # если VOD не существует — просто игнорируем сообщение
-    if not meta or not getattr(meta, "length_seconds", None):
-        return
+        # если VOD не существует — просто игнорируем сообщение
+        if not meta or not getattr(meta, "length_seconds", None):
+            return
 
-    vod_url = f"https://www.twitch.tv/videos/{vod_id}"
+        vod_url = f"https://www.twitch.tv/videos/{vod_id}"
+        set_pending(context, vod_url=vod_url, vod_id=vod_id)
 
-    set_pending(context, vod_url=vod_url, vod_id=vod_id)
-
-    await update.message.reply_text(
-        _FORMAT_PROMPT_TEXT,
-        reply_markup=build_format_keyboard()
-    )
+        await update.message.reply_text(
+            _FORMAT_PROMPT_TEXT,
+            reply_markup=build_format_keyboard()
+        )
+    finally:
+        if context.user_data.get("vod_link_lookup") is lookup:
+            context.user_data.pop("vod_link_lookup", None)
 
 
 # ------ Cancel pending download (кнопка отмены в прогрессе) ------
@@ -206,8 +216,7 @@ async def format_cancel_callback(update: Update, context: ContextTypes.DEFAULT_T
     q = update.callback_query
     await q.answer()
 
-    if get_pending(context):
-        clear_pending(context)
+    clear_pending(context)
 
     try:
         await q.message.delete()
@@ -222,6 +231,10 @@ async def vod_format_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if is_busy(context):
         await q.message.reply_text("Я уже качаю чат. Подожди завершения.")
+        return
+
+    if context.user_data.get("vod_link_lookup"):
+        await q.message.reply_text("Дождись проверки ссылки.")
         return
 
     data = q.data or ""
@@ -249,7 +262,8 @@ async def vod_format_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         and _cache_entry_has_usable_output(cached, fmt)
     ):
         clear_pending(context)
-        db.add_user_history(update.effective_user.id, int(cached["id"]))
+        if config.HISTORY_ENABLED:
+            db.add_user_history(update.effective_user.id, int(cached["id"]))
 
         meta_raw = cached.get("meta")
         stats_raw = cached.get("stats")
@@ -289,6 +303,9 @@ async def vod_format_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     operation_id = begin_download(context)
+    if operation_id is None:
+        await q.message.reply_text("Бот занят обработкой VOD. Попробуй после её завершения.")
+        return
     try:
         await q.message.edit_text(
             text="Загрузка...",
@@ -314,7 +331,7 @@ async def vod_format_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         operation_id=operation_id,
     )
     try:
-        context.application.create_task(runner_coro)
+        task = context.application.create_task(runner_coro)
     except BaseException:
         runner_coro.close()
         try:
@@ -323,6 +340,12 @@ async def vod_format_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
             finish_download(context, operation_id)
         raise
 
+    def release_finished_task(_task):
+        # Also cover cancellation before _runner gets its first turn.
+        runner_coro.close()
+        finish_download(context, operation_id)
+
+    task.add_done_callback(release_finished_task)
     clear_pending(context)
 
 
@@ -358,7 +381,8 @@ async def _runner(
             stats=stats,
             files=files,
         )
-        db.add_user_history(user_id, cache_id)
+        if config.HISTORY_ENABLED:
+            db.add_user_history(user_id, cache_id)
 
         item = _make_item(meta, stats, vod_url, fmt)
         html_url = html_result_ref

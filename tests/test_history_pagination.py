@@ -44,6 +44,9 @@ class HistoryPaginationTestCase(unittest.TestCase):
     page_size = 1
 
     def setUp(self):
+        self.history_patch = patch("src.config.HISTORY_ENABLED", True)
+        self.history_patch.start()
+        self.addCleanup(self.history_patch.stop)
         self.temp_dir = tempfile.mkdtemp(
             prefix="tdb-history-",
             dir=Path(__file__).resolve().parent,

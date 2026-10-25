@@ -29,7 +29,7 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text("Сейчас идёт скачивание.")
         return
 
-    if get_pending(context):
+    if get_pending(context) or context.user_data.get("vod_link_lookup"):
         clear_pending(context)
         await msg.reply_text("Процесс отменен.")
     else:
