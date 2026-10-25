@@ -27,6 +27,7 @@ async def download_and_send(
     vod_id: str,
     fmt: str,
     operation_id: str | None = None,
+    publication=None,
 ) -> Tuple[Dict, Dict, List[Dict[str, str]], Optional[str]]:
     started_at = time.monotonic()
     spool = None
@@ -145,6 +146,9 @@ async def download_and_send(
         sent_files: List[Dict[str, str]] = []
         html_result_ref: Optional[str] = None
 
+        if publication is not None:
+            publication.meta = meta_dict
+            publication.stats = {"messages":spool.messages,"unique_users":spool.unique_users,"parts":0}
         sent_files, html_result_ref = await build_html_result(
             context=context,
             session=session,
@@ -157,6 +161,7 @@ async def download_and_send(
             chat_rows=spool,
             token_counter=None,
             cancel_check=cancel_check,
+            publication=publication,
         )
 
         meta_dict["html_url"] = html_result_ref

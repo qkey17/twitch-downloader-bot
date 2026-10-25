@@ -22,6 +22,7 @@ from src.history.history_callbacks import (
 from src.history.history_files import history_files_callback
 from src.ui.ui_history import build_history_page
 from src.workers import worker_html
+from publication_stub import PublicationStub
 
 
 class HistoryConfigurationTestCase(unittest.TestCase):
@@ -54,6 +55,9 @@ class OperationOwnershipTestCase(unittest.TestCase):
 
 class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        registry=patch.object(handlers_vod.results,"Publication",PublicationStub)
+        registry.start()
+        self.addCleanup(registry.stop)
         temp = tempfile.TemporaryDirectory(prefix="tdb-control-", dir=Path(__file__).parent)
         self.addCleanup(temp.cleanup)
         self.temp_dir = Path(temp.name)
@@ -275,7 +279,7 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
         from src import html_publisher
 
         with patch.object(html_publisher, "OUT_DIR", str(self.temp_dir)):
-            ref = html_publisher.publish_html_local("viewer")
+            ref = html_publisher.publish_html_local("<html>viewer</html>")
             cache_id = db.upsert_cache(
                 "123456789", "html_online", "https://www.twitch.tv/videos/123456789",
                 {"title": "cached", "html_url": ref}, {"messages": 1}, [],
@@ -311,7 +315,9 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
         )
         context, update = self.request()
         with patch.object(config, "HISTORY_ENABLED", True), \
-             patch.object(handlers_vod, "_cache_entry_has_usable_output", return_value=True):
+             patch.object(handlers_vod.results,"get_ready_result",return_value={
+                 'vod_id':'123456789','cache_id':cache_id,'meta':{'title':'cached'},'stats':{},'html_ref':None,
+             }):
             await handlers_vod.vod_format_chosen(update, context)
         self.assertEqual(1, db.get_history_count(1))
         self.assertEqual(cache_id, db.get_history_for_user(1)[0]["id"])

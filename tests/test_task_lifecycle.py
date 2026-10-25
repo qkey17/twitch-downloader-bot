@@ -18,9 +18,18 @@ from src.handlers.handlers_state import (
 )
 from src.twitch_api import fetch_comments
 from src.workers import download_worker, worker_html
+from publication_stub import PublicationStub
 
 
 class TaskLifecycleTestCase(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        registry = patch.object(handlers_vod.results,"Publication",side_effect=lambda *args,**kwargs: PublicationStub(*args,**kwargs,ref="https://publisher.invalid/chat.html"))
+        registry.start()
+        self.addCleanup(registry.stop)
+        lookup=patch.object(handlers_vod.results,"get_ready_result",return_value=None)
+        lookup.start()
+        self.addCleanup(lookup.stop)
+
     def _setupAsyncioRunner(self):
         # The Windows sandbox blocks the proactor loop's local socketpair setup.
         self._asyncioRunner = asyncio.Runner(

@@ -19,7 +19,7 @@ def _fmt_dt_utc(iso: str | None) -> str:
 
 
 def _fmt_len(seconds: int | None) -> str:
-    if not seconds:
+    if type(seconds) is not int or seconds <= 0:
         return "—"
     h = seconds // 3600
     m = (seconds % 3600) // 60

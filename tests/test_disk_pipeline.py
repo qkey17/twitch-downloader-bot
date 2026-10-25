@@ -33,6 +33,7 @@ class DiskPipelineTestCase(unittest.IsolatedAsyncioTestCase):
         for module, name, value in (
             (db_core, "DB_PATH", str(self.root / "history.sqlite3")),
             (config, "HISTORY_ENABLED", False),
+            (config, "SPOOL_DIR", str(self.root / "spools")),
             (download_worker, "OUT_DIR", str(self.root / "out")),
             (download_worker, "SPOOL_DIR", str(self.root / "spools")),
             (download_worker, "SPOOL_BATCH_MESSAGES", 3),

@@ -31,6 +31,7 @@ async def build_html_result(
     chat_rows: List[Dict] | ChatSpool,
     token_counter: Counter,
     cancel_check: Callable[[], bool] | None = None,
+    publication=None,
 ):
     stop = threading.Event()
 
@@ -156,6 +157,7 @@ async def build_html_result(
             return publish_html_stream(
                 write_content, local=HTML_PUBLISH_MODE == "local",
                 cancel_check=lambda: stop.is_set() or (cancel_check and cancel_check()),
+                publication=publication,
             )
 
         # Retain the small, in-memory compatibility interface for direct callers.

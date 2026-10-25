@@ -16,6 +16,7 @@ from src.html_publisher import (
 from src.ui.ui_history import build_history_page
 from src.ui.ui_labels import CHAT_GENERIC
 from src.workers import worker_html
+from publication_stub import PublicationStub
 
 
 class LocalHtmlPublicationTestCase(unittest.TestCase):
@@ -140,6 +141,7 @@ class LocalCompletionMessageTestCase(unittest.IsolatedAsyncioTestCase):
         context = SimpleNamespace(bot=bot)
 
         with patch.object(handlers_vod, "HTML_PUBLISH_MODE", "local"), \
+             patch.object(handlers_vod.results,"Publication",PublicationStub), \
              patch("src.config.HISTORY_ENABLED", True), \
              patch.object(handlers_vod, "download_and_send", new=AsyncMock(return_value=(
                  meta, {"messages": 5, "unique_users": 2, "parts": 0}, [], html_ref

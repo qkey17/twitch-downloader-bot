@@ -16,6 +16,8 @@ from src import config
 from .config import ConfigurationError, get_telegram_bot_token, validate_credentials
 from .html_publisher import cleanup_stale_html_temp_files
 from .chat_spool import cleanup_orphaned_chat_spools
+from .database.db_results import recover_results, protected_temp_files
+from .handlers.handlers_vod import vod_result_callback
 from src.handlers.handlers import (
     start_command,
     about_command,
@@ -56,10 +58,11 @@ async def history_command(update, context: ContextTypes.DEFAULT_TYPE):
 
 async def post_init(app: Application):
     db.init_db()
+    recover_results()
     removed_spools = cleanup_orphaned_chat_spools(config.SPOOL_DIR)
     if removed_spools:
         logging.getLogger("tcd").info("Removed %s orphaned chat spool(s)", removed_spools)
-    removed_temp_files = cleanup_stale_html_temp_files()
+    removed_temp_files = cleanup_stale_html_temp_files(protected=protected_temp_files())
     if removed_temp_files:
         logging.getLogger("tcd").info(
             "Removed %s stale HTML publication temp file(s)", removed_temp_files
@@ -118,6 +121,7 @@ def main():
 
     # callbacks
     app.add_handler(CallbackQueryHandler(vod_format_chosen, pattern=r"^vodfmt:html_online$"))
+    app.add_handler(CallbackQueryHandler(vod_result_callback, pattern=r"^ui:result:"))
 
     app.add_handler(CallbackQueryHandler(format_cancel_callback, pattern=r"^ui:format_cancel$"))
     app.add_handler(CallbackQueryHandler(pending_cancel_callback, pattern=r"^ui:pending_cancel$"))

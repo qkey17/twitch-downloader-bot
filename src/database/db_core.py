@@ -19,6 +19,7 @@ def _connect() -> sqlite3.Connection:
 def init_db():
     con = _connect()
     try:
+        con.execute("BEGIN IMMEDIATE")
         cur = con.cursor()
 
         cur.execute("""
@@ -75,6 +76,9 @@ def init_db():
         ON user_history(user_id, processed_at)
         """)
 
+        from .db_results import create_schema, migrate_legacy
+        create_schema(con)
+        migrate_legacy(con)
         con.commit()
     except Exception:
         con.rollback()

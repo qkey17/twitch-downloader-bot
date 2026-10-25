@@ -17,7 +17,7 @@ def _format_button(it: dict, idx: int):
 
     if is_local_html_reference(url):
         return None
-    if url and HTML_PUBLISH_MODE == "public":
+    if url and HTML_PUBLISH_MODE == "public" and local_published_html_status(url) is True:
         return InlineKeyboardButton(CHAT_GENERIC, url=url)
 
     if it.get("fmt") == "html_online":

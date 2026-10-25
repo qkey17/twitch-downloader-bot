@@ -2,12 +2,16 @@
 import logging
 import json
 import re
+import secrets
+import time
 from src.twitch_api import fetch_vod_meta, get_client_id
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 
 from src.database import database as db
+from src.database import db_results as results
+from src.workers.worker_io import run_blocking
 from src import config
 from src.workers.download_worker import download_and_send
 from src.config import HTML_PUBLISH_MODE
@@ -151,21 +155,72 @@ async def _send_card_with_buttons(context, chat_id, item, html_url=None):
     )
 
 
+async def _offer_ready(message,context,result,edit=False):
+    vod_id = result["vod_id"]
+    nonce = secrets.token_hex(8)
+    context.user_data["vod_result_choice"] = {"vod_id":vod_id,"nonce":nonce,"created_at":time.time()}
+    text,_ = _build_card(_make_item(result['meta'],result['stats'],f"https://www.twitch.tv/videos/{vod_id}","html_online"))
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Открыть готовую страницу",callback_data=f"ui:result:open:{vod_id}")],
+        [InlineKeyboardButton("Сгенерировать заново",callback_data=f"ui:result:regen:{vod_id}:{nonce}")],
+    ])
+    if edit:
+        await context.bot.edit_message_text(chat_id=message.chat_id,message_id=message.message_id,
+                                            text=text,parse_mode="HTML",reply_markup=keyboard)
+    else:
+        await message.reply_text(text,parse_mode="HTML",reply_markup=keyboard)
+
+
+async def vod_result_callback(update,context):
+    q = update.callback_query
+    await q.answer()
+    match = re.fullmatch(r"ui:result:(open|regen):([1-9][0-9]{0,19})(?::([0-9a-f]{16}))?",q.data or "")
+    if not match:
+        await q.message.reply_text("Запрос не найден.")
+        return
+    action,vod_id,nonce = match.groups()
+    if action == 'open':
+        ready = results.get_ready_result(vod_id)
+        if ready:
+            if config.HISTORY_ENABLED and ready['cache_id'] is not None:
+                db.add_user_history(update.effective_user.id,ready['cache_id'])
+            item = _make_item(ready['meta'],ready['stats'],f"https://www.twitch.tv/videos/{vod_id}","html_online")
+            await _send_card_with_buttons(context,q.message.chat_id,item,ready['html_ref'])
+        else:
+            set_pending(context,f"https://www.twitch.tv/videos/{vod_id}",vod_id)
+            await q.message.reply_text("Готовая страница недоступна. Можно создать HTML заново.",reply_markup=build_format_keyboard())
+        return
+    if is_busy(context):
+        await q.message.reply_text("Я уже качаю чат. Подожди завершения.")
+        return
+    choice = context.user_data.get('vod_result_choice') or {}
+    if (choice.get('vod_id') != vod_id or choice.get('nonce') != nonce or pending_expired(choice)):
+        await q.message.reply_text("Ссылка устарела.")
+        ready = results.get_ready_result(vod_id)
+        if ready:
+            await _offer_ready(q.message,context,ready)
+        return
+    await _start_download(update,context,vod_id,regenerate=True)
+
+
 # ------ Entry handler (приём произвольного сообщения с VOD id) ------
 async def vod_link_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
 
     text = (update.message.text or "").strip()
-    vod_id = extract_vod_id_strict(text)
-
-    # fallback: ищем последнее длинное число в сообщении (7-12 цифр)
-    if not vod_id:
-        matches = re.findall(r"\d{7,12}", text)
-        if matches:
-            vod_id = matches[-1]
-
-    if not vod_id:
+    match = re.fullmatch(r"(?i:(?:https?://)?(?:www\.)?twitch\.tv)/(?:videos/|[^/?#\s]+/v/)([0-9]{1,20})/?(?:[?#][^\s]*)?", text)
+    candidate = match.group(1) if match else (text if re.fullmatch(r"[0-9]{1,20}",text) else None)
+    try:
+        vod_id = results.normalize_vod_id(candidate)
+    except ValueError:
+        return
+    ready = results.get_ready_result(vod_id)
+    if ready:
+        clear_pending(context)
+        if config.HISTORY_ENABLED and ready['cache_id'] is not None:
+            db.add_user_history(update.effective_user.id,ready['cache_id'])
+        await _offer_ready(update.message,context,ready)
         return
 
     if is_busy(context) or context.user_data.get("vod_link_lookup"):
@@ -255,57 +310,26 @@ async def vod_format_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     vod_url = pending["vod_url"]
     vod_id = pending["vod_id"]
 
-    cached = db.get_cache(vod_id, fmt)
-    if (
-        cached
-        and not db.cache_is_expired(cached)
-        and _cache_entry_has_usable_output(cached, fmt)
-    ):
+    ready = results.get_ready_result(vod_id)
+    if ready:
         clear_pending(context)
-        if config.HISTORY_ENABLED:
-            db.add_user_history(update.effective_user.id, int(cached["id"]))
-
-        meta_raw = cached.get("meta")
-        stats_raw = cached.get("stats")
-        html_url = cached.get("html_url")
-
-        meta = json.loads(meta_raw) if isinstance(meta_raw, str) else (meta_raw or {})
-        stats = json.loads(stats_raw) if isinstance(stats_raw, str) else (stats_raw or {})
-
-        if not html_url:
-            html_url = meta.get("html_url")
-
-        safe_meta = {
-            "channel": meta.get("channel") or "—",
-            "title": meta.get("title") or "Без названия",
-            "created_at": meta.get("created_at"),
-            "length_seconds": meta.get("length_seconds") or 0,
-            "html_url": html_url,
-        }
-
-        safe_stats = {
-            "messages": stats.get("messages") or 0,
-            "unique_users": stats.get("unique_users") or 0,
-        }
-
-        item = _make_item(safe_meta, safe_stats, vod_url, fmt)
-
-        try:
-            await _edit_progress_message_with_card(
-                context=context,
-                chat_id=q.message.chat_id,
-                message_id=q.message.message_id,
-                item=item,
-                html_url=html_url,
-            )
-        except Exception:
-            await _send_card_with_buttons(context, q.message.chat_id, item, html_url)
+        if config.HISTORY_ENABLED and ready['cache_id'] is not None:
+            db.add_user_history(update.effective_user.id,ready['cache_id'])
+        await _offer_ready(q.message,context,ready,edit=True)
         return
+    await _start_download(update,context,vod_id)
 
+
+async def _start_download(update,context,vod_id,regenerate=False):
+    q = update.callback_query
+    vod_url = f"https://www.twitch.tv/videos/{vod_id}"
+    fmt = "html_online"
     operation_id = begin_download(context)
     if operation_id is None:
         await q.message.reply_text("Бот занят обработкой VOD. Попробуй после её завершения.")
         return
+    if regenerate:
+        context.user_data.pop("vod_result_choice",None)
     try:
         await q.message.edit_text(
             text="Загрузка...",
@@ -315,7 +339,7 @@ async def vod_format_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except BaseException:
         try:
-            await _restore_format_prompt(q.message)
+            await _restore_start_prompt(q.message,context,vod_id,regenerate)
         finally:
             finish_download(context, operation_id)
         raise
@@ -335,7 +359,7 @@ async def vod_format_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except BaseException:
         runner_coro.close()
         try:
-            await _restore_format_prompt(q.message)
+            await _restore_start_prompt(q.message,context,vod_id,regenerate)
         finally:
             finish_download(context, operation_id)
         raise
@@ -349,6 +373,19 @@ async def vod_format_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     clear_pending(context)
 
 
+async def _restore_start_prompt(message,context,vod_id,regenerate):
+    if regenerate:
+        try:
+            ready = results.get_ready_result(vod_id)
+            if ready:
+                await _offer_ready(message,context,ready,edit=True)
+                return
+        except Exception:
+            logging.getLogger(__name__).warning("Could not restore ready-result actions")
+        set_pending(context,f"https://www.twitch.tv/videos/{vod_id}",vod_id)
+    await _restore_format_prompt(message)
+
+
 async def _runner(
     context,
     chat_id: int,
@@ -359,7 +396,10 @@ async def _runner(
     user_id: int,
     operation_id: str | None = None,
 ):
+    publication = None
     try:
+        publication = results.Publication(vod_id,fmt,mode=HTML_PUBLISH_MODE)
+        await run_blocking(publication.reserve)
         meta, stats, files, html_result_ref = await download_and_send(
             context=context,
             chat_id=chat_id,
@@ -368,19 +408,16 @@ async def _runner(
             vod_id=vod_id,
             fmt=fmt,
             operation_id=operation_id,
+            publication=publication,
         )
 
         if fmt == "html_online" and html_result_ref:
             meta["html_url"] = html_result_ref
 
-        cache_id = db.upsert_cache(
-            vod_id=vod_id,
-            fmt=fmt,
-            vod_url=vod_url,
-            meta=meta,
-            stats=stats,
-            files=files,
-        )
+        publication.meta,publication.stats = meta,stats
+        if html_result_ref != publication.ref:
+            raise ValueError("Unexpected HTML generation reference")
+        cache_id = await run_blocking(publication.complete)
         if config.HISTORY_ENABLED:
             db.add_user_history(user_id, cache_id)
 
@@ -396,6 +433,7 @@ async def _runner(
         )
 
     except RuntimeError as e:
+        await _record_generation_failure(publication,e)
         if str(e) == "CHAT_EMPTY":
             try:
                 await context.bot.edit_message_text(
@@ -422,6 +460,7 @@ async def _runner(
         raise
 
     except Exception as e:
+        await _record_generation_failure(publication,e)
         logging.exception("Download failed")
         try:
             await context.bot.edit_message_text(
@@ -434,8 +473,23 @@ async def _runner(
                 chat_id=chat_id,
                 text=f"Ошибка: {type(e).__name__}: {e}",
             )
+    except BaseException as exc:
+        await _record_generation_failure(publication,exc)
+        raise
     finally:
-        finish_download(context, operation_id)
+        try:
+            if publication is not None:
+                await run_blocking(publication.close)
+        finally:
+            finish_download(context, operation_id)
+
+
+async def _record_generation_failure(publication,error):
+    if publication is not None:
+        try:
+            await run_blocking(publication.fail,error)
+        except Exception as exc:
+            logging.getLogger(__name__).error("Could not record generation failure: %s",type(exc).__name__)
 
 
 __all__ = [

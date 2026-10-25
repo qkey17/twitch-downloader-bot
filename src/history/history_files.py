@@ -65,6 +65,15 @@ async def history_files_callback(update, context: ContextTypes.DEFAULT_TYPE):
 
     # HTML online — вместо "Открыть HTML:" показываем карточку с кнопкой
     if fmt == "html_online":
+        from src.database.db_results import get_ready_result
+        try:
+            ready = get_ready_result(vod_id)
+        except ValueError:
+            ready = None
+        if not ready:
+            await q.message.reply_text("Ссылка не найдена.")
+            return
+        item["html_url"] = ready["html_ref"]
         html_url = item.get("html_url")
         is_local = is_local_html_reference(html_url)
         if is_local and local_published_html_status(html_url) is not True:

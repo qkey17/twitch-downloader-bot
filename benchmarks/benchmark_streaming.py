@@ -28,7 +28,7 @@ from src.resource_usage import memory_usage
 from src.workers import download_worker, worker_html
 
 
-async def measure(count, directory):
+async def measure(count, directory, registry=False):
     baseline = memory_usage()
     sampled_peak = baseline["rss_bytes"] or 0
     finished = threading.Event()
@@ -70,7 +70,8 @@ async def measure(count, directory):
         timing["ingestion_seconds"] = time.perf_counter() - ingest_start
 
     original_append, original_write = ChatSpool.append_batch, worker_html.write_viewer_html
-    original_publish, original_close = html_publisher._write_html_atomically, ChatSpool.close
+    publication_function = '_publish_registered' if registry else '_write_html_atomically'
+    original_publish, original_close = getattr(html_publisher,publication_function), ChatSpool.close
 
     def append(spool, batch, cancel_check=None):
         timing["max_batch_messages"] = max(timing["max_batch_messages"], len(batch))
@@ -114,7 +115,7 @@ async def measure(count, directory):
                 (html_publisher, "OUT_DIR", str(directory / "out")),
                 (ChatSpool, "append_batch", append), (ChatSpool, "close", close),
                 (worker_html, "write_viewer_html", write),
-                (html_publisher, "_write_html_atomically", publish),
+                (html_publisher, publication_function, publish),
             ):
                 stack.enter_context(patch.object(module, name, value))
             for name in ("fetch_7tv_emote_map", "fetch_bttv_emote_map", "fetch_ffz_emote_map",
@@ -124,7 +125,25 @@ async def measure(count, directory):
                 stack.enter_context(patch.object(worker_html, name, AsyncMock(return_value=value)))
             stack.enter_context(patch.object(worker_html, "fetch_twitch_channel_emote_maps",
                                             AsyncMock(return_value=({"Kappa": "https://cdn.invalid/kappa"}, {"25": "https://cdn.invalid/kappa"}))))
-            _, stats, _, ref = await download_worker.download_and_send(context, 1, 2, "vod", "synthetic", "html_online")
+            publication = None
+            if registry:
+                from src import config
+                from src.database import database as db, db_core, db_results
+                from src.workers.worker_io import run_blocking
+                stack.enter_context(patch.object(config,'SPOOL_DIR',str(directory/'spools')))
+                stack.enter_context(patch.object(db_core,'DB_PATH',str(directory/'registry.sqlite3')))
+                db.init_db()
+                publication = db_results.Publication('123456789',mode='local')
+            try:
+                if publication is not None:
+                    await run_blocking(publication.reserve)
+                _, stats, _, ref = await download_worker.download_and_send(
+                    context,1,2,'vod','123456789' if registry else 'synthetic','html_online',publication=publication)
+                if publication is not None:
+                    await run_blocking(publication.complete)
+            finally:
+                if publication is not None:
+                    await run_blocking(publication.close)
         html_path = directory / "out" / ref.removeprefix("local:")
         if stats["messages"] != count or stats["unique_users"] != min(count, max(2, count // 2)):
             raise AssertionError("Benchmark lost messages or unique users")
@@ -133,7 +152,7 @@ async def measure(count, directory):
         end_memory = memory_usage()
         sampled_peak = max(sampled_peak, end_memory["rss_bytes"] or 0)
         return {
-            "messages": count, "unique_users": stats["unique_users"],
+            "messages": count, "unique_users": stats["unique_users"], "registry": registry,
             "python": platform.python_version(), "platform": platform.platform(),
             "baseline_rss_bytes": baseline["rss_bytes"], "final_rss_bytes": end_memory["rss_bytes"],
             "sampled_peak_rss_bytes": sampled_peak,
@@ -153,6 +172,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sizes", type=int, nargs="+", default=[10000, 100000, 250000])
     parser.add_argument("--worker", type=int)
+    parser.add_argument("--registry",action='store_true',help='Include registered publication and atomic cache activation')
     parser.add_argument("--output", type=Path, help="Save small JSON measurement records; must not exist")
     parser.add_argument("--work-dir", type=Path, default=PROJECT_ROOT / "_work")
     args = parser.parse_args()
@@ -164,12 +184,12 @@ def main():
             parser.error("Worker size must be 1..250000")
         args.work_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="tdb-benchmark-", dir=args.work_dir) as directory:
-            print(json.dumps(asyncio.run(measure(args.worker, Path(directory)))), flush=True)
+            print(json.dumps(asyncio.run(measure(args.worker, Path(directory),args.registry))), flush=True)
     else:
         records = []
         for size in args.sizes:
             result = subprocess.run(
-                [sys.executable, "-B", str(Path(__file__).resolve()), "--worker", str(size), "--work-dir", str(args.work_dir)],
+                [sys.executable, "-B", str(Path(__file__).resolve()), "--worker", str(size), "--work-dir", str(args.work_dir)] + (['--registry'] if args.registry else []),
                 capture_output=True, text=True, timeout=240, check=True,
             )
             print(result.stdout.strip(), flush=True)

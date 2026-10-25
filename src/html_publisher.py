@@ -2,8 +2,10 @@ import os
 import re
 import time
 import uuid
+import hashlib
+import logging
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 from .file_lock import try_lock_file
 from .resource_usage import log_resources
 
@@ -20,6 +22,39 @@ _TEMP_HTML_FILENAME_RE = re.compile(
     r"\.chat_[0-9a-f]{32}\.html\.[0-9a-f]{32}\.tmp"
 )
 _STALE_TEMP_HTML_AGE_SECONDS = 24 * 60 * 60
+
+
+def _public_path(filename=""):
+    base_path = urlsplit(PUBLIC_BASE_URL).path
+    return '/' + '/'.join(part for part in f'{base_path}/{PUBLIC_HTML_URL_PREFIX}/{filename}'.split('/') if part)
+
+
+def public_html_url(filename: str) -> str:
+    """Canonical URL for new output; stored legacy references stay unchanged."""
+    if not _HTML_FILENAME_RE.fullmatch(filename):
+        raise ValueError("Invalid HTML filename")
+    base = urlsplit(PUBLIC_BASE_URL)
+    return urlunsplit((base.scheme, base.netloc, _public_path(filename), '', ''))
+
+
+def public_html_filename(html_url: str | None) -> str | None:
+    """Map only this publisher's URLs, accepting historical duplicate slashes."""
+    if not isinstance(html_url, str) or not PUBLIC_BASE_URL or not PUBLIC_HTML_DIR:
+        return None
+    try:
+        base, target = urlsplit(PUBLIC_BASE_URL), urlsplit(html_url)
+        if (target.scheme not in ('http', 'https')
+                or (target.scheme, target.netloc) != (base.scheme, base.netloc)
+                or target.query or target.fragment):
+            return None
+        path = re.sub(r'/+', '/', target.path)
+        prefix = _public_path().rstrip('/') + '/'
+        filename = path[len(prefix):]
+        if path.startswith(prefix) and _HTML_FILENAME_RE.fullmatch(filename):
+            return filename
+    except (TypeError, ValueError):
+        pass
+    return None
 
 
 def _write_html_atomically(html_text, output_dir: str, cancel_check=None) -> str:
@@ -67,7 +102,7 @@ def publish_html(html_text: str) -> str:
 
     filename = _write_html_atomically(html_text, PUBLIC_HTML_DIR)
 
-    return f"{PUBLIC_BASE_URL}{PUBLIC_HTML_URL_PREFIX}/{filename}"
+    return public_html_url(filename)
 
 
 def publish_html_local(html_text: str) -> str:
@@ -76,16 +111,91 @@ def publish_html_local(html_text: str) -> str:
     return f"{LOCAL_HTML_PREFIX}{filename}"
 
 
-def publish_html_stream(write_content, *, local=False, cancel_check=None) -> str:
+def publish_html_stream(write_content, *, local=False, cancel_check=None, publication=None) -> str:
     """Atomically publish a callback-written HTML without materializing it."""
+    if publication is not None:
+        return _publish_registered(write_content,publication,cancel_check)
     if not local and (not PUBLIC_HTML_DIR or not PUBLIC_BASE_URL):
         raise RuntimeError("Public HTML mode requires TCD_PUBLIC_HTML_DIR and TCD_PUBLIC_BASE_URL")
     directory = OUT_DIR if local else PUBLIC_HTML_DIR
     filename = _write_html_atomically(write_content, directory, cancel_check=cancel_check)
-    return f"{LOCAL_HTML_PREFIX}{filename}" if local else f"{PUBLIC_BASE_URL}{PUBLIC_HTML_URL_PREFIX}/{filename}"
+    return f"{LOCAL_HTML_PREFIX}{filename}" if local else public_html_url(filename)
 
 
-def cleanup_stale_html_temp_files() -> int:
+def _publish_registered(write_content, publication, cancel_check):
+    if publication._lease is None or not publication._lease_created:
+        raise ValueError("HTML generation has not been reserved")
+    final = publication.path()
+    if final.exists():
+        raise FileExistsError("Generation filename already exists")
+    if not re.fullmatch(rf"\.{re.escape(publication.filename)}\.[0-9a-f]{{32}}\.tmp",publication.temp_name):
+        raise ValueError("Unsafe HTML temporary filename")
+    temp = final.parent / publication.temp_name
+    created = False
+    identity = None
+    digest = hashlib.sha256()
+    size = 0
+
+    def check_cancelled():
+        if cancel_check is not None and cancel_check():
+            raise RuntimeError("Загрузка была отменена.")
+
+    def still_owned():
+        try:
+            current = temp.stat(follow_symlinks=False)
+            return identity == (current.st_dev, current.st_ino)
+        except FileNotFoundError:
+            return False
+
+    try:
+        with temp.open('xb') as raw:
+            created = True
+            owned = os.fstat(raw.fileno())
+            identity = (owned.st_dev, owned.st_ino)
+            if not try_lock_file(raw):
+                raise OSError("Could not reserve HTML publication temp file")
+
+            class Output:
+                def write(self, text):
+                    nonlocal size
+                    check_cancelled()
+                    data = text.replace('\n',os.linesep).encode('utf-8')
+                    if raw.write(data) != len(data):
+                        raise OSError("Incomplete HTML write")
+                    digest.update(data)
+                    size += len(data)
+                    return len(text)
+
+            write_content(Output())
+            raw.flush()
+            os.fsync(raw.fileno())
+        check_cancelled()
+        if not size:
+            raise ValueError("Empty HTML output")
+        publication.stage(size,digest.hexdigest())  # Durable proof precedes final-file visibility.
+        check_cancelled()
+        publication.path()  # Revalidate configured root after any blocking DB wait.
+        if not still_owned():
+            raise ValueError("HTML temporary file was replaced")
+        os.link(temp,final)  # Atomic visibility, no overwrite even on a filename collision.
+        if os.name != 'nt':
+            directory_fd = os.open(final.parent,os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        publication._published = True
+        log_resources('html_published',html_bytes=size)
+        return publication.ref
+    finally:
+        if created:
+            if still_owned():
+                temp.unlink(missing_ok=True)
+            elif temp.exists() or temp.is_symlink():
+                logging.getLogger(__name__).warning("Replaced HTML temporary file retained")
+
+
+def cleanup_stale_html_temp_files(protected=()) -> int:
     """Remove only publisher temp files older than a day from configured output dirs."""
     roots = []
     for configured_dir in (OUT_DIR, PUBLIC_HTML_DIR):
@@ -104,6 +214,8 @@ def cleanup_stale_html_temp_files() -> int:
         try:
             for path in root.iterdir():
                 if not _TEMP_HTML_FILENAME_RE.fullmatch(path.name):
+                    continue
+                if path in protected:
                     continue
                 try:
                     if path.is_symlink() or not path.is_file() or path.stat().st_mtime >= cutoff:
@@ -154,21 +266,8 @@ def local_published_html_status(html_url: str | None) -> bool | None:
     if not PUBLIC_BASE_URL or not PUBLIC_HTML_DIR:
         return None
 
-    try:
-        base = urlsplit(PUBLIC_BASE_URL)
-        target = urlsplit(html_url)
-    except ValueError:
-        return None
-
-    if (target.scheme, target.netloc) != (base.scheme, base.netloc):
-        return None
-
-    expected_path_prefix = f"{base.path.rstrip('/')}{PUBLIC_HTML_URL_PREFIX.rstrip('/')}/"
-    if not target.path.startswith(expected_path_prefix) or target.query or target.fragment:
-        return None
-
-    filename = target.path[len(expected_path_prefix):]
-    if not re.fullmatch(r"chat_[0-9a-f]{32}\.html", filename):
+    filename = public_html_filename(html_url)
+    if filename is None:
         return None
 
     try:

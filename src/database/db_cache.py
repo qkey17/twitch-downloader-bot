@@ -5,6 +5,58 @@ from src.config import CACHE_TTL_SECONDS
 from .db_core import _connect
 
 
+def _upsert_cache(con,
+    vod_id: str,
+    fmt: str,
+    vod_url: str,
+    meta: Dict[str, Any],
+    stats: Dict[str, Any],
+    files: List[Dict[str, str]],
+) -> int:
+    cur = con.cursor()
+    now = time.time()
+
+    html_url = meta.get("html_url")
+
+    cur.execute("""
+    INSERT INTO vod_cache(
+        vod_id, fmt, vod_url, title, created_at, channel,
+        length_seconds, messages, unique_users, parts, html_url, cached_at
+    )
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(vod_id, fmt) DO UPDATE SET
+      vod_url=excluded.vod_url,
+      title=excluded.title,
+      created_at=excluded.created_at,
+      channel=excluded.channel,
+      length_seconds=excluded.length_seconds,
+      messages=excluded.messages,
+      unique_users=excluded.unique_users,
+      parts=excluded.parts,
+      html_url=excluded.html_url,
+      cached_at=excluded.cached_at
+    """, (
+        vod_id, fmt, vod_url,
+        meta.get("title"), meta.get("created_at"), meta.get("channel"), meta.get("length_seconds"),
+        stats.get("messages"), stats.get("unique_users"), stats.get("parts"),
+        html_url,
+        now
+    ))
+
+    cur.execute("SELECT id FROM vod_cache WHERE vod_id=? AND fmt=?", (vod_id, fmt))
+    row = cur.fetchone()
+    cache_id = int(row["id"])
+
+    cur.execute("DELETE FROM vod_files WHERE cache_id=?", (cache_id,))
+    for i, f in enumerate(files, start=1):
+        cur.execute("""
+        INSERT INTO vod_files(cache_id, part_index, file_id, file_name)
+        VALUES(?,?,?,?)
+        """, (cache_id, i, f["file_id"], f.get("file_name")))
+
+    return cache_id
+
+
 def upsert_cache(
     vod_id: str,
     fmt: str,
@@ -15,47 +67,7 @@ def upsert_cache(
 ) -> int:
     con = _connect()
     try:
-        cur = con.cursor()
-        now = time.time()
-
-        html_url = meta.get("html_url")
-
-        cur.execute("""
-        INSERT INTO vod_cache(
-            vod_id, fmt, vod_url, title, created_at, channel,
-            length_seconds, messages, unique_users, parts, html_url, cached_at
-        )
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-        ON CONFLICT(vod_id, fmt) DO UPDATE SET
-          vod_url=excluded.vod_url,
-          title=excluded.title,
-          created_at=excluded.created_at,
-          channel=excluded.channel,
-          length_seconds=excluded.length_seconds,
-          messages=excluded.messages,
-          unique_users=excluded.unique_users,
-          parts=excluded.parts,
-          html_url=excluded.html_url,
-          cached_at=excluded.cached_at
-        """, (
-            vod_id, fmt, vod_url,
-            meta.get("title"), meta.get("created_at"), meta.get("channel"), meta.get("length_seconds"),
-            stats.get("messages"), stats.get("unique_users"), stats.get("parts"),
-            html_url,
-            now
-        ))
-
-        cur.execute("SELECT id FROM vod_cache WHERE vod_id=? AND fmt=?", (vod_id, fmt))
-        row = cur.fetchone()
-        cache_id = int(row["id"])
-
-        cur.execute("DELETE FROM vod_files WHERE cache_id=?", (cache_id,))
-        for i, f in enumerate(files, start=1):
-            cur.execute("""
-            INSERT INTO vod_files(cache_id, part_index, file_id, file_name)
-            VALUES(?,?,?,?)
-            """, (cache_id, i, f["file_id"], f.get("file_name")))
-
+        cache_id = _upsert_cache(con, vod_id, fmt, vod_url, meta, stats, files)
         con.commit()
         return cache_id
     except Exception:
@@ -110,6 +122,8 @@ def get_cache(vod_id: str, fmt: str) -> Optional[Dict[str, Any]]:
 
 
 def cache_is_expired(cache_row: Dict[str, Any]) -> bool:
+    if cache_row.get("fmt") == "html_online":
+        return False  # HTML availability is determined by the registry/filesystem.
     cached_at = float(cache_row.get("cached_at") or 0)
     return (time.time() - cached_at) > CACHE_TTL_SECONDS
 
