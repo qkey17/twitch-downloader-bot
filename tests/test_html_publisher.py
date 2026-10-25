@@ -16,6 +16,9 @@ class _FailingWriter:
     def name(self):
         return self.handle.name
 
+    def fileno(self):
+        return self.handle.fileno()
+
     def __enter__(self):
         self.handle.__enter__()
         return self
@@ -168,6 +171,41 @@ class HtmlPublisherTestCase(unittest.TestCase):
         self.assertTrue(recent_temp.exists())
         self.assertTrue(malformed_temp.exists())
         self.assertTrue(completed_html.exists())
+
+    def test_startup_cleanup_never_removes_locked_publisher_temp(self):
+        import os
+        from src.file_lock import try_lock_file
+
+        temp = self.directory / (".chat_" + "b" * 32 + ".html." + "c" * 32 + ".tmp")
+        with temp.open("x+b") as writer:
+            self.assertTrue(try_lock_file(writer))
+            writer.write(b"in progress")
+            writer.flush()
+            os.utime(temp, (1, 1))
+            with patch.object(html_publisher, "OUT_DIR", str(self.directory)):
+                self.assertEqual(0, html_publisher.cleanup_stale_html_temp_files())
+            self.assertTrue(temp.exists())
+        with patch.object(html_publisher, "OUT_DIR", str(self.directory)):
+            self.assertEqual(1, html_publisher.cleanup_stale_html_temp_files())
+
+    def test_cleanup_rechecks_age_after_acquiring_lock(self):
+        import os
+
+        temp = self.directory / (".chat_" + "b" * 32 + ".html." + "c" * 32 + ".tmp")
+        temp.write_text("writer resumed", encoding="utf-8")
+        os.utime(temp, (1, 1))
+        original = html_publisher.try_lock_file
+
+        def lock_after_recent_write(handle):
+            # The writer refreshed/flushed the file between the initial stat
+            # and cleanup's lock attempt, and is about to rename it.
+            os.utime(temp, None)
+            return original(handle)
+
+        with patch.object(html_publisher, "OUT_DIR", str(self.directory)), \
+             patch.object(html_publisher, "try_lock_file", side_effect=lock_after_recent_write):
+            self.assertEqual(0, html_publisher.cleanup_stale_html_temp_files())
+        self.assertTrue(temp.exists())
 
 
 if __name__ == "__main__":

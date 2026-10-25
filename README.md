@@ -66,7 +66,31 @@ python -m src.main
 
 The startup sequence validates required credentials, initializes SQLite, creates the shared HTTP session, registers Telegram handlers, and starts long polling.
 
-Each bot process permits one active VOD download/generation/publication at a time for all users. A second processing request receives a busy message; there is no waiting queue. Selecting a format does not reserve the slot until processing starts. Usable cached results remain available to other users while processing runs. Run only one bot instance: this limit is in memory and does not coordinate multiple processes. Commands remain available during network waits and HTML preparation; large chats still require the existing in-memory data structures and can use substantial RAM.
+Each bot process permits one active VOD download/generation/publication at a time for all users. A second processing request receives a busy message; there is no waiting queue. Selecting a format does not reserve the slot until processing starts. Usable cached results remain available to other users while processing runs. Run only one bot instance: this limit is in memory and does not coordinate multiple processes. Network waits and HTML preparation do not hold the sequential Telegram update handler; resource limits are described below.
+
+## Disk-backed processing (Stage B)
+
+Chat rows and case-sensitive unique usernames are stored in a separate temporary SQLite database for each operation. A bounded buffer is flushed in a worker thread; two sequential cursor passes preserve emote selection and stream the existing viewer into one HTML file. Each pass verifies sequence continuity and the committed message count, aborting publication if temporary data is incomplete. The production path never assembles all rows, the entire JSON, or the HTML string in memory. The original string-returning renderer remains available for small direct callers. Network responses, catalogs, one row and a bounded write buffer still require RAM; a single unusually large row can exceed the buffer byte target. Browser memory remains proportional to the complete chat because the viewer still parses all JSON.
+
+Optional settings:
+
+- `TCD_SPOOL_DIR` — defaults to `<project>/_work`; relative overrides are also project-relative and `~` is expanded. Use a private writable directory on a real disk, separate from public HTML; do not use `/dev/shm` or a RAM disk.
+- `TCD_SPOOL_BATCH_MESSAGES` — maximum buffered rows, default `5000`.
+- `TCD_SPOOL_BATCH_BYTES` — maximum buffered UTF-8 JSON bytes, default `4194304` (4 MiB). A batch may flush earlier to keep progress counts current; an oversized single row is written alone.
+
+Reserve disk for the temporary SQLite (including its username index/journal) plus the new HTML and all retained finished results. Database and HTML sizes depend on text and metadata; synthetic measurements are not real-chat averages. An `ENOSPC`/write/API failure aborts the job, cleans owned temporary resources, and leaves the previous ready cache entry intact. No finished-page retention or disk-pressure deletion is implemented. A crash after the atomic rename but before cache update can still leave a complete unregistered HTML; generation tracking is deferred to the next stage.
+
+Cancellation waits for any blocking operation to finish or observe its cooperative stop request before resources and the global slot are released. On startup, only correctly named and marked temporary chat directories whose OS lease can be acquired are removed. Unknown files, symlinks, active leases and finished HTML are preserved. Existing publisher temporary files retain their strict naming/24-hour cleanup rule and now also use OS leases. Restarting an interrupted download starts it again from the beginning; there is no cursor resume.
+
+Resource INFO logs report current RSS, process-lifetime peak RSS, Linux process swap, temporary DB size, completed HTML size and elapsed job time. `VmHWM` is a lifetime process peak, not a per-job peak. Windows uses working-set counters and reports swap as unavailable; missing `/proc` is safe. The preliminary 350–400 MiB RSS budget must be validated on the actual Oracle VM; this change does not impose a hard memory limit. Python/GIL, disk I/O and one large API page can still affect latency.
+
+Offline reproduction (no credentials, synthetic rows, fresh process per size):
+
+```sh
+python benchmarks/benchmark_streaming.py --sizes 10000 100000 250000
+```
+
+The benchmark runs the real download/spool/renderer/local-publisher path with mocked network sources, samples RSS and reports the OS process peak, timings and file sizes. It stops above 700 MiB RSS or below 1 GiB free disk and removes only its own temporary files. `--work-dir /path/on/disk` changes its scratch location. Streaming time includes file writes; publication overhead excludes streaming, and ingestion time includes synthetic generation. Linux `/proc` swap and Windows private bytes have different meanings and are reported separately. Repeat on Ubuntu 24.04/Python 3.12 and measure bot responsiveness, storage permissions, free disk and RSS before serving large VODs.
 
 ## Local data and output
 
@@ -96,10 +120,10 @@ For a new installation, create a dedicated service account and writable data dir
 
 ```sh
 sudo useradd --system --user-group --no-create-home --home-dir /var/lib/twitch-downloader-bot --shell /usr/sbin/nologin tdb
-sudo install -d -o tdb -g tdb -m 0750 /var/lib/twitch-downloader-bot /opt/twitch-downloader-bot/_out
+sudo install -d -o tdb -g tdb -m 0750 /var/lib/twitch-downloader-bot /opt/twitch-downloader-bot/_out /opt/twitch-downloader-bot/_work
 ```
 
-The service needs read/traverse access to the checkout and virtual environment, and write access to `_out` and the database directory. `_out` is currently fixed relative to the checkout and is initialized even in public mode. SQLite also needs permission to create journal files next to the database.
+The service needs read/traverse access to the checkout and virtual environment, and write access to `_out`, `_work` (or the configured `TCD_SPOOL_DIR`) and the database directory. `_out` is currently fixed relative to the checkout and is initialized even in public mode. SQLite also needs permission to create journal files next to the database. Keep the temporary work directory private and on disk; if you override it, create that directory writable by `tdb` before the first download.
 
 Create the environment file only for the initial installation; retain the existing file during updates:
 

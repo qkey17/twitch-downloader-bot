@@ -4,6 +4,8 @@ import time
 import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
+from .file_lock import try_lock_file
+from .resource_usage import log_resources
 
 from .config import (
     OUT_DIR,
@@ -20,7 +22,7 @@ _TEMP_HTML_FILENAME_RE = re.compile(
 _STALE_TEMP_HTML_AGE_SECONDS = 24 * 60 * 60
 
 
-def _write_html_atomically(html_text: str, output_dir: str) -> str:
+def _write_html_atomically(html_text, output_dir: str, cancel_check=None) -> str:
     os.makedirs(output_dir, exist_ok=True)
 
     filename = f"chat_{uuid.uuid4().hex}.html"
@@ -31,13 +33,22 @@ def _write_html_atomically(html_text: str, output_dir: str) -> str:
     try:
         with open(temp_path, "x", encoding="utf-8") as temp_file:
             temp_created = True
-            written = temp_file.write(html_text)
-            if written != len(html_text):
-                raise OSError("Incomplete HTML write")
+            if not try_lock_file(temp_file):
+                raise OSError("Could not reserve HTML publication temp file")
+            if callable(html_text):
+                html_text(temp_file)
+            else:
+                written = temp_file.write(html_text)
+                if written != len(html_text):
+                    raise OSError("Incomplete HTML write")
             temp_file.flush()
+            html_bytes = os.fstat(temp_file.fileno()).st_size
 
+        if cancel_check is not None and cancel_check():
+            raise RuntimeError("Загрузка была отменена.")
         os.replace(temp_path, filepath)
         temp_path = None
+        log_resources("html_published", html_bytes=html_bytes)
     finally:
         if temp_path is not None and temp_created:
             try:
@@ -65,6 +76,15 @@ def publish_html_local(html_text: str) -> str:
     return f"{LOCAL_HTML_PREFIX}{filename}"
 
 
+def publish_html_stream(write_content, *, local=False, cancel_check=None) -> str:
+    """Atomically publish a callback-written HTML without materializing it."""
+    if not local and (not PUBLIC_HTML_DIR or not PUBLIC_BASE_URL):
+        raise RuntimeError("Public HTML mode requires TCD_PUBLIC_HTML_DIR and TCD_PUBLIC_BASE_URL")
+    directory = OUT_DIR if local else PUBLIC_HTML_DIR
+    filename = _write_html_atomically(write_content, directory, cancel_check=cancel_check)
+    return f"{LOCAL_HTML_PREFIX}{filename}" if local else f"{PUBLIC_BASE_URL}{PUBLIC_HTML_URL_PREFIX}/{filename}"
+
+
 def cleanup_stale_html_temp_files() -> int:
     """Remove only publisher temp files older than a day from configured output dirs."""
     roots = []
@@ -88,6 +108,11 @@ def cleanup_stale_html_temp_files() -> int:
                 try:
                     if path.is_symlink() or not path.is_file() or path.stat().st_mtime >= cutoff:
                         continue
+                    with path.open("r+b") as handle:
+                        if not try_lock_file(handle):
+                            continue
+                        if os.fstat(handle.fileno()).st_mtime >= cutoff:
+                            continue
                     path.unlink()
                     removed += 1
                 except OSError:

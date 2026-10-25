@@ -1,11 +1,13 @@
-import asyncio
+import threading
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 from collections import Counter
 
 from src.config import HTML_PUBLISH_MODE
-from src.html_renderer import render_viewer_html
-from src.html_publisher import publish_html, publish_html_local
+from src.html_renderer import render_viewer_html, write_viewer_html
+from src.html_publisher import publish_html, publish_html_local, publish_html_stream
+from src.chat_spool import ChatSpool
+from .worker_io import run_blocking
 from src.twitch_api import (
     fetch_7tv_emote_map,
     fetch_bttv_emote_map,
@@ -26,12 +28,14 @@ async def build_html_result(
     vod_url: str,
     base_stem: str,
     out_dir: Path,
-    chat_rows: List[Dict],
+    chat_rows: List[Dict] | ChatSpool,
     token_counter: Counter,
     cancel_check: Callable[[], bool] | None = None,
 ):
+    stop = threading.Event()
+
     def check_cancelled():
-        if cancel_check is not None and cancel_check():
+        if stop.is_set() or (cancel_check is not None and cancel_check()):
             raise RuntimeError("Загрузка была отменена.")
 
     sent_files: List[Dict[str, str]] = []
@@ -94,24 +98,31 @@ async def build_html_result(
         targets = set()
         targets_by_id = set()
 
-        for row in chat_rows:
-            text = row.get("text") or ""
-            for word in text.split():
-                if word in combined_map:
-                    targets.add(word)
+        rows = chat_rows.iter_rows() if isinstance(chat_rows, ChatSpool) else iter(chat_rows)
+        try:
+            for row in rows:
+                check_cancelled()
+                text = row.get("text") or ""
+                for word in text.split():
+                    if word in combined_map:
+                        targets.add(word)
 
-            for fragment in row.get("fragments") or []:
-                if not isinstance(fragment, dict):
-                    continue
-                frag_text = (fragment.get("text") or "").strip()
-                if frag_text and frag_text in combined_map:
-                    targets.add(frag_text)
+                for fragment in row.get("fragments") or []:
+                    if not isinstance(fragment, dict):
+                        continue
+                    frag_text = (fragment.get("text") or "").strip()
+                    if frag_text and frag_text in combined_map:
+                        targets.add(frag_text)
 
-                emote = fragment.get("emote") or {}
-                if isinstance(emote, dict):
-                    emote_id = emote.get("emoteID") or emote.get("id")
-                    if emote_id and str(emote_id) in twitch_emote_id_map:
-                        targets_by_id.add(str(emote_id))
+                    emote = fragment.get("emote") or {}
+                    if isinstance(emote, dict):
+                        emote_id = emote.get("emoteID") or emote.get("id")
+                        if emote_id and str(emote_id) in twitch_emote_id_map:
+                            targets_by_id.add(str(emote_id))
+        finally:
+            close = getattr(rows, "close", None)
+            if close is not None:
+                close()
 
         # HTML ONLINE — используем CDN ссылки эмоутов
         for name in targets:
@@ -120,8 +131,7 @@ async def build_html_result(
             cdn_emotes[emote_id] = twitch_emote_id_map[emote_id]
 
         check_cancelled()
-        html_text = render_viewer_html(
-            chat_rows=chat_rows,
+        options = dict(
             title=(meta.title or "—"),
             channel=(meta.channel or "—"),
             vod_url=vod_url,
@@ -135,6 +145,22 @@ async def build_html_result(
             badge_images=badge_images,
         )
 
+        if isinstance(chat_rows, ChatSpool):
+            if HTML_PUBLISH_MODE not in {"local", "public"}:
+                raise ValueError(f"Unsupported HTML publication mode: {HTML_PUBLISH_MODE}")
+
+            def write_content(output):
+                write_viewer_html(output, chat_rows.iter_rows(), **options,
+                                  cancel_check=lambda: stop.is_set() or (cancel_check and cancel_check()))
+
+            return publish_html_stream(
+                write_content, local=HTML_PUBLISH_MODE == "local",
+                cancel_check=lambda: stop.is_set() or (cancel_check and cancel_check()),
+            )
+
+        # Retain the small, in-memory compatibility interface for direct callers.
+        html_text = render_viewer_html(chat_rows=chat_rows, **options)
+
         check_cancelled()
         if HTML_PUBLISH_MODE == "local":
             html_result_ref = publish_html_local(html_text)
@@ -145,21 +171,6 @@ async def build_html_result(
 
         return html_result_ref
 
-    # Retain and await the thread job even on task cancellation: the global
-    # download slot and shutdown must outlive all writes by this operation.
-    work = asyncio.create_task(asyncio.to_thread(render_and_publish))
-    try:
-        html_result_ref = await asyncio.shield(work)
-    except asyncio.CancelledError:
-        while not work.done():
-            try:
-                await asyncio.shield(work)
-            except asyncio.CancelledError:
-                continue
-            except Exception:
-                break
-        if not work.cancelled():
-            work.exception()  # Retrieve a possible failure before propagating cancellation.
-        raise
+    html_result_ref = await run_blocking(render_and_publish, on_cancel=stop.set)
 
     return sent_files, html_result_ref

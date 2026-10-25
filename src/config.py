@@ -79,6 +79,24 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # Output
 OUT_DIR = str(PROJECT_ROOT / "_out")
 
+# Temporary chat storage must reside on disk, separately from public HTML.
+_spool_dir = Path(os.getenv("TCD_SPOOL_DIR") or "_work").expanduser()
+SPOOL_DIR = str(_spool_dir if _spool_dir.is_absolute() else PROJECT_ROOT / _spool_dir)
+
+
+def _positive_int_env(name, default):
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        raise ConfigurationError(f"Environment variable {name} must be a positive integer") from None
+    if value <= 0:
+        raise ConfigurationError(f"Environment variable {name} must be a positive integer")
+    return value
+
+
+SPOOL_BATCH_MESSAGES = _positive_int_env("TCD_SPOOL_BATCH_MESSAGES", 5000)
+SPOOL_BATCH_BYTES = _positive_int_env("TCD_SPOOL_BATCH_BYTES", 4 * 1024 * 1024)
+
 # Progress
 PROGRESS_INTERVAL = 3.0
 

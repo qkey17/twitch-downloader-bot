@@ -15,6 +15,7 @@ from src.database import database as db
 from src import config
 from .config import ConfigurationError, get_telegram_bot_token, validate_credentials
 from .html_publisher import cleanup_stale_html_temp_files
+from .chat_spool import cleanup_orphaned_chat_spools
 from src.handlers.handlers import (
     start_command,
     about_command,
@@ -55,6 +56,9 @@ async def history_command(update, context: ContextTypes.DEFAULT_TYPE):
 
 async def post_init(app: Application):
     db.init_db()
+    removed_spools = cleanup_orphaned_chat_spools(config.SPOOL_DIR)
+    if removed_spools:
+        logging.getLogger("tcd").info("Removed %s orphaned chat spool(s)", removed_spools)
     removed_temp_files = cleanup_stale_html_temp_files()
     if removed_temp_files:
         logging.getLogger("tcd").info(

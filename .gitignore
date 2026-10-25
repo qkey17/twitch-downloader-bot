@@ -19,6 +19,7 @@ __pycache__/
 
 # Build/output
 _out/
+/_work/
 .chat_*.html.*.tmp
 /tests/tdb-*/
 

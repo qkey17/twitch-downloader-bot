@@ -36,6 +36,9 @@ async def gql_fetch_comments(
     cursor = None
     delay_s = FETCH_DELAY_BASE
     page_number = 1
+    cycle_anchor = None
+    cycle_span = 1
+    cycle_steps = 0
 
     while True:
         edges: List[dict] = []
@@ -76,6 +79,18 @@ async def gql_fetch_comments(
 
         if not edges:
             return
+
+        # Do not emit a repeated page or fill the disk indefinitely on no progress.
+        if has_next:
+            if next_cursor == cursor or next_cursor == cycle_anchor:
+                raise TwitchAPIError("Twitch comments pagination made no progress")
+            # Brent's cycle check retains one anchor instead of an unbounded set
+            # of cursors. Also stop multi-page cycles before accepting a result.
+            if cycle_steps == cycle_span:
+                cycle_anchor = next_cursor
+                cycle_span *= 2
+                cycle_steps = 0
+            cycle_steps += 1
 
         for edge in edges:
             _check_cancel(cancel_check)
