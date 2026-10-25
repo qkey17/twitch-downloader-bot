@@ -97,6 +97,13 @@ def _positive_int_env(name, default):
 SPOOL_BATCH_MESSAGES = _positive_int_env("TCD_SPOOL_BATCH_MESSAGES", 5000)
 SPOOL_BATCH_BYTES = _positive_int_env("TCD_SPOOL_BATCH_BYTES", 4 * 1024 * 1024)
 
+# Published HTML is retained indefinitely unless its filesystem is low on space.
+HTML_CLEANUP_LOW_BYTES = _positive_int_env("TCD_HTML_CLEANUP_LOW_BYTES", 5 * 1024**3)
+HTML_CLEANUP_TARGET_BYTES = _positive_int_env("TCD_HTML_CLEANUP_TARGET_BYTES", 8 * 1024**3)
+HTML_CLEANUP_INTERVAL_SECONDS = _positive_int_env("TCD_HTML_CLEANUP_INTERVAL_SECONDS", 600)
+if HTML_CLEANUP_TARGET_BYTES <= HTML_CLEANUP_LOW_BYTES:
+    raise ConfigurationError("TCD_HTML_CLEANUP_TARGET_BYTES must exceed TCD_HTML_CLEANUP_LOW_BYTES")
+
 # Progress
 PROGRESS_INTERVAL = 3.0
 

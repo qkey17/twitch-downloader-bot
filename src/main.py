@@ -18,6 +18,7 @@ from .html_publisher import cleanup_stale_html_temp_files
 from .chat_spool import cleanup_orphaned_chat_spools
 from .database.db_results import recover_results, protected_temp_files
 from .handlers.handlers_vod import vod_result_callback
+from .html_cleanup import start_cleanup, stop_cleanup
 from src.handlers.handlers import (
     start_command,
     about_command,
@@ -67,6 +68,8 @@ async def post_init(app: Application):
         logging.getLogger("tcd").info(
             "Removed %s stale HTML publication temp file(s)", removed_temp_files
         )
+    # Reclaim already eligible orphan temps before considering finished HTML.
+    await start_cleanup(app)
     app.bot_data["aiohttp"] = aiohttp.ClientSession()
 
     commands = [
@@ -77,10 +80,18 @@ async def post_init(app: Application):
     await app.bot.set_my_commands(commands)
 
 
+async def post_stop(app: Application):
+    await stop_cleanup(app)
+
+
 async def post_shutdown(app: Application):
-    session: aiohttp.ClientSession | None = app.bot_data.get("aiohttp")
-    if session:
-        await session.close()
+    # Also covers a failed startup, when PTB does not invoke post_stop.
+    try:
+        await stop_cleanup(app)
+    finally:
+        session: aiohttp.ClientSession | None = app.bot_data.get("aiohttp")
+        if session:
+            await session.close()
 
 
 def main():
@@ -99,6 +110,7 @@ def main():
         Application.builder()
         .token(token)
         .post_init(post_init)
+        .post_stop(post_stop)
         .post_shutdown(post_shutdown)
         .build()
     )

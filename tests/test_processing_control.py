@@ -355,6 +355,7 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
             session = SimpleNamespace(close=AsyncMock())
             with patch.object(config, "HISTORY_ENABLED", enabled), \
                  patch.object(main.aiohttp, "ClientSession", return_value=session), \
+                 patch.object(main, "start_cleanup", AsyncMock()), \
                  patch.object(main, "cleanup_stale_html_temp_files", return_value=0):
                 await main.post_init(app)
                 commands = [command.command for command in app.bot.set_my_commands.await_args.args[0]]
@@ -445,7 +446,7 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
              patch.object(main, "validate_credentials"), \
              patch.object(main, "setup_logging"), \
              patch.object(Application, "run_polling"):
-            builder.return_value.token.return_value.post_init.return_value.post_shutdown.return_value.build.return_value = app
+            builder.return_value.token.return_value.post_init.return_value.post_stop.return_value.post_shutdown.return_value.build.return_value = app
             main.main()
         links = [h for group in app.handlers.values() for h in group if isinstance(h, MessageHandler)]
         callbacks = [h for group in app.handlers.values() for h in group if isinstance(h, CallbackQueryHandler)]

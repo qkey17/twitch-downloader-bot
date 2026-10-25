@@ -46,3 +46,4 @@ logs/
 *.sqlite3-journal
 *.sqlite3-wal
 *.sqlite3-shm
+*.html-cleanup.lock

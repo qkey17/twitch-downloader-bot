@@ -43,8 +43,25 @@ def create_schema(con):
         )""",
         "CREATE INDEX IF NOT EXISTS idx_html_results_vod ON html_results(vod_id,fmt,created_at)",
         "CREATE INDEX IF NOT EXISTS idx_html_results_cache ON html_results(cache_id)",
+        "CREATE INDEX IF NOT EXISTS idx_html_results_previous ON html_results(previous_id,state)",
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_html_result_path ON html_results(root,filename) WHERE managed=1",
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_html_legacy_cache ON html_results(cache_id) WHERE origin='legacy'",
+        """CREATE TABLE IF NOT EXISTS html_deletions (
+            result_id TEXT PRIMARY KEY REFERENCES html_results(id),
+            phase TEXT NOT NULL CHECK(phase IN ('pending','quarantined','done','cancelled')),
+            root TEXT NOT NULL, filename TEXT NOT NULL, quarantine TEXT NOT NULL,
+            device TEXT NOT NULL, inode TEXT NOT NULL, size_bytes INTEGER NOT NULL,
+            mtime_ns TEXT NOT NULL, dir_device TEXT, dir_inode TEXT,
+            created_at REAL NOT NULL, updated_at REAL NOT NULL, error_code TEXT
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_html_deletions_phase ON html_deletions(phase)",
+        """CREATE TABLE IF NOT EXISTS html_removed_heads (
+            vod_id TEXT NOT NULL, fmt TEXT NOT NULL, result_id TEXT NOT NULL,
+            PRIMARY KEY(vod_id,fmt),
+            FOREIGN KEY(result_id,vod_id,fmt) REFERENCES html_results(id,vod_id,fmt)
+        )""",
+        """CREATE INDEX IF NOT EXISTS idx_html_cleanup_ready ON html_results
+           (root,COALESCE(completed_at,created_at),created_at,id) WHERE state='ready' AND managed=1""",
         """CREATE TABLE IF NOT EXISTS html_current (
             vod_id TEXT NOT NULL, fmt TEXT NOT NULL, result_id TEXT NOT NULL,
             PRIMARY KEY(vod_id,fmt),
@@ -181,7 +198,9 @@ def migrate_legacy(con, vod_id=None):
                      size,old['cached_at'],old['cached_at'] if state=='ready' else None,old['id'],
                      json.dumps(meta,ensure_ascii=False),json.dumps(stats),None if state=='ready' else status))
         if state == "ready":
-            con.execute("INSERT OR IGNORE INTO html_current(vod_id,fmt,result_id) VALUES(?,?,?)",(old['vod_id'],old['fmt'],key))
+            con.execute("""INSERT OR IGNORE INTO html_current(vod_id,fmt,result_id)
+                SELECT ?,?,? WHERE NOT EXISTS(SELECT 1 FROM html_removed_heads WHERE vod_id=? AND fmt=?)""",
+                (old['vod_id'],old['fmt'],key,old['vod_id'],old['fmt']))
         else:
             log.warning("Legacy HTML cache needs verification: cache_id=%s reason=%s",old['id'],status)
     _retry_legacy(con,vod_id)
@@ -215,8 +234,9 @@ def _retry_legacy(con,vod_id):
             continue
         con.execute("UPDATE html_results SET state='ready',root=?,filename=?,managed=1,size_bytes=?,completed_at=created_at,error_code=NULL WHERE id=?",
                     (row['root'],row['filename'],size,row['id']))
-        con.execute('INSERT OR IGNORE INTO html_current(vod_id,fmt,result_id) VALUES(?,?,?)',
-                    (row['vod_id'],row['fmt'],row['id']))
+        con.execute('''INSERT OR IGNORE INTO html_current(vod_id,fmt,result_id)
+            SELECT ?,?,? WHERE NOT EXISTS(SELECT 1 FROM html_removed_heads WHERE vod_id=? AND fmt=?)''',
+                    (row['vod_id'],row['fmt'],row['id'],row['vod_id'],row['fmt']))
 
 
 def get_ready_result(vod_id, fmt="html_online"):
@@ -224,13 +244,15 @@ def get_ready_result(vod_id, fmt="html_online"):
     con = _connect()
     try:
         row = con.execute("""SELECT r.* FROM html_current h JOIN html_results r ON r.id=h.result_id AND r.vod_id=h.vod_id AND r.fmt=h.fmt
-                             WHERE h.vod_id=? AND h.fmt=? AND r.state='ready'""",(vod_id,fmt)).fetchone()
+                             WHERE h.vod_id=? AND h.fmt=? AND r.state='ready'
+                             AND NOT EXISTS(SELECT 1 FROM html_deletions d WHERE d.result_id=r.id AND d.phase!='cancelled')""",(vod_id,fmt)).fetchone()
         if row is None:
             # Compatibility for callers still populating the old cache API.
             migrate_legacy(con, vod_id)
             con.commit()
             row = con.execute("""SELECT r.* FROM html_current h JOIN html_results r ON r.id=h.result_id AND r.vod_id=h.vod_id AND r.fmt=h.fmt
-                                 WHERE h.vod_id=? AND h.fmt=? AND r.state='ready'""",(vod_id,fmt)).fetchone()
+                                 WHERE h.vod_id=? AND h.fmt=? AND r.state='ready'
+                                 AND NOT EXISTS(SELECT 1 FROM html_deletions d WHERE d.result_id=r.id AND d.phase!='cancelled')""",(vod_id,fmt)).fetchone()
         if not row:
             return None
         result = dict(row)
@@ -290,6 +312,8 @@ class Publication:
         con = _connect()
         try:
             with con:
+                # Serialize the previous-head snapshot with deletion claims.
+                con.execute("BEGIN IMMEDIATE")
                 migrate_legacy(con,self.vod_id)
                 previous = con.execute("SELECT result_id FROM html_current WHERE vod_id=? AND fmt=?",(self.vod_id,self.fmt)).fetchone()
                 self.previous_id = previous['result_id'] if previous else None
@@ -378,12 +402,19 @@ def _activate(con,row,expected_previous):
         raise ValueError("Invalid generation identity")
     current = con.execute("SELECT result_id FROM html_current WHERE vod_id=? AND fmt=?",(row['vod_id'],row['fmt'])).fetchone()
     if (current['result_id'] if current else None) != expected_previous:
-        raise ValueError("Current HTML generation changed during processing")
+        # A claim preceding reserve() may finish while this new VOD is built.
+        # Only that exact, durably deleted predecessor can satisfy the CAS.
+        deleted = con.execute("""SELECT 1 FROM html_results r JOIN html_removed_heads t ON t.result_id=r.id
+            WHERE r.id=? AND r.vod_id=? AND r.fmt=? AND r.state='deleted'""",
+            (expected_previous,row['vod_id'],row['fmt'])).fetchone()
+        if current is not None or not deleted:
+            raise ValueError("Current HTML generation changed during processing")
     meta,stats = _payload(row)
     cache_id = _upsert_cache(con,row['vod_id'],row['fmt'],f"https://www.twitch.tv/videos/{row['vod_id']}",meta,stats,[])
     con.execute("UPDATE html_results SET state='ready',completed_at=?,cache_id=? WHERE id=?",(time.time(),cache_id,row['id']))
     con.execute("""INSERT INTO html_current(vod_id,fmt,result_id) VALUES(?,?,?)
                    ON CONFLICT(vod_id,fmt) DO UPDATE SET result_id=excluded.result_id""",(row['vod_id'],row['fmt'],row['id']))
+    con.execute('DELETE FROM html_removed_heads WHERE vod_id=? AND fmt=?',(row['vod_id'],row['fmt']))
     return cache_id
 
 
