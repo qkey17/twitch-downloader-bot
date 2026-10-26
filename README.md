@@ -217,6 +217,12 @@ The default local mode creates HTML in `/opt/twitch-downloader-bot/_out` without
 
 ## Checks without starting the bot
 
+For the existing Oracle VM, the manually triggered SSH workflow, dedicated-key
+setup, host-key pinning, recovery behavior and operational limits are described
+in [Oracle deployment](docs/oracle-deployment.md). Its default mode checks access
+without updating or restarting the service. Publishing the workflow or preparing
+these files does not deploy the application.
+
 After installation, syntax and import checks can be run without polling:
 
 ```powershell

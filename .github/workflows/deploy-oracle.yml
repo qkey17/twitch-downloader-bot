@@ -1,0 +1,88 @@
+name: Oracle deployment
+run-name: Oracle ${{ inputs.check_only && 'preflight' || 'deployment' }} by @${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Full main commit SHA; empty means the selected main revision of this run
+        required: false
+        type: string
+      check_only:
+        description: Check SSH and server configuration without updating or restarting the bot
+        required: true
+        default: true
+        type: boolean
+
+# No checkout, GitHub API calls or third-party actions are needed.
+permissions: {}
+concurrency:
+  group: tdb-oracle-production
+  cancel-in-progress: false
+
+jobs:
+  oracle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment:
+      name: oracle-production
+      deployment: ${{ !inputs.check_only }}
+    steps:
+      - name: Validate request, connect and run the restricted server helper
+        shell: bash
+        env:
+          TARGET_INPUT: ${{ inputs.commit }}
+          CHECK_ONLY: ${{ inputs.check_only }}
+          ORACLE_SSH_PRIVATE_KEY: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}
+          ORACLE_SSH_KNOWN_HOSTS: ${{ secrets.ORACLE_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo 'Run this workflow from main.' >&2; exit 1; }
+          target="${TARGET_INPUT:-$GITHUB_SHA}"
+          [[ "$target" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'Provide a full 40-character commit SHA.' >&2; exit 1; }
+          target="${target,,}"
+          [[ "$CHECK_ONLY" == true || "$CHECK_ONLY" == false ]] || exit 1
+          [[ -n "$ORACLE_SSH_PRIVATE_KEY" && -n "$ORACLE_SSH_KNOWN_HOSTS" ]] || {
+            echo 'Configure both Oracle SSH secrets in the oracle-production environment.' >&2; exit 1;
+          }
+          work=$(mktemp -d "$RUNNER_TEMP/tdb-ssh.XXXXXXXX")
+          cleanup() {
+            rm -f -- "$work/key" "$work/known_hosts" "$work/check.txt" "$work/deploy.txt"
+            rmdir -- "$work"
+          }
+          trap cleanup EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          printf '%s\n' "$ORACLE_SSH_PRIVATE_KEY" | sed 's/\r$//' > "$work/key"
+          printf '%s\n' "$ORACLE_SSH_KNOWN_HOSTS" | sed 's/\r$//' > "$work/known_hosts"
+          unset ORACLE_SSH_PRIVATE_KEY ORACLE_SSH_KNOWN_HOSTS
+          ssh-keygen -y -P '' -f "$work/key" > /dev/null 2>&1 || {
+            echo 'The deployment key must be a valid dedicated key usable non-interactively.' >&2; exit 1;
+          }
+          ssh-keygen -F 129.153.145.173 -f "$work/known_hosts" > /dev/null || {
+            echo 'The pinned known_hosts entry does not match the deployment host.' >&2; exit 1;
+          }
+          ssh_options=(
+            -F /dev/null -T -i "$work/key"
+            -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityAgent=none
+            -o PasswordAuthentication=no -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$work/known_hosts" -o GlobalKnownHostsFile=/dev/null
+            -o HostKeyAlgorithms=ssh-ed25519 -o LogLevel=ERROR
+            -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=3
+          )
+          ssh "${ssh_options[@]}" ubuntu@129.153.145.173 check > "$work/check.txt"
+          grep -qx 'CHECK_OK protocol=1' "$work/check.txt" || {
+            echo 'The restricted server helper did not confirm the expected protocol.' >&2; exit 1;
+          }
+          if [[ "$CHECK_ONLY" == true ]]; then
+            echo 'Preflight passed. No code update or service restart was performed.'
+            echo '### Preflight passed — no deployment performed' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          ssh "${ssh_options[@]}" ubuntu@129.153.145.173 "deploy $target" > "$work/deploy.txt"
+          grep -qx "DEPLOYED $target" "$work/deploy.txt" || {
+            echo 'Deployment was not confirmed; inspect the safe stage diagnostics.' >&2; exit 1;
+          }
+          printf '### Deployment verified\n\nCommit: `%s`\n' "$target" >> "$GITHUB_STEP_SUMMARY"
+          echo "Deployment verified: $target"
