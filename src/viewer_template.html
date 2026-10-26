@@ -73,7 +73,7 @@ header{
   grid-template-columns:132px minmax(0,1fr);
   gap:10px;
   min-width:0;
-  overflow:hidden;
+  overflow:visible;
   transition:max-height .25s ease, opacity .2s ease, transform .25s ease, margin .2s ease;
   max-height:1000px;
   opacity:1;
@@ -167,6 +167,7 @@ header{
 }
 
 .vod-card{
+  align-self:start;
   margin-bottom: var(--control-gap);
   border:1px solid rgba(145,70,255,0.25);
   border-radius:18px;
