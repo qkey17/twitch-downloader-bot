@@ -156,6 +156,91 @@ class ResultRegistryTestCase(unittest.TestCase):
         self.assertEqual(old.ref,db.get_cache('123456789','html_online')['html_url'])
         self.assertTrue(new.path().exists())
 
+    def test_file_sync_failure_never_stages_or_replaces_previous_generation(self):
+        old = self.ready()
+        old_bytes = old.path().read_bytes()
+        cache_id = db.get_cache(old.vod_id, 'html_online')['id']
+        db.add_user_history(7, cache_id)
+        new = self.plan()
+
+        with patch.object(html_publisher.os, 'fsync', side_effect=OSError(errno.EIO, 'sync failed')):
+            with self.assertRaises(OSError) as caught:
+                self.publish(new, 'new')
+        row = next(row for row in self.rows() if row['id'] == new.id)
+        self.assertEqual('building', row['state'])
+        self.assertIsNone(row['sha256'])
+        new.fail(caught.exception)
+        new.close()
+
+        for _ in range(2):
+            results.recover_results()
+            self.assertEqual(old.id, results.get_ready_result(old.vod_id)['id'])
+            self.assertEqual(old.ref, db.get_cache(old.vod_id, 'html_online')['html_url'])
+            self.assertEqual(cache_id, db.get_history_for_user(7)[0]['id'])
+            self.assertEqual(old_bytes, old.path().read_bytes())
+            self.assertFalse(new.path().exists())
+            self.assertFalse((new.root / new.temp_name).exists())
+
+    def test_cancel_after_durable_stage_does_not_publish_or_recover_partial_result(self):
+        # Exercise both first publication and regeneration after proof was committed.
+        for existing in (False, True):
+            with self.subTest(existing=existing):
+                vod_id = '222' if existing else '111'
+                old = self.ready(vod_id=vod_id) if existing else None
+                new = self.plan(vod_id)
+                cancelled = False
+                stage = new.stage
+
+                def stage_then_cancel(*args):
+                    nonlocal cancelled
+                    stage(*args)
+                    cancelled = True
+
+                with patch.object(new, 'stage', side_effect=stage_then_cancel):
+                    with self.assertRaisesRegex(RuntimeError, 'отменена') as caught:
+                        html_publisher.publish_html_stream(
+                            lambda out: out.write('<html>complete bytes</html>'),
+                            publication=new, cancel_check=lambda: cancelled,
+                        )
+                row = next(row for row in self.rows() if row['id'] == new.id)
+                self.assertEqual('publishing', row['state'])
+                self.assertIsNotNone(row['sha256'])
+                new.fail(caught.exception)
+                new.close()
+
+                for _ in range(2):
+                    results.recover_results()
+                    ready = results.get_ready_result(vod_id)
+                    self.assertEqual(old.id if old else None, ready['id'] if ready else None)
+                    self.assertFalse(new.path().exists())
+                    self.assertFalse((new.root / new.temp_name).exists())
+                self.assertEqual('cancelled', next(row for row in self.rows() if row['id'] == new.id)['state'])
+
+    def test_link_disk_full_after_proof_keeps_cache_history_and_previous_bytes(self):
+        old = self.ready()
+        old_bytes = old.path().read_bytes()
+        cache_id = db.get_cache(old.vod_id, 'html_online')['id']
+        db.add_user_history(7, cache_id)
+        new = self.plan()
+
+        with patch.object(html_publisher.os, 'link', side_effect=OSError(errno.ENOSPC, 'disk full')):
+            with self.assertRaises(OSError) as caught:
+                self.publish(new, 'new')
+        row = next(row for row in self.rows() if row['id'] == new.id)
+        self.assertEqual('publishing', row['state'])
+        self.assertIsNotNone(row['sha256'])
+        new.fail(caught.exception)
+        new.close()
+
+        for _ in range(2):
+            results.recover_results()
+            self.assertEqual(old.id, results.get_ready_result(old.vod_id)['id'])
+            self.assertEqual(old.ref, db.get_cache(old.vod_id, 'html_online')['html_url'])
+            self.assertEqual(cache_id, db.get_history_for_user(7)[0]['id'])
+            self.assertEqual(old_bytes, old.path().read_bytes())
+            self.assertFalse(new.path().exists())
+            self.assertFalse((new.root / new.temp_name).exists())
+
     def test_recovery_retains_unproven_partial_temp_and_is_idempotent(self):
         old=self.ready()
         new=self.plan()

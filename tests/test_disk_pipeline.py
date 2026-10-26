@@ -308,6 +308,58 @@ class DiskPipelineTestCase(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(TwitchAPIError, "no progress"):
                 await anext(iterator)
 
+    async def test_repeated_task_cancel_drains_failing_writer_before_releasing_slot(self):
+        # Repeated shutdown/cancel requests must not detach a still-running writer.
+        await self.run_chat(self.source(1))
+        old_payload, old_cache = self.payload()
+        old_path = self.root / 'out' / old_cache['html_url'].removeprefix('local:')
+        old_bytes = old_path.read_bytes()
+        db.add_user_history(7, old_cache['id'])
+        entered = asyncio.Event()
+        release = threading.Event()
+        loop = asyncio.get_running_loop()
+        original_append = ChatSpool.append_batch
+
+        def append(spool, batch, cancel_check=None):
+            original_append(spool, batch, cancel_check)
+            loop.call_soon_threadsafe(entered.set)
+            if not release.wait(5):
+                raise AssertionError('test did not release SQLite writer')
+            raise OSError(errno.EIO, 'writer failed after cancellation')
+
+        other = SimpleNamespace(application=self.context.application, user_data={})
+        with patch.object(ChatSpool, 'append_batch', append), \
+             patch.object(loop, 'call_exception_handler') as loop_error:
+            task = asyncio.create_task(self.run_chat(self.source(4)))
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                # Cancel after the batch is durable but while its thread is still owned.
+                task.cancel()
+                # This checkpoint lets run_blocking observe the first cancellation.
+                await asyncio.sleep(0)
+                task.cancel()
+                await asyncio.sleep(0)
+                self.assertFalse(task.done())
+                self.assertTrue(is_busy(self.context))
+                self.assertIsNone(begin_download(other))
+                self.assertTrue(tuple((self.root / 'spools').glob('tdb-spool-*')))
+            finally:
+                release.set()
+                outcome = await asyncio.gather(task, return_exceptions=True)
+            self.assertIsInstance(outcome[0], asyncio.CancelledError)
+            loop_error.assert_not_called()
+
+        payload, cache = self.payload()
+        self.assertEqual(old_cache['html_url'], cache['html_url'])
+        self.assertEqual(old_payload, payload)
+        self.assertEqual(old_bytes, old_path.read_bytes())
+        self.assertEqual(old_cache['id'], db.get_history_for_user(7)[0]['id'])
+        self.assertFalse(is_busy(self.context))
+        self.assert_clean()
+        operation = begin_download(other)
+        self.assertIsNotNone(operation)
+        finish_download(other, operation)
+
     async def test_multi_page_cursor_cycle_terminates_with_constant_state(self):
         edge = {"node": {"commenter": {"displayName": "user"}, "message": {"fragments": [{"text": "x"}]}}}
         page_count = 0
