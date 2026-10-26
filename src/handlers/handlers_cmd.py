@@ -19,14 +19,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(
         "Просто отправь сообщение — тип ввода распознаётся автоматически.\n\n"
         "Чат VOD — ссылка или числовой ID:\n"
-        "<code>https://www.twitch.tv/videos/2908834571</code>\n"
-        "<code>2908834571</code>\n\n"
+        "<code>https://www.twitch.tv/videos/&lt;VOD_ID&gt;</code>\n"
+        "<code>&lt;VOD_ID&gt;</code>\n\n"
         "Записи канала — имя или ссылка:\n"
-        "<code>asasnow</code>\n"
-        "<code>https://www.twitch.tv/asasnow</code>\n\n"
+        "<code>&lt;CHANNEL_NAME&gt;</code>\n"
+        "<code>https://www.twitch.tv/&lt;CHANNEL_NAME&gt;</code>\n\n"
         "Команды задают тип явно:\n"
-        "<code>/vod 2908834571</code> — только VOD-ссылка или ID.\n"
-        "<code>/channel asasnow</code> — только имя или URL канала.\n\n"
+        "<code>/vod &lt;VOD_ID&gt;</code> — только VOD-ссылка или ID.\n"
+        "<code>/channel &lt;CHANNEL_NAME&gt;</code> — только имя или URL канала.\n\n"
         "После выбора VOD подтверди формат, чтобы начать загрузку чата.",
         parse_mode='HTML',
         link_preview_options=LinkPreviewOptions(is_disabled=True),

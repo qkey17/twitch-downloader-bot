@@ -94,8 +94,8 @@ class TwitchApiReliabilityTestCase(unittest.IsolatedAsyncioTestCase):
         session = _FakeSession([empty_page, empty_page])
         client_id = "test-graphql-client-id"
 
-        await fetch_page.gql_fetch_page(session, client_id, "2908834571", None, 0)
-        await fetch_page.gql_fetch_page(session, client_id, "2908834571", "cursor-value", 0)
+        await fetch_page.gql_fetch_page(session, client_id, "123456789", None, 0)
+        await fetch_page.gql_fetch_page(session, client_id, "123456789", "cursor-value", 0)
 
         expected_headers = {
             "Client-Id": client_id,
@@ -107,7 +107,7 @@ class TwitchApiReliabilityTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(expected_headers, initial_request.kwargs["headers"])
         self.assertEqual([{
             "operationName": "VideoCommentsByOffsetOrCursor",
-            "variables": {"videoID": "2908834571", "contentOffsetSeconds": 0},
+            "variables": {"videoID": "123456789", "contentOffsetSeconds": 0},
             "extensions": {
                 "persistedQuery": {"version": 1, "sha256Hash": VIDEO_COMMENTS_HASH},
             },
@@ -117,7 +117,7 @@ class TwitchApiReliabilityTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(expected_headers, cursor_request.kwargs["headers"])
         self.assertEqual([{
             "operationName": "VideoCommentsByOffsetOrCursor",
-            "variables": {"videoID": "2908834571", "cursor": "cursor-value"},
+            "variables": {"videoID": "123456789", "cursor": "cursor-value"},
             "extensions": {
                 "persistedQuery": {"version": 1, "sha256Hash": VIDEO_COMMENTS_HASH},
             },
@@ -129,7 +129,7 @@ class TwitchApiReliabilityTestCase(unittest.IsolatedAsyncioTestCase):
         access_token_value = "access-token-must-not-be-logged"
         request = [{
             "operationName": "VideoCommentsByOffsetOrCursor",
-            "variables": {"videoID": "2908834571", "cursor": cursor_value},
+            "variables": {"videoID": "123456789", "cursor": cursor_value},
             "extensions": {
                 "persistedQuery": {"version": 1, "sha256Hash": "test-persisted-hash"},
             },
@@ -182,7 +182,7 @@ class TwitchApiReliabilityTestCase(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(fetch_comments, "gql_fetch_page", page), \
              patch.object(fetch_comments, "_sleep_with_cancel", AsyncMock()):
-            iterator = fetch_comments.gql_fetch_comments(object(), "client", "2908834571")
+            iterator = fetch_comments.gql_fetch_comments(object(), "client", "123456789")
             await iterator.__anext__()
             with self.assertRaises(StopAsyncIteration):
                 await iterator.__anext__()

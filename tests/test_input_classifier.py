@@ -9,14 +9,14 @@ class InputClassifierTests(unittest.TestCase):
     def test_explicit_command_type_is_strict_and_numeric_channel_is_supported(self):
         for text, kind, value in (
             ('123', 'vod', '123'), ('https://twitch.tv/videos/123', 'vod', '123'),
-            ('asasnow', 'channel', 'asasnow'), ('https://twitch.tv/asasnow', 'channel', 'asasnow'),
+            ('fixture_channel', 'channel', 'fixture_channel'), ('https://twitch.tv/fixture_channel', 'channel', 'fixture_channel'),
             ('123', 'channel', '123'), ('0', 'channel', '0'),
         ):
             with self.subTest(text=text, kind=kind):
                 self.assertEqual(ClassifiedInput(kind, value), classify_input(text, expected_kind=kind))
-        for text, kind in (('asasnow', 'vod'), ('https://twitch.tv/asasnow', 'vod'),
+        for text, kind in (('fixture_channel', 'vod'), ('https://twitch.tv/fixture_channel', 'vod'),
                            ('https://twitch.tv/videos/123', 'channel'),
-                           ('bad input', 'channel'), ('https://example.invalid/asasnow', 'channel')):
+                           ('bad input', 'channel'), ('https://example.invalid/fixture_channel', 'channel')):
             with self.subTest(text=text, kind=kind), self.assertRaises(InputClassificationError):
                 classify_input(text, expected_kind=kind)
         self.assertEqual(ClassifiedInput('vod', '123'), classify_input('123'))
