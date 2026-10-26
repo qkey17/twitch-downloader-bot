@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-from telegram.ext import Application, CallbackQueryHandler, MessageHandler
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler
 
 from src import config, main
 from src.database import database as db, db_core
@@ -359,7 +359,8 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
                  patch.object(main, "cleanup_stale_html_temp_files", return_value=0):
                 await main.post_init(app)
                 commands = [command.command for command in app.bot.set_my_commands.await_args.args[0]]
-                self.assertEqual(["about", "history"] if enabled else ["about"], commands)
+                expected = ['start', 'vod', 'channel', 'about', 'cancel']
+                self.assertEqual(expected + (['history'] if enabled else []), commands)
                 await main.post_shutdown(app)
             session.close.assert_awaited_once()
 
@@ -439,7 +440,7 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(operation := begin_download(context))
         finish_download(context, operation)
 
-    async def test_only_metadata_handler_is_nonblocking_in_real_application_registration(self):
+    async def test_metadata_and_channel_browsing_are_nonblocking_in_real_application_registration(self):
         app = Application.builder().token("123456:test-token").build()
         with patch.object(main.Application, "builder") as builder, \
              patch.object(main, "get_telegram_bot_token", return_value="test"), \
@@ -452,7 +453,17 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
         callbacks = [h for group in app.handlers.values() for h in group if isinstance(h, CallbackQueryHandler)]
         self.assertEqual(1, len(links))
         self.assertFalse(links[0].block)
-        self.assertTrue(all(h.block for h in callbacks))
+        from src.handlers.handlers_input import text_input, vod_command, channel_command
+        self.assertIs(text_input, links[0].callback)
+        commands = [h for group in app.handlers.values() for h in group if isinstance(h, CommandHandler)]
+        for name, callback in (('vod', vod_command), ('channel', channel_command)):
+            handler = next(h for h in commands if name in h.commands)
+            self.assertIs(callback, handler.callback)
+            self.assertFalse(handler.block)
+        channel = [h for h in callbacks if h.pattern.pattern == '^ui:cv:']
+        self.assertEqual(1, len(channel))
+        self.assertFalse(channel[0].block)
+        self.assertTrue(all(h.block for h in callbacks if h is not channel[0]))
         self.assertEqual(1, app.update_processor.max_concurrent_updates)
 
     async def test_html_write_does_not_block_commands_and_task_cancel_keeps_slot_until_finished(self):

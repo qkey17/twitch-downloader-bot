@@ -18,6 +18,10 @@ from .html_publisher import cleanup_stale_html_temp_files
 from .chat_spool import cleanup_orphaned_chat_spools
 from .database.db_results import recover_results, protected_temp_files
 from .handlers.handlers_vod import vod_result_callback
+from .handlers.handlers_channel_vods import build_channel_vods_handler
+from .handlers.handlers_input import (
+    text_input, vod_command, channel_command, input_menu_callback, INPUT_CALLBACK_PATTERN,
+)
 from .html_cleanup import start_cleanup, stop_cleanup
 from src.handlers.handlers import (
     start_command,
@@ -73,7 +77,11 @@ async def post_init(app: Application):
     app.bot_data["aiohttp"] = aiohttp.ClientSession()
 
     commands = [
+        BotCommand("start", "Главное меню"),
+        BotCommand("vod", "Получить чат VOD"),
+        BotCommand("channel", "Найти VOD канала"),
         BotCommand("about", "Описание и как пользоваться"),
+        BotCommand("cancel", "Отменить ввод или выбор"),
     ]
     if config.HISTORY_ENABLED:
         commands.append(BotCommand("history", "История скачиваний"))
@@ -125,15 +133,17 @@ def main():
     app.add_handler(CommandHandler("about", about_command))
     app.add_handler(CommandHandler("history", history_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
+    app.add_handler(CommandHandler("vod", vod_command, block=False))
+    app.add_handler(CommandHandler("channel", channel_command, block=False))
 
-    # link entry
-    # Metadata HTTP waits must not hold up commands/cancellation for other users.
-    # Other updates remain sequential; the link handler guards its user state.
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, vod_link_entry, block=False), group=0)
+    # Text/command routing guards per-user input; Twitch waits remain non-blocking.
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_input, block=False), group=0)
 
     # callbacks
     app.add_handler(CallbackQueryHandler(vod_format_chosen, pattern=r"^vodfmt:html_online$"))
     app.add_handler(CallbackQueryHandler(vod_result_callback, pattern=r"^ui:result:"))
+    app.add_handler(build_channel_vods_handler())
+    app.add_handler(CallbackQueryHandler(input_menu_callback, pattern=INPUT_CALLBACK_PATTERN))
 
     app.add_handler(CallbackQueryHandler(format_cancel_callback, pattern=r"^ui:format_cancel$"))
     app.add_handler(CallbackQueryHandler(pending_cancel_callback, pattern=r"^ui:pending_cancel$"))

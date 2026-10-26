@@ -1,0 +1,76 @@
+"""Local text classification; no requests, database queries or Telegram state."""
+from dataclasses import dataclass
+import re
+from typing import Literal
+from urllib.parse import urlsplit
+
+from .config import VOD_URL_RE
+from .database.db_results import normalize_vod_id
+
+
+_LOGIN_RE = re.compile(r'[a-z0-9_]{1,25}', re.IGNORECASE | re.ASCII)
+# These one-segment Twitch URLs are site routes, not channel links. The same
+# words without a URL remain syntactically valid login input.
+_SITE_ROUTES = frozenset({
+    'videos', 'clip', 'clips', 'directory', 'search', 'downloads', 'settings',
+    'subscriptions', 'inventory', 'login', 'signup', 'turbo', 'drops', 'wallet',
+})
+
+
+class InputClassificationError(ValueError):
+    """The text is neither a supported VOD input nor a channel login/URL."""
+
+
+@dataclass(frozen=True)
+class ClassifiedInput:
+    kind: Literal['vod', 'channel']
+    value: str
+
+
+def _vod(value):
+    try:
+        return ClassifiedInput('vod', normalize_vod_id(value))
+    except ValueError:
+        raise InputClassificationError('Invalid Twitch VOD ID') from None
+
+
+def classify_input(text: str) -> ClassifiedInput:
+    """Classify a VOD URL/ID or channel login/URL, trimming outer whitespace.
+
+    VOD IDs have precedence over numeric logins. Existing HTTP(S), bare-host,
+    /videos/ID and /channel/v/ID forms retain their query/fragment support.
+    Channel URLs require a single login segment, with an optional trailing
+    slash and no query/fragment. Commands beginning with '/' are not logins.
+    Syntax does not establish that a channel or VOD exists.
+    """
+    if not isinstance(text, str):
+        raise InputClassificationError('Expected text input')
+    text = text.strip()
+    if not text or text.startswith('/') or re.search(r'[\x00-\x20\x7f]', text):
+        raise InputClassificationError('Unsupported Twitch input')
+    if re.fullmatch(r'[0-9]+', text):
+        return _vod(text)
+    if _LOGIN_RE.fullmatch(text):
+        return ClassifiedInput('channel', text.lower())
+
+    try:
+        target = urlsplit(text if '://' in text else 'https://' + text)
+    except ValueError:
+        raise InputClassificationError('Invalid Twitch URL') from None
+    if (target.scheme not in ('http', 'https')
+            or target.netloc.lower() not in ('twitch.tv', 'www.twitch.tv')):
+        raise InputClassificationError('Unsupported Twitch URL')
+
+    path = target.path.removesuffix('/')
+    # Reuse the existing VOD parser's grammar. Canonicalizing only the origin
+    # supports the entry handler's HTTP/non-www forms; fullmatch rejects the
+    # legacy helper's otherwise accepted suffixes such as /videos/123/extra.
+    match = VOD_URL_RE.fullmatch('https://www.twitch.tv' + path)
+    if match:
+        return _vod(match.group(1))
+
+    login = path[1:] if path.startswith('/') else ''
+    if ('?' not in text and '#' not in text and _LOGIN_RE.fullmatch(login)
+            and login.lower() not in _SITE_ROUTES):
+        return ClassifiedInput('channel', login.lower())
+    raise InputClassificationError('Unsupported Twitch URL')

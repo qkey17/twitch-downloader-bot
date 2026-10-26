@@ -51,13 +51,22 @@ async def gql_fetch_page(
         raise TwitchAPIError("Twitch returned an unexpected comments page")
     if any(not isinstance(edge, dict) or not isinstance(edge.get("node"), dict) for edge in edges):
         raise TwitchAPIError("Twitch returned an invalid comment entry")
+    # A missing message must not be silently skipped as blank text. Validate
+    # the entire page before emitting any rows, preserving optional metadata.
+    for edge in edges:
+        message = edge["node"].get("message")
+        if not isinstance(message, dict) or not isinstance(message.get("fragments"), list):
+            raise TwitchAPIError("Twitch returned incomplete comment message data")
+        if any(not isinstance(fragment, dict) or not isinstance(fragment.get("text"), str)
+               for fragment in message["fragments"]):
+            raise TwitchAPIError("Twitch returned invalid comment fragments")
 
     has_next_value = page_info.get("hasNextPage")
     if not isinstance(has_next_value, bool):
         raise TwitchAPIError("Twitch returned invalid comments pagination metadata")
     has_next = has_next_value
     next_cursor = edges[-1].get("cursor") if edges else None
-    if has_next and not next_cursor:
+    if has_next and (not isinstance(next_cursor, str) or not next_cursor):
         raise TwitchAPIError("Twitch comments page has no continuation cursor")
 
     return edges, next_cursor, has_next

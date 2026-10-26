@@ -20,6 +20,10 @@ def is_busy(context: ContextTypes.DEFAULT_TYPE) -> bool:
     return bool(context.user_data.get("vod_busy"))
 
 
+def is_globally_busy(context: ContextTypes.DEFAULT_TYPE) -> bool:
+    return context.application.bot_data.get(_GLOBAL_OPERATION_KEY) is not None
+
+
 def set_busy(context: ContextTypes.DEFAULT_TYPE, v: bool):
     context.user_data["vod_busy"] = v
 
@@ -66,6 +70,22 @@ def set_pending(context: ContextTypes.DEFAULT_TYPE, vod_url: str, vod_id: str):
 
 def get_pending(context: ContextTypes.DEFAULT_TYPE) -> Optional[dict]:
     return context.user_data.get("vod_pending")
+
+
+def bind_pending_message(context, message, expected=None):
+    pending = get_pending(context)
+    if expected is not None and pending is not expected:
+        return
+    chat_id, message_id = getattr(message, 'chat_id', None), getattr(message, 'message_id', None)
+    if pending is not None and type(chat_id) is int and type(message_id) is int:
+        pending.update(chat_id=chat_id, message_id=message_id)
+
+
+def pending_matches_message(pending, message):
+    # Legacy/direct callers of set_pending() may not have a prompt binding.
+    if 'chat_id' not in pending or 'message_id' not in pending:
+        return True
+    return (pending['chat_id'], pending['message_id']) == (message.chat_id, message.message_id)
 
 
 def clear_pending(context: ContextTypes.DEFAULT_TYPE):
