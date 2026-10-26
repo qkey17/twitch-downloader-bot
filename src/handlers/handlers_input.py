@@ -82,12 +82,10 @@ async def text_input(update, context):
 
 
 async def _command(update, context, kind):
-    message = update.effective_message
-    argument = ' '.join(context.args or [])
+    argument = ' '.join(context.args or []).strip()
     if not argument:
-        await message.reply_text(_HINTS[kind], parse_mode='HTML',
-                                 link_preview_options=LinkPreviewOptions(is_disabled=True))
         return
+    message = update.effective_message
     try:
         value = classify_input(argument, expected_kind=kind)
     except InputClassificationError:

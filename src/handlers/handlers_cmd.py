@@ -5,23 +5,22 @@ from .handlers_state import is_busy, get_pending, clear_pending
 from .handlers_input import cancel_input_request
 
 
+_HELP_TEXT = (
+    "Отправьте ссылку на VOD или его ID, чтобы получить чат.\n\n"
+    "Отправьте имя канала или ссылку на него, чтобы посмотреть список VODs.\n\n"
+    "Тип запроса определяется автоматически. При необходимости его можно указать командой:\n\n"
+    "/vod — получить чат VOD.\n"
+    "/channel — посмотреть VODs канала."
+)
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.effective_message
-    await msg.reply_text(
-        "Вставьте ссылку на VOD или его ID, чтобы получить чат.\n\n"
-        "Вставьте имя канала или ссылку на него, чтобы посмотреть список VODs.\n\n"
-        "Подробнее — /help.",
-        link_preview_options=LinkPreviewOptions(is_disabled=True),
-    )
+    await help_command(update, context)
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(
-        "Бот автоматически определяет тип запроса.\n\n"
-        "/vod — получить чат VOD.\n"
-        "/channel — посмотреть VODs канала.\n"
-        "\n"
-        "Команды позволяют указать тип запроса вручную.",
+        _HELP_TEXT,
         parse_mode='HTML',
         link_preview_options=LinkPreviewOptions(is_disabled=True),
     )

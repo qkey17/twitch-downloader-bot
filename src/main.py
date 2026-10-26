@@ -78,10 +78,7 @@ async def post_init(app: Application):
     app.bot_data["aiohttp"] = aiohttp.ClientSession()
 
     commands = [
-        BotCommand("start", "Начало работы"),
         BotCommand("help", "Справка"),
-        BotCommand("vod", "Получить чат VOD"),
-        BotCommand("channel", "VODs канала"),
     ]
     if config.HISTORY_ENABLED:
         commands.append(BotCommand("history", "История"))

@@ -54,6 +54,10 @@ class PublicInstructionPrivacyTests(unittest.IsolatedAsyncioTestCase):
                     update = SimpleNamespace(effective_message=message)
                     context = SimpleNamespace(user_data={}, args=args)
                     await command(update, context)
+                    if command in (inputs.vod_command, inputs.channel_command) and not args:
+                        message.reply_text.assert_not_awaited()
+                        self.assertEqual({}, context.user_data)
+                        continue
                     text = message.reply_text.await_args.args[0]
                     parser = InstructionText()
                     parser.feed(text)
@@ -73,23 +77,22 @@ class PublicInstructionPrivacyTests(unittest.IsolatedAsyncioTestCase):
             browse.assert_not_awaited()
 
     async def test_commands_match_approved_copy(self):
-        cases = (
-            (commands.start_command,
-             'Вставьте ссылку на VOD или его ID, чтобы получить чат.\n\n'
-             'Вставьте имя канала или ссылку на него, чтобы посмотреть список VODs.\n\nПодробнее — /help.'),
-            (commands.help_command,
-             'Бот автоматически определяет тип запроса.\n\n'
-             '/vod — получить чат VOD.\n/channel — посмотреть VODs канала.\n\n'
-             'Команды позволяют указать тип запроса вручную.'),
-            (inputs.vod_command, 'Вставьте ссылку на VOD или его ID.'),
-            (inputs.channel_command, 'Вставьте имя канала или ссылку на него.'),
+        expected = (
+            'Отправьте ссылку на VOD или его ID, чтобы получить чат.\n\n'
+            'Отправьте имя канала или ссылку на него, чтобы посмотреть список VODs.\n\n'
+            'Тип запроса определяется автоматически. При необходимости его можно указать командой:\n\n'
+            '/vod — получить чат VOD.\n/channel — посмотреть VODs канала.'
         )
-        for command, expected in cases:
+        cases = (
+            commands.start_command, commands.help_command,
+        )
+        for command in cases:
             with self.subTest(command=command.__name__):
                 message = SimpleNamespace(reply_text=AsyncMock())
                 await command(SimpleNamespace(effective_message=message), SimpleNamespace(args=[]))
                 self.assertEqual(expected, message.reply_text.await_args.args[0])
                 self.assertNotIn('reply_markup', message.reply_text.await_args.kwargs)
+                self.assertEqual('HTML', message.reply_text.await_args.kwargs['parse_mode'])
                 self.assertTrue(message.reply_text.await_args.kwargs['link_preview_options'].is_disabled)
 
     def test_channel_copy_preserves_user_data_counters_and_button_actions(self):

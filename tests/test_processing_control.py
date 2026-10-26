@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler
 
 from src import config, main
@@ -359,10 +360,10 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
                  patch.object(main, "cleanup_stale_html_temp_files", return_value=0):
                 await main.post_init(app)
                 commands = [command.command for command in app.bot.set_my_commands.await_args.args[0]]
-                expected = ['start', 'help', 'vod', 'channel']
+                expected = ['help']
                 self.assertEqual(expected + (['history'] if enabled else []), commands)
                 self.assertNotIn('cancel', commands)
-                expected_descriptions = ['Начало работы', 'Справка', 'Получить чат VOD', 'VODs канала']
+                expected_descriptions = ['Справка']
                 self.assertEqual(expected_descriptions + (['История'] if enabled else []),
                                  [command.description for command in app.bot.set_my_commands.await_args.args[0]])
                 await main.post_shutdown(app)
@@ -466,6 +467,19 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
             handler = next(h for h in commands if name in h.commands)
             self.assertIs(callback, handler.callback)
             self.assertFalse(handler.block)
+            for suffix in ('', '@TDBBot'):
+                for trailing in ('', '   '):
+                    with self.subTest(command=name+suffix, trailing=bool(trailing)):
+                        command = '/'+name+suffix
+                        update = Update.de_json({'update_id': 1, 'message': {
+                            'message_id': 1, 'date': 0, 'chat': {'id': 10, 'type': 'private'},
+                            'text': command+trailing,
+                            'entities': [{'type': 'bot_command', 'offset': 0, 'length': len(command)}],
+                        }}, SimpleNamespace(username='TDBBot'))
+                        result = handler.check_update(update)
+                        self.assertIsInstance(result, tuple)
+                        self.assertEqual([], result[0])
+                        self.assertFalse(links[0].check_update(update))
         channel = [h for h in callbacks if h.pattern.pattern == '^ui:cv:']
         self.assertEqual(1, len(channel))
         self.assertFalse(channel[0].block)

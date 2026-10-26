@@ -79,17 +79,45 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn(inputs._ROUTE, self.context.user_data)
                 self.assert_no_input_mode()
 
-    async def test_empty_commands_only_show_examples_without_state_or_buttons(self):
+    async def test_empty_commands_are_silent_without_state_or_requests(self):
         for command in (inputs.vod_command, inputs.channel_command):
             with self.subTest(command=command.__name__):
                 update = self.request()
                 await command(update, self.context)
-                self.assert_instruction(update.message)
+                update.message.reply_text.assert_not_awaited()
+                update.message.edit_text.assert_not_awaited()
                 self.assertEqual({}, self.context.user_data)
                 self.assertEqual(0, len(self.browser))
                 self.app.create_task.assert_not_called()
                 videos.fetch_user_by_login.assert_not_awaited()
                 self.metadata.assert_not_awaited()
+
+    async def test_empty_commands_preserve_pending_lookup_and_active_download(self):
+        set_pending(self.context, 'vod', '999')
+        bind_pending_message(self.context, self.message(90))
+        self.context.user_data[inputs._ROUTE] = {'chat_id': 10, 'created_at': inputs.time.monotonic()}
+        self.context.user_data['vod_link_lookup'] = object()
+        self.context.user_data['vod_result_choice'] = {'vod_id': '999', 'nonce': 'test'}
+        operation = begin_download(self.context)
+        before_user = dict(self.context.user_data)
+        before_bot = dict(self.app.bot_data)
+        try:
+            for command in (inputs.vod_command, inputs.channel_command):
+                for args in (None, [], [''], [' ', '\t']):
+                    with self.subTest(command=command.__name__, args=args):
+                        update = self.request()
+                        self.context.args = args
+                        await command(update, self.context)
+                        update.message.reply_text.assert_not_awaited()
+                        update.message.edit_text.assert_not_awaited()
+                        self.assertEqual(before_user, self.context.user_data)
+                        self.assertEqual(before_bot, self.app.bot_data)
+            self.metadata.assert_not_awaited()
+            videos.fetch_user_by_login.assert_not_awaited()
+            self.app.create_task.assert_not_called()
+            self.runner.assert_not_awaited()
+        finally:
+            finish_download(self.context, operation)
 
     async def test_empty_command_does_not_control_next_text_type(self):
         await inputs.vod_command(self.request(), self.context)
@@ -154,8 +182,8 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn('Выбери действие', text)
                 self.assertEqual({}, self.context.user_data)
         text = self.messages[-1][1][0]
-        for phrase in ('Бот автоматически определяет тип запроса.', '/vod — получить чат VOD.',
-                       '/channel — посмотреть VODs канала.', 'Команды позволяют указать тип запроса вручную.'):
+        for phrase in ('Тип запроса определяется автоматически.', '/vod — получить чат VOD.',
+                       '/channel — посмотреть VODs канала.', 'При необходимости его можно указать командой:'):
             self.assertIn(phrase, text)
         self.assertNotIn('http', text)
         self.app.create_task.assert_not_called()
