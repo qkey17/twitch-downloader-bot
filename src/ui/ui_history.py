@@ -82,7 +82,7 @@ def build_history_page(items: list[dict], page: int, per_page: int, total_items:
         if local_html_path:
             fmt_text = "📄 Локальный HTML"
         elif fmt == "html_online" and HTML_PUBLISH_MODE == "local":
-            fmt_text = "📄 HTML-файл недоступен локально"
+            fmt_text = "📄 Локальный HTML недоступен"
         else:
             fmt_text = label_for_fmt(fmt)
 

@@ -102,7 +102,7 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
     async def test_vod_channel_name_is_format_error_but_plain_name_opens_channel(self):
         update = self.request(args=['fixture_channel'])
         await inputs.vod_command(update, self.context)
-        self.assertIn('Неверный формат для /vod', update.message.reply_text.await_args.args[0])
+        self.assertIn('Неверный формат.', update.message.reply_text.await_args.args[0])
         self.assert_instruction(update.message)
         videos.fetch_user_by_login.assert_not_awaited()
         self.metadata.assert_not_awaited()
@@ -154,9 +154,10 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn('Выбери действие', text)
                 self.assertEqual({}, self.context.user_data)
         text = self.messages[-1][1][0]
-        for example in ('&lt;CHANNEL_NAME&gt;', 'https://www.twitch.tv/&lt;CHANNEL_NAME&gt;', 'https://www.twitch.tv/videos/',
-                        '/vod &lt;VOD_ID&gt;', '/channel &lt;CHANNEL_NAME&gt;', 'распознаётся автоматически'):
-            self.assertIn(example, text)
+        for phrase in ('Бот автоматически определяет тип запроса.', '/vod — получить чат VOD.',
+                       '/channel — посмотреть VODs канала.', 'Команды позволяют указать тип запроса вручную.'):
+            self.assertIn(phrase, text)
+        self.assertNotIn('http', text)
         self.app.create_task.assert_not_called()
         videos.fetch_user_by_login.assert_not_awaited()
         self.metadata.assert_not_awaited()
@@ -240,7 +241,7 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(entered.wait(), 1)
         second = self.request('999')
         await inputs.text_input(second, self.context)
-        self.assertIn('ещё выполняется', second.message.reply_text.await_args.args[0])
+        self.assertIn('Дождитесь завершения предыдущего запроса.', second.message.reply_text.await_args.args[0])
         self.metadata.assert_awaited_once()
         release.set()
         await first

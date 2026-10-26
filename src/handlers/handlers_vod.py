@@ -165,8 +165,8 @@ async def _offer_ready(message,context,result,edit=False):
     context.user_data["vod_result_choice"] = {"vod_id":vod_id,"nonce":nonce,"created_at":time.time()}
     text,_ = _build_card(_make_item(result['meta'],result['stats'],f"https://www.twitch.tv/videos/{vod_id}","html_online"))
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Выбрать готовую страницу",callback_data=f"ui:result:open:{vod_id}")],
-        [InlineKeyboardButton("Сгенерировать заново",callback_data=f"ui:result:regen:{vod_id}:{nonce}")],
+        [InlineKeyboardButton("Показать результат",callback_data=f"ui:result:open:{vod_id}")],
+        [InlineKeyboardButton("Создать заново",callback_data=f"ui:result:regen:{vod_id}:{nonce}")],
     ])
     if edit:
         await context.bot.edit_message_text(chat_id=message.chat_id,message_id=message.message_id,
@@ -180,7 +180,7 @@ async def vod_result_callback(update,context):
     await q.answer()
     match = re.fullmatch(r"ui:result:(open|regen):([1-9][0-9]{0,19})(?::([0-9a-f]{16}))?",q.data or "")
     if not match:
-        await q.message.reply_text("Запрос не найден.")
+        await q.message.reply_text("Действие недоступно. Выберите VOD заново.")
         return
     action,vod_id,nonce = match.groups()
     pending = get_pending(context)
@@ -194,29 +194,29 @@ async def vod_result_callback(update,context):
             await _send_card_with_buttons(context,q.message.chat_id,item,ready['html_ref'])
         else:
             if different_pending:
-                await q.message.reply_text('Сначала заверши или отмени выбор формата для другого VOD.')
+                await q.message.reply_text('Завершите или отмените выбор формата для другого VOD.')
                 return
             if is_busy(context) or context.user_data.get('vod_link_lookup'):
-                await q.message.reply_text('Дождись завершения текущей операции.')
+                await q.message.reply_text('Дождитесь завершения предыдущего запроса.')
                 return
             set_pending(context,f"https://www.twitch.tv/videos/{vod_id}",vod_id)
             pending = get_pending(context)
             bind_pending_message(context, q.message)
-            prompt = await q.message.reply_text("Готовая страница недоступна. Можно создать HTML заново.",reply_markup=build_format_keyboard())
+            prompt = await q.message.reply_text("Готовый чат недоступен. Можно создать его заново.",reply_markup=build_format_keyboard())
             bind_pending_message(context, prompt, expected=pending)
         return
     if different_pending:
-        await q.message.reply_text('Сначала заверши или отмени выбор формата для другого VOD.')
+        await q.message.reply_text('Завершите или отмените выбор формата для другого VOD.')
         return
     if is_busy(context):
-        await q.message.reply_text("Я уже качаю чат. Подожди завершения.")
+        await q.message.reply_text("Чат уже обрабатывается. Дождитесь завершения.")
         return
     if context.user_data.get('vod_link_lookup'):
-        await q.message.reply_text("Дождись проверки ссылки.")
+        await q.message.reply_text("Дождитесь проверки VOD.")
         return
     choice = context.user_data.get('vod_result_choice') or {}
     if (choice.get('vod_id') != vod_id or choice.get('nonce') != nonce or pending_expired(choice)):
-        await q.message.reply_text("Ссылка устарела.")
+        await q.message.reply_text("Действие устарело. Выберите VOD заново.")
         ready = results.get_ready_result(vod_id)
         if ready:
             await _offer_ready(q.message,context,ready)
@@ -254,7 +254,7 @@ async def prepare_vod_choice(message, context, user_id, vod_id, *, is_current=No
     pending = get_pending(context)
     pending_active = from_channel and pending and not pending_expired(pending)
     if pending_active and pending['vod_id'] != vod_id:
-        await message.reply_text('Сначала заверши или отмени выбор формата для другого VOD.')
+        await message.reply_text('Завершите или отмените выбор формата для другого VOD.')
         return 'pending'
     ready = results.get_ready_result(vod_id)
     if ready:
@@ -264,14 +264,14 @@ async def prepare_vod_choice(message, context, user_id, vod_id, *, is_current=No
         await _offer_ready(message,context,ready)
         return 'ready'
     if pending_active:
-        await message.reply_text('Для этого VOD уже ожидается выбор формата.')
+        await message.reply_text('Выберите формат чата в предыдущем сообщении.')
         return 'pending'
 
     if is_busy(context) or context.user_data.get("vod_link_lookup"):
-        await message.reply_text("Я уже качаю чат. Подожди завершения.")
+        await message.reply_text("Дождитесь завершения предыдущего запроса.")
         return 'busy'
     if from_channel and is_globally_busy(context):
-        await message.reply_text("Бот занят обработкой VOD. Попробуй после её завершения.")
+        await message.reply_text("Сейчас обрабатывается чат VOD. Повторите попытку позже.")
         return 'busy'
 
     client_id = get_client_id()
@@ -287,7 +287,7 @@ async def prepare_vod_choice(message, context, user_id, vod_id, *, is_current=No
                 or get_pending(context) is not pending):
             return 'stale'
         if from_channel and is_globally_busy(context):
-            await message.reply_text("Бот занят обработкой VOD. Попробуй после её завершения.")
+            await message.reply_text("Сейчас обрабатывается чат VOD. Повторите попытку позже.")
             return 'busy'
 
         # Direct links keep the existing silent behavior for unavailable VODs.
@@ -311,7 +311,7 @@ async def prepare_vod_choice(message, context, user_id, vod_id, *, is_current=No
         if not from_channel:
             raise
         if context.user_data.get('vod_link_lookup') is lookup and current():
-            await message.reply_text('Не удалось получить сведения о VOD. Попробуй позже.')
+            await message.reply_text('Не удалось получить данные VOD. Повторите попытку позже.')
             return 'error'
         return 'stale'
     finally:
@@ -338,7 +338,7 @@ async def format_cancel_callback(update: Update, context: ContextTypes.DEFAULT_T
     pending = get_pending(context)
     if ((pending and not pending_matches_message(pending, q.message))
             or (pending is None and context.user_data.get('vod_link_lookup'))):
-        await q.message.reply_text('Ссылка устарела.')
+        await q.message.reply_text('Действие устарело. Выберите VOD заново.')
         return
     clear_pending(context)
 
@@ -354,11 +354,11 @@ async def vod_format_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
 
     if is_busy(context):
-        await q.message.reply_text("Я уже качаю чат. Подожди завершения.")
+        await q.message.reply_text("Чат уже обрабатывается. Дождитесь завершения.")
         return
 
     if context.user_data.get("vod_link_lookup"):
-        await q.message.reply_text("Дождись проверки ссылки.")
+        await q.message.reply_text("Дождитесь проверки VOD.")
         return
 
     data = q.data or ""
@@ -367,15 +367,15 @@ async def vod_format_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     pending = get_pending(context)
     if not pending:
-        await q.message.reply_text("Ссылка не найдена.")
+        await q.message.reply_text("Сначала выберите VOD.")
         return
 
     if pending_expired(pending):
         clear_pending(context)
-        await q.message.reply_text("Ссылка устарела.")
+        await q.message.reply_text("Действие устарело. Выберите VOD заново.")
         return
     if not pending_matches_message(pending, q.message):
-        await q.message.reply_text('Ссылка устарела.')
+        await q.message.reply_text('Действие устарело. Выберите VOD заново.')
         return
 
     fmt = "html_online"
@@ -398,13 +398,13 @@ async def _start_download(update,context,vod_id,regenerate=False):
     fmt = "html_online"
     operation_id = begin_download(context)
     if operation_id is None:
-        await q.message.reply_text("Бот занят обработкой VOD. Попробуй после её завершения.")
+        await q.message.reply_text("Сейчас обрабатывается чат VOD. Повторите попытку позже.")
         return
     if regenerate:
         context.user_data.pop("vod_result_choice",None)
     try:
         await q.message.edit_text(
-            text="Загрузка...",
+            text="Загрузка чата…",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton(CANCEL, callback_data=CB_PENDING_CANCEL)]
             ])
@@ -522,12 +522,12 @@ async def _runner(
                 await context.bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=progress_message_id,
-                    text="Загрузка была отменена.",
+                    text="Обработка чата отменена.",
                 )
             except Exception:
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text="Загрузка была отменена.",
+                    text="Обработка чата отменена.",
                 )
             return
         raise
@@ -536,13 +536,13 @@ async def _runner(
         await _record_generation_failure(publication,e)
         logging.exception("Download failed")
         if isinstance(e, TwitchAPIError):
-            reason = (f"Twitch отклонил запрос (HTTP {e.status})" if e.status in (401, 403)
-                      else "ошибка ответа или соединения с Twitch")
-            error_text = f"Не удалось загрузить чат VOD: {reason}. Попробуй позже или выбери другой VOD."
+            reason = ("Сервис отклонил запрос." if e.status in (401, 403)
+                      else "Не удалось загрузить чат VOD.")
+            error_text = f"{reason} Повторите попытку позже."
         elif isinstance(e, TimeoutError):
-            error_text = "Не удалось загрузить чат VOD: время ожидания ответа истекло. Попробуй позже."
+            error_text = "Время ожидания истекло. Повторите попытку позже."
         else:
-            error_text = f"Ошибка: {type(e).__name__}: {e}"
+            error_text = "Не удалось обработать чат VOD. Повторите попытку."
         try:
             await context.bot.edit_message_text(
                 chat_id=chat_id,

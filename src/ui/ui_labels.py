@@ -7,10 +7,10 @@
 from typing import Optional
 
 # Кнопки / лейблы
-CHAT_HTML_LINK = "🌐 HTML ссылка"
-CHAT_GENERIC = "📖 Чат"           # общий вариант, если нужно
-FILES = "📁 Файлы"
-VOD_LINK = "🔗 Ссылка VOD"
+CHAT_HTML_LINK = "🌐 HTML"
+CHAT_GENERIC = "📖 Открыть чат"           # общий вариант, если нужно
+FILES = "📁 Получить файлы"
+VOD_LINK = "🔗 Открыть VOD"
 CANCEL = "❌ Отмена"
 
 # Алиасы / переиспользуемые форматы (возможно позже сократить)

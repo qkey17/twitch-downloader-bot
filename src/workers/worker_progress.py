@@ -49,7 +49,7 @@ def _build_progress_card(meta, vod_url, messages, users_len, done):
     duration = _fmt_len(meta.get("length_seconds"))
     dt = _fmt_date_ru(_fmt_dt_utc(meta.get("created_at")))
 
-    status = "Готово" if done else "Загрузка..."
+    status = "Чат загружен. Подготовка HTML…" if done else "Загрузка чата…"
 
     return (
         f"⏳ <b>{status}</b>\n"

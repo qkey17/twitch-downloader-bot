@@ -71,7 +71,7 @@ async def history_files_callback(update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             ready = None
         if not ready:
-            await q.message.reply_text("Ссылка не найдена.")
+            await q.message.reply_text("Готовый чат недоступен. Создайте его заново.")
             return
         item["html_url"] = ready["html_ref"]
         html_url = item.get("html_url")
@@ -80,7 +80,7 @@ async def history_files_callback(update, context: ContextTypes.DEFAULT_TYPE):
             await q.message.reply_text("Локальный HTML-файл не найден.")
             return
         if not is_local and (not html_url or HTML_PUBLISH_MODE != "public"):
-            await q.message.reply_text("Ссылка не найдена.")
+            await q.message.reply_text("Ссылка на чат недоступна.")
             return
 
         cards, _ = build_history_page([item], page=0, per_page=1)

@@ -16,8 +16,8 @@ _HINTS = {
     'vod': 'Вставьте ссылку на VOD или его ID.',
     'channel': 'Вставьте имя канала или ссылку на него.',
 }
-_INVALID = 'Не удалось распознать ввод. Отправь VOD-ссылку, числовой ID или имя Twitch-канала. Примеры — /help.'
-_BUSY = 'Предыдущий запрос ещё выполняется. Дождись завершения.'
+_INVALID = 'Не удалось распознать запрос. Подробнее — /help.'
+_BUSY = 'Дождитесь завершения предыдущего запроса.'
 
 
 def _alive(record):
@@ -37,7 +37,7 @@ async def input_menu_callback(update, context):
     """Reject every legacy mode button; it must never modify current state."""
     query = update.callback_query
     if query is not None:
-        await query.answer('Меню устарело. Отправь ссылку на VOD или имя канала.', show_alert=True)
+        await query.answer('Меню устарело. Подробнее — /help.', show_alert=True)
 
 
 def _active_route(context):
@@ -91,7 +91,7 @@ async def _command(update, context, kind):
     try:
         value = classify_input(argument, expected_kind=kind)
     except InputClassificationError:
-        await message.reply_text(f'Неверный формат для /{kind}. '+_HINTS[kind], parse_mode='HTML',
+        await message.reply_text('Неверный формат. '+_HINTS[kind], parse_mode='HTML',
                                  link_preview_options=LinkPreviewOptions(is_disabled=True))
         return
     return await _dispatch(message, context, update.effective_user.id, value)

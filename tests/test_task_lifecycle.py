@@ -104,7 +104,7 @@ class TaskLifecycleTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(2, message.edit_text.await_count)
         restored = message.edit_text.await_args_list[-1].kwargs
         self.assertEqual(handlers_vod._FORMAT_PROMPT_TEXT, restored["text"])
-        self.assertEqual("Загрузка...", message.edit_text.await_args_list[0].kwargs["text"])
+        self.assertEqual("Загрузка чата…", message.edit_text.await_args_list[0].kwargs["text"])
 
     async def test_successful_start_keeps_operation_busy_and_cancel_button_unchanged(self):
         context = self.make_context()
@@ -120,7 +120,7 @@ class TaskLifecycleTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(is_busy(context))
         self.assertIsNone(context.user_data.get("vod_pending"))
         start_call = message.edit_text.await_args_list[0].kwargs
-        self.assertEqual("Загрузка...", start_call["text"])
+        self.assertEqual("Загрузка чата…", start_call["text"])
         cancel_button = start_call["reply_markup"].inline_keyboard[0][0]
         self.assertEqual(handlers_vod.CB_PENDING_CANCEL, cancel_button.callback_data)
         finish_download(context, context.user_data["vod_active_operation"])

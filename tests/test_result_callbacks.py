@@ -71,7 +71,7 @@ class ResultCallbacksTestCase(unittest.IsolatedAsyncioTestCase):
     async def choose(self,update,context):
         await handlers_vod.vod_link_entry(update,context)
         keyboard=update.message.reply_text.await_args.kwargs['reply_markup']
-        self.assertEqual(['Выбрать готовую страницу','Сгенерировать заново'],
+        self.assertEqual(['Показать результат','Создать заново'],
                          [row[0].text for row in keyboard.inline_keyboard])
         return [row[0].callback_data for row in keyboard.inline_keyboard]
 
@@ -133,7 +133,7 @@ class ResultCallbacksTestCase(unittest.IsolatedAsyncioTestCase):
         old.path().unlink()
         update.callback_query.data=open_data
         await handlers_vod.vod_result_callback(update,context)
-        self.assertIn('недоступна',update.message.reply_text.await_args.args[0])
+        self.assertIn('Готовый чат недоступен.',update.message.reply_text.await_args.args[0])
         self.assertEqual('123456789',context.user_data['vod_pending']['vod_id'])
         context.bot.send_message.assert_not_awaited()
         self.assertEqual('ready',self.rows()[0]['state'])
@@ -160,7 +160,7 @@ class ResultCallbacksTestCase(unittest.IsolatedAsyncioTestCase):
         operation=begin_download(other)
         update.callback_query.data=regen
         await handlers_vod.vod_result_callback(update,context)
-        self.assertIn('Бот занят',update.message.reply_text.await_args.args[0])
+        self.assertIn('Сейчас обрабатывается чат VOD',update.message.reply_text.await_args.args[0])
         self.application.create_task.assert_not_called()
         self.assertIn('vod_result_choice',context.user_data)
         finish_download(other,operation)
@@ -203,7 +203,7 @@ class ResultCallbacksTestCase(unittest.IsolatedAsyncioTestCase):
         foreign.callback_query.data=regen
         await handlers_vod.vod_result_callback(foreign,other)
         self.application.create_task.assert_not_called()
-        self.assertEqual('Ссылка устарела.',foreign.message.reply_text.await_args_list[0].args[0])
+        self.assertEqual('Действие устарело. Выберите VOD заново.',foreign.message.reply_text.await_args_list[0].args[0])
 
     async def test_invalid_vod_links_and_callbacks_do_not_start_work(self):
         update,context=self.request()

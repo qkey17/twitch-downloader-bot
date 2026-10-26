@@ -8,20 +8,20 @@ from .handlers_input import cancel_input_request
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     await msg.reply_text(
-        "Отправь ссылку на Twitch VOD или числовой ID, чтобы получить чат.\n"
-        "Отправь имя Twitch-канала или ссылку на канал, чтобы посмотреть записи.\n\n"
-        "Подробности и примеры — /help.",
+        "Вставьте ссылку на VOD или его ID, чтобы получить чат.\n\n"
+        "Вставьте имя канала или ссылку на него, чтобы посмотреть список VODs.\n\n"
+        "Подробнее — /help.",
         link_preview_options=LinkPreviewOptions(is_disabled=True),
     )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(
-        "Просто отправь сообщение — тип ввода распознаётся автоматически.\n\n"
-        "Чат VOD — ссылка или числовой ID.\n"
-        "Список VODs канала — ссылка или имя канала.\n"
+        "Бот автоматически определяет тип запроса.\n\n"
+        "/vod — получить чат VOD.\n"
+        "/channel — посмотреть VODs канала.\n"
         "\n"
-        "Ввод через команду задают принудительный тип запроса.",
+        "Команды позволяют указать тип запроса вручную.",
         parse_mode='HTML',
         link_preview_options=LinkPreviewOptions(is_disabled=True),
     )
@@ -40,14 +40,14 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
 
     if cancel_input_request(context, msg.chat_id):
-        await msg.reply_text('Процесс отменен.')
+        await msg.reply_text('Действие отменено.')
         return
     if is_busy(context):
-        await msg.reply_text("Сейчас идёт скачивание.")
+        await msg.reply_text("Чат обрабатывается. Для отмены используйте кнопку «Отмена».")
         return
 
     if get_pending(context) or context.user_data.get("vod_link_lookup"):
         clear_pending(context)
-        await msg.reply_text("Процесс отменен.")
+        await msg.reply_text("Действие отменено.")
     else:
         await msg.reply_text("Нечего отменять.")

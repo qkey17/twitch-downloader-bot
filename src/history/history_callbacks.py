@@ -23,9 +23,9 @@ def _history_id_from_callback(data: str, prefix: str) -> int | None:
 async def _reply_history_not_found(update, context):
     message = update.callback_query.message
     try:
-        await message.reply_text("Запрос не найден.")
+        await message.reply_text("VOD не найден в истории.")
     except Exception:
-        await context.bot.send_message(chat_id=message.chat_id, text="Запрос не найден.")
+        await context.bot.send_message(chat_id=message.chat_id, text="VOD не найден в истории.")
 
 
 async def ui_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -86,9 +86,9 @@ async def history_vod_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     vod_url = item.get("vod_url")
     if not vod_url:
         try:
-            await q.message.reply_text("Ссылка не найдена.")
+            await q.message.reply_text("Ссылка на VOD недоступна.")
         except Exception:
-            await context.bot.send_message(chat_id=q.message.chat_id, text="Ссылка не найдена.")
+            await context.bot.send_message(chat_id=q.message.chat_id, text="Ссылка на VOD недоступна.")
         return
 
     try:

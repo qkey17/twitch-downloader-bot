@@ -7,27 +7,24 @@ def build_progress_text(meta: dict, vod_url: str, fmt: str, messages: int, uniqu
     channel = meta.get("channel") or "—"
     vod_len = meta.get("vod_len") or "—"
     elapsed = fmt_hhmmss(int(elapsed_s))
-    status_line = "Готово" if done else "Качаю…"
+    status_line = "Чат загружен. Подготовка HTML…" if done else "Загрузка чата…"
 
     return (
         f"{status_line}\n\n"
         f"VOD: <code>{vod_url}</code>\n"
         f"Канал: <b>{html.escape(channel)}</b>\n"
         f"Название: <b>{html.escape(title)}</b>\n"
-        f"Длина VOD: <b>{vod_len}</b>\n"
+        f"Длительность VOD: <b>{vod_len}</b>\n"
         f"Формат: <b>{fmt.upper()}</b>\n\n"
         f"Сообщений: <b>{messages}</b>\n"
-        f"Уникальных юзеров: <b>{unique_users}</b>\n"
-        f"Файл: <b>{parts}</b>\n"
-        f"Прошло времени: <b>{elapsed}</b>"
+        f"Уникальных пользователей: <b>{unique_users}</b>\n"
+        f"Файлов: <b>{parts}</b>\n"
+        f"Время обработки: <b>{elapsed}</b>"
     )
 
 
 def about_text() -> str:
     return (
-        "Что умеет:\n"
-        "Скачивать 📖 Чат с открытого Twitch 📹 VOD и красиво оформлять его в виде сайта\n"
-        "\n"
-        "Как пользоваться:\n"
-        "Отправьте ссылку на 📹 VOD\n"
+        "Бот загружает 📖 чат 📹 VOD и показывает список 📹 VODs канала.\n\n"
+        "Подробнее — /help."
     )

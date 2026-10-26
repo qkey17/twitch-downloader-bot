@@ -41,13 +41,13 @@ async def show_channel_vods(message, context, owner_id, login):
     Text and command routing may await the returned task without blocking PTB's
     update processing. Browsing never reserves a download slot or reads chat.
     """
-    progress = await message.reply_text('Загружаю архивы канала…')
+    progress = await message.reply_text('Загрузка VODs канала…')
     coroutine = _open_and_show(progress, context, owner_id, login)
     try:
         return context.application.create_task(coroutine)
     except BaseException:
         coroutine.close()
-        await progress.edit_text('Не удалось начать просмотр архивов. Попробуй позже.')
+        await progress.edit_text('Не удалось открыть список VODs. Повторите попытку.')
         raise
 
 
@@ -77,7 +77,7 @@ async def channel_vods_callback(update, context):
                     and result.vod_url == f'https://www.twitch.tv/videos/{result.vod_id}')
 
         if not selection_is_current():
-            await query.message.reply_text('Кнопка устарела. Используй текущую карточку.')
+            await query.message.reply_text('Кнопка устарела. Используйте текущую карточку VOD.')
             return None
         outcome = await prepare_vod_choice(query.message, context, update.effective_user.id,
                                            result.vod_id, is_current=selection_is_current)

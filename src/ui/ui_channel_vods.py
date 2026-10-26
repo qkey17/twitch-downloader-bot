@@ -10,19 +10,19 @@ from .ui_labels import VOD_LINK
 
 
 _MESSAGES = {
-    'loading': 'Загружаю архивы канала…',
-    'empty': 'У канала нет опубликованных архивов.',
-    'empty_page': 'В этой части списка архивы не найдены. Можно загрузить продолжение.',
-    'not_found': 'Twitch-канал не найден.',
-    'api_error': 'Не удалось получить архивы Twitch. Попробуй позже.',
-    'rate_limited': 'Достигнут лимит запросов Twitch. Попробуй позже.',
-    'limit': 'Достигнут лимит просмотра. Доступна только загруженная часть списка.',
-    'capacity': 'Сейчас слишком много просмотров каналов. Попробуй позже.',
-    'busy': 'Список архивов уже загружается. Подожди завершения.',
-    'expired': 'Просмотр устарел. Открой канал заново.',
-    'stale': 'Кнопка устарела. Используй текущую карточку.',
-    'forbidden': 'Эта кнопка относится к другому пользователю или сообщению.',
-    'invalid': 'Запрос просмотра не найден.',
+    'loading': 'Загрузка VODs канала…',
+    'empty': 'У канала нет опубликованных VODs.',
+    'empty_page': 'На этой странице нет VODs. Перейдите дальше.',
+    'not_found': 'Канал не найден. Проверьте имя или ссылку.',
+    'api_error': 'Не удалось открыть список VODs.',
+    'rate_limited': 'Слишком много запросов. Повторите попытку позже.',
+    'limit': 'Достигнут лимит списка. Показаны загруженные VODs.',
+    'capacity': 'Слишком много запросов. Повторите попытку позже.',
+    'busy': 'Дождитесь завершения предыдущего запроса.',
+    'expired': 'Список устарел. Откройте его заново.',
+    'stale': 'Кнопка устарела. Используйте текущую карточку VOD.',
+    'forbidden': 'Эта кнопка недоступна.',
+    'invalid': 'Просмотр недоступен. Откройте список VODs заново.',
     'selected': 'VOD выбран.',
 }
 
@@ -54,15 +54,15 @@ def build_channel_vod_card(view: BrowseView) -> tuple[str, InlineKeyboardMarkup 
             f'🆔 <code>{vod.id}</code>',
         ))
     if view.channel is not None:
-        lines.append(f'📚 Опубликованных архивов: {view.count_label}')
+        lines.append(f'📚 VODs канала: {view.count_label}')
     if view.status != 'ready':
         lines.append(_MESSAGES.get(view.status, _MESSAGES['api_error']))
         if view.status == 'api_error' and view.reason == 'authorization':
-            lines.append('Twitch отклонил авторизацию приложения.')
+            lines.append('Сервис отклонил запрос.')
         if view.status == 'api_error' and view.reason == 'pagination':
-            lines.append('Продолжение списка некорректно. Открой канал заново.')
+            lines.append('Не удалось продолжить список. Откройте его заново.')
         if view.status == 'rate_limited' and view.retry_after:
-            lines.append(f'Повторить можно через {view.retry_after} сек.')
+            lines.append(f'Повторите через {view.retry_after} с.')
     buttons = []
     if view.vod is not None:
         buttons.append([

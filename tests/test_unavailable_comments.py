@@ -105,7 +105,8 @@ class UnavailableCommentsTests(unittest.IsolatedAsyncioTestCase):
                         text = context.bot.edit_message_text.await_args.kwargs['text']
                         self.assertNotIn('У этого VOD нет чата.', text)
                         self.assertNotIn('подпис', text.lower())
-                        self.assertIn('Не удалось загрузить чат VOD', text)
+                        self.assertTrue(text.startswith(('Не удалось загрузить чат VOD.', 'Сервис отклонил запрос.')))
+                        self.assertIn('Повторите попытку позже.', text)
                         results.recover_results()
                         current = results.get_ready_result('123456789')
                         cache = db.get_cache('123456789', 'html_online')
@@ -138,8 +139,8 @@ class UnavailableCommentsTests(unittest.IsolatedAsyncioTestCase):
     async def test_access_failure_uses_send_fallback_and_does_not_claim_subscription(self):
         context = await self.run_response(_Response(status=403, data={}), fallback=True)
         text = context.bot.send_message.await_args.kwargs['text']
-        self.assertIn('Не удалось загрузить чат VOD', text)
-        self.assertIn('403', text)
+        self.assertEqual('Сервис отклонил запрос. Повторите попытку позже.', text)
+        self.assertNotIn('403', text)
         self.assertNotIn('подпис', text.lower())
 
     async def test_incomplete_message_data_and_invalid_continuation_are_errors(self):

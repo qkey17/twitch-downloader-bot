@@ -398,7 +398,7 @@ class ChannelVodsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await handlers.channel_vods_callback(update, context))
         update.callback_query.answer.assert_awaited_once()
         update.callback_query.message.edit_text.assert_not_awaited()
-        self.assertIn('другому пользователю', update.callback_query.message.reply_text.await_args.args[0])
+        self.assertIn('Эта кнопка недоступна.', update.callback_query.message.reply_text.await_args.args[0])
         self.assertTrue(self.browser.is_current(view))
 
     async def test_adapter_selection_delegates_preparation_and_updates_browse_card(self):

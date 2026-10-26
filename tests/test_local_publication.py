@@ -108,7 +108,7 @@ class LocalHtmlPublicationTestCase(unittest.TestCase):
         self.assertFalse(handlers_vod._cache_entry_has_usable_output(cached, "html_online"))
         self.assertEqual(1, db.get_history_count(77))
         stale_cards, _ = build_history_page(db.get_history_for_user(77, limit=1), page=0, per_page=1)
-        self.assertIn("недоступен локально", stale_cards[0][0])
+        self.assertIn("Локальный HTML недоступен", stale_cards[0][0])
         self.assertNotIn(html_ref.removeprefix("local:"), stale_cards[0][0])
 
     def test_legacy_public_cache_url_is_not_shown_as_a_link_in_local_mode(self):
@@ -119,7 +119,7 @@ class LocalHtmlPublicationTestCase(unittest.TestCase):
         }], page=0, per_page=1)
 
         text, keyboard = cards[0]
-        self.assertIn("HTML-файл недоступен локально", text)
+        self.assertIn("Локальный HTML недоступен", text)
         self.assertTrue(all(
             button.text != CHAT_GENERIC
             for row in keyboard.inline_keyboard

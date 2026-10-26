@@ -135,7 +135,7 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(1, download.await_count)
             self.assertTrue(is_busy(context1))
             self.assertFalse(is_busy(context2))
-            self.assertIn("Бот занят", update2.message.reply_text.await_args.args[0])
+            self.assertIn("Сейчас обрабатывается чат VOD", update2.message.reply_text.await_args.args[0])
             self.assertIsNotNone(context2.user_data.get("vod_pending"))
             release.set()
             await self.finish_tasks()
@@ -163,7 +163,7 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
             try:
                 await entered.wait()
                 await handlers_vod.vod_format_chosen(update2, second)
-                self.assertIn("Бот занят", update2.message.reply_text.await_args.args[0])
+                self.assertIn("Сейчас обрабатывается чат VOD", update2.message.reply_text.await_args.args[0])
                 self.application.create_task.assert_not_called()
             finally:
                 release.set()
@@ -362,6 +362,9 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
                 expected = ['start', 'help', 'vod', 'channel']
                 self.assertEqual(expected + (['history'] if enabled else []), commands)
                 self.assertNotIn('cancel', commands)
+                expected_descriptions = ['Начало работы', 'Справка', 'Получить чат VOD', 'VODs канала']
+                self.assertEqual(expected_descriptions + (['История'] if enabled else []),
+                                 [command.description for command in app.bot.set_my_commands.await_args.args[0]])
                 await main.post_shutdown(app)
             session.close.assert_awaited_once()
 
