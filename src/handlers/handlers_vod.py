@@ -165,7 +165,7 @@ async def _offer_ready(message,context,result,edit=False):
     context.user_data["vod_result_choice"] = {"vod_id":vod_id,"nonce":nonce,"created_at":time.time()}
     text,_ = _build_card(_make_item(result['meta'],result['stats'],f"https://www.twitch.tv/videos/{vod_id}","html_online"))
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Открыть готовую страницу",callback_data=f"ui:result:open:{vod_id}")],
+        [InlineKeyboardButton("Выбрать готовую страницу",callback_data=f"ui:result:open:{vod_id}")],
         [InlineKeyboardButton("Сгенерировать заново",callback_data=f"ui:result:regen:{vod_id}:{nonce}")],
     ])
     if edit:

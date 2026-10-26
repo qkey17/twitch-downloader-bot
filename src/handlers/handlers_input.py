@@ -13,12 +13,8 @@ from .handlers_vod import prepare_vod_choice
 INPUT_CALLBACK_PATTERN = r'^ui:input:'
 _ROUTE = 'text_input_route'
 _HINTS = {
-    'vod': ('Нужна ссылка на Twitch VOD или числовой ID.\n'
-            'Примеры: <code>https://www.twitch.tv/videos/&lt;VOD_ID&gt;</code> '
-            'или <code>&lt;VOD_ID&gt;</code>.'),
-    'channel': ('Нужно имя Twitch-канала или ссылка на канал.\n'
-                'Примеры: <code>&lt;CHANNEL_NAME&gt;</code> '
-                'или <code>https://www.twitch.tv/&lt;CHANNEL_NAME&gt;</code>.'),
+    'vod': 'Вставьте ссылку на VOD или его ID.',
+    'channel': 'Вставьте имя канала или ссылку на него.',
 }
 _INVALID = 'Не удалось распознать ввод. Отправь VOD-ссылку, числовой ID или имя Twitch-канала. Примеры — /help.'
 _BUSY = 'Предыдущий запрос ещё выполняется. Дождись завершения.'
