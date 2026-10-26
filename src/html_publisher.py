@@ -38,14 +38,20 @@ def public_html_url(filename: str) -> str:
 
 
 def public_html_filename(html_url: str | None) -> str | None:
-    """Map only this publisher's URLs, accepting historical duplicate slashes."""
+    """Map this publisher's URLs, including pre-HTTPS and duplicate-slash URLs."""
     if not isinstance(html_url, str) or not PUBLIC_BASE_URL or not PUBLIC_HTML_DIR:
         return None
     try:
         base, target = urlsplit(PUBLIC_BASE_URL), urlsplit(html_url)
+        # An HTTPS migration keeps the exact authority (including any explicit
+        # port). Only old HTTP references are compatible; do not broaden hosts,
+        # infer ports, or accept an HTTPS reference under an HTTP configuration.
+        scheme_matches = (target.scheme == base.scheme
+                          or (base.scheme == 'https' and target.scheme == 'http'))
         if (target.scheme not in ('http', 'https')
-                or (target.scheme, target.netloc) != (base.scheme, base.netloc)
-                or target.query or target.fragment):
+                or not scheme_matches or target.netloc != base.netloc
+                or '?' in html_url or '#' in html_url
+                or re.search(r'[\x00-\x20\x7f]', html_url)):
             return None
         path = re.sub(r'/+', '/', target.path)
         prefix = _public_path().rstrip('/') + '/'
