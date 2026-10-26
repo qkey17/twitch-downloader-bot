@@ -183,6 +183,8 @@ async def vod_result_callback(update,context):
         await q.message.reply_text("Запрос не найден.")
         return
     action,vod_id,nonce = match.groups()
+    pending = get_pending(context)
+    different_pending = pending and not pending_expired(pending) and pending['vod_id'] != vod_id
     if action == 'open':
         ready = results.get_ready_result(vod_id)
         if ready:
@@ -191,11 +193,20 @@ async def vod_result_callback(update,context):
             item = _make_item(ready['meta'],ready['stats'],f"https://www.twitch.tv/videos/{vod_id}","html_online")
             await _send_card_with_buttons(context,q.message.chat_id,item,ready['html_ref'])
         else:
+            if different_pending:
+                await q.message.reply_text('Сначала заверши или отмени выбор формата для другого VOD.')
+                return
+            if is_busy(context) or context.user_data.get('vod_link_lookup'):
+                await q.message.reply_text('Дождись завершения текущей операции.')
+                return
             set_pending(context,f"https://www.twitch.tv/videos/{vod_id}",vod_id)
             pending = get_pending(context)
             bind_pending_message(context, q.message)
             prompt = await q.message.reply_text("Готовая страница недоступна. Можно создать HTML заново.",reply_markup=build_format_keyboard())
             bind_pending_message(context, prompt, expected=pending)
+        return
+    if different_pending:
+        await q.message.reply_text('Сначала заверши или отмени выбор формата для другого VOD.')
         return
     if is_busy(context):
         await q.message.reply_text("Я уже качаю чат. Подожди завершения.")

@@ -34,7 +34,23 @@ def _vod(value):
         raise InputClassificationError('Invalid Twitch VOD ID') from None
 
 
-def classify_input(text: str) -> ClassifiedInput:
+def classify_input(text: str, *, expected_kind: Literal['vod', 'channel'] | None = None) -> ClassifiedInput:
+    """Classify automatically, or enforce a command's type without rerouting.
+
+    A numeric login is a channel only when explicitly requested by /channel.
+    The default classification retains VOD ID precedence.
+    """
+    if expected_kind not in (None, 'vod', 'channel'):
+        raise InputClassificationError('Unsupported input type')
+    if expected_kind == 'channel' and isinstance(text, str) and _LOGIN_RE.fullmatch(text.strip()):
+        return ClassifiedInput('channel', text.strip().lower())
+    result = _classify_input(text)
+    if expected_kind is not None and result.kind != expected_kind:
+        raise InputClassificationError('Input does not match command type')
+    return result
+
+
+def _classify_input(text: str) -> ClassifiedInput:
     """Classify a VOD URL/ID or channel login/URL, trimming outer whitespace.
 
     VOD IDs have precedence over numeric logins. Existing HTTP(S), bare-host,

@@ -25,6 +25,7 @@ from .handlers.handlers_input import (
 from .html_cleanup import start_cleanup, stop_cleanup
 from src.handlers.handlers import (
     start_command,
+    help_command,
     about_command,
     cancel_command,
     vod_link_entry,
@@ -77,11 +78,10 @@ async def post_init(app: Application):
     app.bot_data["aiohttp"] = aiohttp.ClientSession()
 
     commands = [
-        BotCommand("start", "Главное меню"),
+        BotCommand("start", "Как начать"),
+        BotCommand("help", "Справка и примеры"),
         BotCommand("vod", "Получить чат VOD"),
         BotCommand("channel", "Найти VOD канала"),
-        BotCommand("about", "Описание и как пользоваться"),
-        BotCommand("cancel", "Отменить ввод или выбор"),
     ]
     if config.HISTORY_ENABLED:
         commands.append(BotCommand("history", "История скачиваний"))
@@ -130,6 +130,7 @@ def main():
 
     # commands
     app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("about", about_command))
     app.add_handler(CommandHandler("history", history_command))
     app.add_handler(CommandHandler("cancel", cancel_command))

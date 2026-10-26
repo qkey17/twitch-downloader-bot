@@ -359,8 +359,9 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
                  patch.object(main, "cleanup_stale_html_temp_files", return_value=0):
                 await main.post_init(app)
                 commands = [command.command for command in app.bot.set_my_commands.await_args.args[0]]
-                expected = ['start', 'vod', 'channel', 'about', 'cancel']
+                expected = ['start', 'help', 'vod', 'channel']
                 self.assertEqual(expected + (['history'] if enabled else []), commands)
+                self.assertNotIn('cancel', commands)
                 await main.post_shutdown(app)
             session.close.assert_awaited_once()
 
@@ -456,6 +457,8 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
         from src.handlers.handlers_input import text_input, vod_command, channel_command
         self.assertIs(text_input, links[0].callback)
         commands = [h for group in app.handlers.values() for h in group if isinstance(h, CommandHandler)]
+        self.assertTrue({'start', 'help', 'vod', 'channel', 'cancel', 'about', 'history'}
+                        <= {name for handler in commands for name in handler.commands})
         for name, callback in (('vod', vod_command), ('channel', channel_command)):
             handler = next(h for h in commands if name in h.commands)
             self.assertIs(callback, handler.callback)
