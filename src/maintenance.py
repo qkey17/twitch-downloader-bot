@@ -256,6 +256,7 @@ class LocalServer:
         self.server = self.lock = self.identity = None
         self.started = False
         self.clients, self.tasks = set(), set()
+        self._close_task = None
 
     async def start(self):
         if os.name != 'posix' or not hasattr(socket, 'SO_PEERCRED'):
@@ -328,26 +329,39 @@ class LocalServer:
             log.warning('Maintenance request refused: %s', type(error).__name__)
         finally:
             try:
-                await self.coordinator.disconnect(owner)
-            except Exception as error:
-                log.error('Maintenance release failed: %s', type(error).__name__)
-            self.clients.discard(writer)
-            writer.close()
-            try:
-                await writer.wait_closed()
-            except (OSError, RuntimeError):
-                pass
-            self.tasks.discard(task)
+                try:
+                    await self.coordinator.disconnect(owner)
+                except Exception as error:
+                    log.error('Maintenance release failed: %s', type(error).__name__)
+            finally:
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except (OSError, RuntimeError):
+                    pass
+                finally:
+                    self.clients.discard(writer)
+                    self.tasks.discard(task)
 
     async def close(self):
-        if self.started or self.server is not None:
-            self.coordinator.begin_shutdown()
+        if self._close_task is None:
+            if self.started or self.server is not None:
+                self.coordinator.begin_shutdown()
+            self._close_task = asyncio.create_task(self._close(), name='tdb-maintenance-close')
+        # One caller's cancellation must not cancel other callers or detach a
+        # client's owned cleanup. A subsequent close awaits the same shutdown.
+        await asyncio.shield(self._close_task)
+
+    async def _close(self):
         if self.server is not None:
             self.server.close()
-            await self.server.wait_closed()
-            self.server = None
+        # Python 3.12 wait_closed() also waits for accepted connections. Close
+        # their transports first; shutting_down prevents late clients doing work.
         for writer in tuple(self.clients):
             writer.close()
+        if self.server is not None:
+            await self.server.wait_closed()
+            self.server = None
         # All tasks are explicitly owned, separate from PTB's shutdown task set.
         if self.tasks:
             await asyncio.gather(*tuple(self.tasks), return_exceptions=True)
