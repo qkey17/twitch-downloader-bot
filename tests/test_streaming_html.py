@@ -8,6 +8,7 @@ import os
 import runpy
 import subprocess
 import sys
+import sqlite3
 from html.parser import HTMLParser
 from pathlib import Path
 from unittest.mock import patch
@@ -104,6 +105,48 @@ class SpoolAndStreamingTestCase(unittest.TestCase):
             import sqlite3
             with self.assertRaises(sqlite3.DatabaseError):
                 tuple(spool.iter_rows())
+
+    def test_mid_batch_cancellation_rolls_back_rows_users_and_sequence_for_retry(self):
+        spool = self.spool()
+        original = {"user": "kept", "text": "committed"}
+        spool.append_batch([encode_row(original)])
+        pending = [{"user": "new", "text": "first"}, {"user": "other", "text": "second"}]
+        checks = iter((False, True))
+
+        with self.assertRaisesRegex(RuntimeError, "отменена"):
+            spool.append_batch(map(encode_row, pending), cancel_check=lambda: next(checks))
+
+        self.assertEqual((1, 1), (spool.messages, spool.unique_users))
+        self.assertEqual([original], list(spool.iter_rows()))
+        # A rolled-back username must be inserted on retry, and seq must have no gap.
+        spool.append_batch(map(encode_row, pending))
+        self.assertEqual((3, 3), (spool.messages, spool.unique_users))
+        self.assertEqual([original, *pending], list(spool.iter_rows()))
+
+    def test_commit_failure_rolls_back_spool_and_allows_same_batch_retry(self):
+        spool = self.spool()
+        original = {"user": "kept", "text": "committed"}
+        spool.append_batch([encode_row(original)])
+        pending = [{"user": "new", "text": "Привет 🎮"}, {"user": "kept", "text": "again"}]
+        connection = spool._connect()
+        self.addCleanup(connection.close)
+
+        def deny_commit(action, argument, *_):
+            if action == sqlite3.SQLITE_TRANSACTION and argument == "COMMIT":
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        # Let real SQLite execute every INSERT, then fail the transaction boundary.
+        connection.set_authorizer(deny_commit)
+        with patch.object(spool, "_connect", return_value=connection):
+            with self.assertRaises(sqlite3.DatabaseError):
+                spool.append_batch(map(encode_row, pending))
+
+        self.assertEqual((1, 1), (spool.messages, spool.unique_users))
+        self.assertEqual([original], list(spool.iter_rows()))
+        spool.append_batch(map(encode_row, pending))
+        self.assertEqual((3, 2), (spool.messages, spool.unique_users))
+        self.assertEqual([original, *pending], list(spool.iter_rows()))
 
     def test_missing_sequence_or_truncated_spool_is_not_accepted_as_complete(self):
         import sqlite3
