@@ -130,6 +130,8 @@ The standalone standard-library tool `tools/backup_restore.py` creates and verif
 
 For an already completed snapshot, `tools/offsite_backup.py` streams an age-encrypted archive to the existing Dropbox remote, verifies its complete contents and only then rotates archives recorded in its private journal. See [offsite backup instructions](docs/offsite-backup.md) for quota admission, safe retries and independent recovery. It never changes production data or manages the bot service.
 
+Optional [daily backup automation](docs/daily-backup.md) coordinates an idle maintenance window with the bot, restores service before offsite transfer, and provides systemd timer/recovery templates for separate installation. The schedule is 10:00 UTC (15:00 UTC+5), with busy retries until 13:00 UTC. This integration is disabled until explicitly configured and installed; the deployment workflow is unchanged.
+
 ## Local data and output
 
 - Default SQLite database: `vod_history.db` in the project root.

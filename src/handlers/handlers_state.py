@@ -3,6 +3,7 @@ import uuid
 from typing import Optional
 from telegram.ext import ContextTypes
 from src.config import VOD_URL_RE, PENDING_TTL_SECONDS
+from src.maintenance import admission_closed
 
 
 _ACTIVE_OPERATION_KEY = "vod_active_operation"
@@ -21,7 +22,8 @@ def is_busy(context: ContextTypes.DEFAULT_TYPE) -> bool:
 
 
 def is_globally_busy(context: ContextTypes.DEFAULT_TYPE) -> bool:
-    return context.application.bot_data.get(_GLOBAL_OPERATION_KEY) is not None
+    return (admission_closed(context.application)
+            or context.application.bot_data.get(_GLOBAL_OPERATION_KEY) is not None)
 
 
 def set_busy(context: ContextTypes.DEFAULT_TYPE, v: bool):
@@ -31,7 +33,7 @@ def set_busy(context: ContextTypes.DEFAULT_TYPE, v: bool):
 def begin_download(context: ContextTypes.DEFAULT_TYPE) -> str | None:
     """Atomically reserve the single application slot, without awaiting or queuing."""
     bot_data = context.application.bot_data
-    if bot_data.get(_GLOBAL_OPERATION_KEY) is not None or is_busy(context):
+    if admission_closed(context.application) or bot_data.get(_GLOBAL_OPERATION_KEY) is not None or is_busy(context):
         return None
     operation_id = uuid.uuid4().hex
     bot_data[_GLOBAL_OPERATION_KEY] = operation_id
