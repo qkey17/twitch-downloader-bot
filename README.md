@@ -128,6 +128,8 @@ Filesystem errors are logged without chat content or credentials and other safe 
 
 The standalone standard-library tool `tools/backup_restore.py` creates and verifies a private SQLite/HTML snapshot and restores only into a new directory. It requires an explicitly acknowledged maintenance window with `tdb.service` stopped; it never stops/starts the service or loads the bot's environment. See [backup/restore instructions](docs/backup-restore.md) for source protection, disk reserve, off-VM transfer and independent restore checks. No backup, deployment, or production restore runs automatically.
 
+For an already completed snapshot, `tools/offsite_backup.py` streams an age-encrypted archive to the existing Dropbox remote, verifies its complete contents and only then rotates archives recorded in its private journal. See [offsite backup instructions](docs/offsite-backup.md) for quota admission, safe retries and independent recovery. It never changes production data or manages the bot service.
+
 ## Local data and output
 
 - Default SQLite database: `vod_history.db` in the project root.
