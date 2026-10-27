@@ -124,6 +124,10 @@ Deletion claims and `Publication.reserve()` serialize their predecessor decision
 
 Filesystem errors are logged without chat content or credentials and other safe candidates can proceed. Before unlink, rollback restores the original name without overwriting another file where possible. Otherwise the quarantine and journal remain recoverable; ambiguous/substituted files and unproven directories are retained for operator investigation. Finished-file removal is never based on a filename glob. Keep publication/work directories writable only by the service account and restrict other writers; validation is not a defence against a privileged process modifying files between system calls. Logs report deletions, measured free-space change and an unmet target, without periodic INFO noise on a healthy disk. Back up SQLite and HTML before updating the running service; test on Ubuntu 24.04/Python 3.12 before deployment. Development tests simulate disk pressure and delete only disposable fixture files.
 
+## Administrative backup and restore
+
+The standalone standard-library tool `tools/backup_restore.py` creates and verifies a private SQLite/HTML snapshot and restores only into a new directory. It requires an explicitly acknowledged maintenance window with `tdb.service` stopped; it never stops/starts the service or loads the bot's environment. See [backup/restore instructions](docs/backup-restore.md) for source protection, disk reserve, off-VM transfer and independent restore checks. No backup, deployment, or production restore runs automatically.
+
 ## Local data and output
 
 - Default SQLite database: `vod_history.db` in the project root.
