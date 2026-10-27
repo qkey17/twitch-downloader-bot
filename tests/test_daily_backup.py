@@ -3,6 +3,7 @@ from contextlib import contextmanager
 import configparser
 from datetime import datetime, timedelta, timezone
 import json
+import io
 import os
 from pathlib import Path
 import subprocess
@@ -144,6 +145,8 @@ class FakeRuntime:
     def start(self):
         self.events.append('start')
         self.start_attempts += 1
+        if self.properties['ActiveState'] in ('active','activating') or self.properties['Job'] not in ('','0'):
+            return  # systemd start does not create another active process.
         if self.fail == 'start':
             self.properties.update(ActiveState='failed', SubState='failed', MainPID='0')
             raise daily.DailyError('synthetic_start_failure')
@@ -594,6 +597,318 @@ class DailyBackupTests(unittest.TestCase):
         self.assertEqual(1,self.runtime.start_attempts)
         self.assertIsNone(self.controller().store.read('owner'))
         self.assert_originals_unchanged()
+
+
+class RecoveryRegressionTests(unittest.TestCase):
+    setUp = DailyBackupTests.setUp
+    controller = DailyBackupTests.controller
+    assert_originals_unchanged = DailyBackupTests.assert_originals_unchanged
+
+    def configure(self,timeout=180,stability=10,stop=600):
+        self.config = daily.Config(self.values|dict(start_timeout_seconds=timeout,
+            stability_seconds=stability,stop_timeout_seconds=stop))
+
+    def own(self,attempts=0):
+        owner = dict(token='e'*32,boot_id=self.runtime.boot,invocation='a'*32,pid=401,
+            attempts=attempts,snapshot=str(self.config.backup_dir/'unopened-snapshot'),binding=self.config.binding)
+        self.controller().store.write('owner',owner)
+        return owner
+
+    def ready_at(self,seconds):
+        original = self.runtime.service
+        def read():
+            self.runtime.application_running = self.runtime.elapsed>=seconds
+            return original()
+        return patch.object(self.runtime,'service',side_effect=read)
+
+    def test_active_readiness_30_180_500_800_seconds_never_spends_start_attempts(self):
+        self.configure(timeout=900)
+        for delay in (30,180,500,800):
+            with self.subTest(delay=delay):
+                self.runtime = FakeRuntime()
+                self.own()
+                with self.ready_at(delay): result = self.controller()._recover_locked()
+                self.assertEqual('bot_restored',result['code'])
+                self.assertEqual(delay+10,self.runtime.elapsed)
+                self.assertEqual(0,self.runtime.start_attempts)
+                self.assertNotIn('stop',self.runtime.events)
+                self.assertIsNone(self.controller().store.read('owner'))
+        self.assert_originals_unchanged()
+
+    def test_default_readiness_deadline_accepts_boundary_and_refuses_longer_delays_without_start(self):
+        self.configure()
+        self.own()
+        with self.ready_at(180): self.controller()._recover_locked()
+        self.assertEqual(190,self.runtime.elapsed)
+        for delay in (500,800):
+            with self.subTest(delay=delay):
+                self.runtime = FakeRuntime()
+                owner = self.own()
+                with self.ready_at(delay), self.assertRaises(daily.DailyError) as error:
+                    self.controller()._recover_locked()
+                self.assertEqual('critical_application_readiness_timeout',error.exception.code)
+                self.assertEqual(180,self.runtime.elapsed)
+                self.assertEqual(0,self.runtime.start_attempts)
+                self.assertEqual(owner,self.controller().store.read('owner'))
+
+    def test_exhausted_budget_still_waits_for_an_already_active_application(self):
+        self.configure()
+        self.own(attempts=3)
+        with self.ready_at(30): self.controller()._recover_locked()
+        self.assertEqual(40,self.runtime.elapsed)
+        self.assertEqual(0,self.runtime.start_attempts)
+        self.assertIsNone(self.controller().store.read('owner'))
+
+    def test_never_ready_active_application_is_bounded_and_keeps_budget_and_diagnostic(self):
+        self.configure(timeout=7,stability=2)
+        owner = self.own(attempts=2)
+        self.runtime.application_running = False
+        with patch('sys.stderr',new=io.StringIO()), self.assertRaises(daily.DailyError) as error:
+            self.controller().recover()
+        self.assertEqual('critical_application_readiness_timeout',error.exception.code)
+        self.assertEqual(7,self.runtime.elapsed)
+        self.assertEqual(0,self.runtime.start_attempts)
+        self.assertEqual(owner,self.controller().store.read('owner'))
+        status = self.controller().store.read('status')
+        self.assertEqual('critical',status['status'])
+        self.assertEqual(error.exception.code,status['code'])
+
+    def test_fake_systemd_start_is_a_noop_for_an_active_process(self):
+        before = dict(self.runtime.properties)
+        self.runtime.application_running = False
+        self.runtime.start()
+        self.assertEqual(before,self.runtime.properties)
+        self.assertFalse(self.runtime.application_running)
+
+    def test_only_settled_inactive_or_failed_service_gets_a_durable_start_attempt(self):
+        self.configure(timeout=20,stability=2)
+        for state,substate in (('inactive','dead'),('failed','failed')):
+            with self.subTest(state=state):
+                self.runtime = FakeRuntime()
+                self.runtime.properties.update(ActiveState=state,SubState=substate,MainPID='0')
+                self.own(attempts=1)
+                original_start = self.runtime.start
+                def start():
+                    self.assertEqual(2,self.controller().store.read('owner')['attempts'])
+                    original_start()
+                with patch.object(self.runtime,'start',side_effect=start): self.controller()._recover_locked()
+                self.assertEqual(1,self.runtime.start_attempts)
+                self.assertNotIn('stop',self.runtime.events)
+                self.assertIsNone(self.controller().store.read('owner'))
+
+    def test_exhausted_budget_for_stopped_service_never_dispatches_a_start(self):
+        owner = self.own(attempts=3)
+        self.runtime.properties.update(ActiveState='inactive',SubState='dead',MainPID='0')
+        with self.assertRaises(daily.DailyError) as error: self.controller()._recover_locked()
+        self.assertEqual('critical_restart_attempts_exhausted',error.exception.code)
+        self.assertEqual(owner,self.controller().store.read('owner'))
+        self.assertEqual(0,self.runtime.start_attempts)
+
+    def test_transitioning_service_and_pending_jobs_are_waited_without_spending_attempts(self):
+        self.configure(timeout=30,stability=2,stop=20)
+        for state,substate,pid,job in (('activating','start','0','9'),('deactivating','stop-sigterm','401','9'),
+                                     ('active','running','401','9'),('inactive','dead','0','9')):
+            with self.subTest(state=state):
+                self.runtime = FakeRuntime()
+                self.own(attempts=3)
+                original = self.runtime.service
+                def read():
+                    if self.runtime.elapsed<5:
+                        self.runtime.properties.update(ActiveState=state,SubState=substate,MainPID=pid,Job=job)
+                    else:
+                        self.runtime.properties.update(ActiveState='active',SubState='running',MainPID='402',Job='0')
+                    return original()
+                with patch.object(self.runtime,'service',side_effect=read): self.controller()._recover_locked()
+                self.assertEqual(7,self.runtime.elapsed)
+                self.assertEqual(0,self.runtime.start_attempts)
+
+    def test_permanent_transition_or_unknown_state_is_a_bounded_refusal(self):
+        self.configure(timeout=4,stability=1,stop=5)
+        cases = [dict(ActiveState='activating',SubState='start',Job='0'),
+                 dict(ActiveState='deactivating',SubState='stop-sigterm',Job='0'),
+                 dict(Job='19'),dict(LoadState='not-found'),dict(ActiveState='unknown')]
+        for changes in cases:
+            with self.subTest(changes=changes):
+                self.runtime = FakeRuntime()
+                self.runtime.properties.update(changes)
+                owner = self.own()
+                with self.assertRaises(daily.DailyError): self.controller()._recover_locked()
+                self.assertLessEqual(self.runtime.elapsed,5)
+                self.assertEqual(owner,self.controller().store.read('owner'))
+                self.assertEqual(0,self.runtime.start_attempts)
+                self.assertNotIn('stop',self.runtime.events)
+
+    def test_automatic_restart_during_readiness_is_observed_without_manual_start(self):
+        self.configure(timeout=120,stability=10)
+        self.own()
+        original = self.runtime.service
+        def read():
+            t = self.runtime.elapsed
+            self.runtime.application_running = t>=60
+            if 30<=t<40:
+                self.runtime.properties.update(ActiveState='activating',SubState='auto-restart',Job='7')
+            elif t>=40:
+                self.runtime.properties.update(ActiveState='active',SubState='running',Job='0',
+                    MainPID='402',InvocationID='b'*32,NRestarts='1')
+            return original()
+        with patch.object(self.runtime,'service',side_effect=read): self.controller()._recover_locked()
+        self.assertEqual(70,self.runtime.elapsed)
+        self.assertEqual(0,self.runtime.start_attempts)
+        self.assertIsNone(self.controller().store.read('owner'))
+
+    def test_each_identity_component_changing_before_final_probe_requires_a_new_full_interval(self):
+        self.configure(timeout=50,stability=10)
+        for changes in ({'MainPID':'402'},{'InvocationID':'b'*32},{'NRestarts':'1'}):
+            with self.subTest(changes=changes):
+                self.runtime = FakeRuntime()
+                self.own()
+                original = self.runtime.service
+                replacement = []
+                def read():
+                    data = original()
+                    if self.runtime.elapsed>=10 and not replacement:
+                        self.assertIsNotNone(self.controller().store.read('owner'))
+                        self.runtime.properties.update(changes)
+                        replacement.append(self.runtime.elapsed)
+                    return data
+                with patch.object(self.runtime,'service',side_effect=read): self.controller()._recover_locked()
+                self.assertGreaterEqual(self.runtime.elapsed,replacement[0]+10)
+                self.assertEqual(0,self.runtime.start_attempts)
+                self.assertIsNone(self.controller().store.read('owner'))
+
+    def test_repeated_process_changes_cannot_extend_recovery_indefinitely(self):
+        self.configure(timeout=12,stability=4,stop=6)
+        owner = self.own(attempts=3)
+        original = self.runtime.service
+        def read():
+            generation = int(self.runtime.elapsed)//2
+            self.runtime.properties.update(MainPID=str(401+generation),InvocationID=f'{generation:032x}',NRestarts=str(generation))
+            return original()
+        with patch.object(self.runtime,'service',side_effect=read), self.assertRaises(daily.DailyError):
+            self.controller()._recover_locked()
+        self.assertLessEqual(self.runtime.elapsed,16)
+        self.assertEqual(owner,self.controller().store.read('owner'))
+        self.assertEqual(0,self.runtime.start_attempts)
+
+    def test_start_revalidation_observes_a_concurrent_boot_instead_of_spending_an_attempt(self):
+        self.configure(timeout=10,stability=2)
+        for attempts in (0,3):
+            with self.subTest(attempts=attempts):
+                self.runtime = FakeRuntime()
+                self.own(attempts=attempts)
+                original = self.runtime.service
+                calls = []
+                def read():
+                    calls.append(1)
+                    if len(calls)==1:
+                        return original()|dict(ActiveState='inactive',SubState='dead',MainPID='0')
+                    return original()
+                with patch.object(self.runtime,'service',side_effect=read): self.controller()._recover_locked()
+                self.assertEqual(0,self.runtime.start_attempts)
+                self.assertIsNone(self.controller().store.read('owner'))
+
+    def test_revalidation_flapping_has_a_global_deadline_and_never_starts(self):
+        self.configure(timeout=3,stability=1,stop=3)
+        owner = self.own()
+        original = self.runtime.service
+        calls = []
+        def read():
+            calls.append(1)
+            data = original()
+            return data|dict(ActiveState='inactive',SubState='dead',MainPID='0') if len(calls)%2 else data
+        with patch.object(self.runtime,'service',side_effect=read), self.assertRaises(daily.DailyError) as error:
+            self.controller()._recover_locked()
+        self.assertEqual('critical_recovery_timed_out',error.exception.code)
+        self.assertLessEqual(self.runtime.elapsed,22)
+        self.assertEqual(owner,self.controller().store.read('owner'))
+        self.assertEqual(0,self.runtime.start_attempts)
+
+    def test_one_transient_read_failure_at_each_probe_stage_recovers_without_commands(self):
+        self.configure(timeout=10,stability=2)
+        for fail_on in (1,2,3):
+            with self.subTest(fail_on=fail_on):
+                self.runtime = FakeRuntime()
+                self.own(attempts=3)
+                original = self.runtime.service
+                calls = []
+                def read():
+                    calls.append(1)
+                    if len(calls)==fail_on: raise daily.offsite.OffsiteError('synthetic unavailable read')
+                    return original()
+                with patch.object(self.runtime,'service',side_effect=read): self.controller()._recover_locked()
+                self.assertEqual(0,self.runtime.start_attempts)
+                self.assertGreaterEqual(self.runtime.elapsed,3)
+                self.assertIsNone(self.controller().store.read('owner'))
+
+    def test_persistent_read_failure_keeps_owner_budget_and_specific_diagnostic(self):
+        self.configure(timeout=4,stability=1)
+        owner = self.own(attempts=2)
+        with patch.object(self.runtime,'service',side_effect=OSError('PRIVATE_TEST_SENTINEL')), \
+                patch('sys.stderr',new=io.StringIO()) as log, self.assertRaises(daily.DailyError) as error:
+            self.controller().recover()
+        self.assertEqual('critical_service_state_unavailable',error.exception.code)
+        self.assertEqual(4,self.runtime.elapsed)
+        self.assertEqual(owner,self.controller().store.read('owner'))
+        self.assertEqual(error.exception.code,self.controller().store.read('status')['code'])
+        self.assertNotIn('PRIVATE_TEST_SENTINEL',log.getvalue())
+        self.assertEqual(0,self.runtime.start_attempts)
+        self.assertNotIn('stop',self.runtime.events)
+
+    def test_query_failure_during_start_revalidation_never_spends_or_dispatches_a_start(self):
+        self.configure(timeout=4,stability=1)
+        owner = self.own(attempts=1)
+        original = self.runtime.service
+        calls = []
+        def read():
+            calls.append(1)
+            if len(calls)==1:
+                return original()|dict(ActiveState='inactive',SubState='dead',MainPID='0')
+            raise daily.offsite.OffsiteError('synthetic unavailable revalidation')
+        with patch.object(self.runtime,'service',side_effect=read), self.assertRaises(daily.DailyError) as error:
+            self.controller()._recover_locked()
+        self.assertEqual('critical_service_state_unavailable',error.exception.code)
+        self.assertEqual(4,self.runtime.elapsed)
+        self.assertEqual(owner,self.controller().store.read('owner'))
+        self.assertEqual(0,self.runtime.start_attempts)
+
+    def test_slow_revalidation_cannot_dispatch_start_after_the_global_deadline(self):
+        self.configure(timeout=3,stability=1,stop=3)
+        owner = self.own()
+        self.runtime.properties.update(ActiveState='inactive',SubState='dead',MainPID='0')
+        original = self.runtime.service
+        calls = []
+        def read():
+            calls.append(1)
+            if len(calls)==2: self.runtime.sleep(30)
+            return original()
+        with patch.object(self.runtime,'service',side_effect=read), self.assertRaises(daily.DailyError) as error:
+            self.controller()._recover_locked()
+        self.assertEqual('critical_recovery_timed_out',error.exception.code)
+        self.assertEqual(owner,self.controller().store.read('owner'))
+        self.assertEqual(0,self.runtime.start_attempts)
+
+    def test_system_manager_queries_also_retry_transient_errors_and_bound_persistent_errors(self):
+        self.configure(timeout=4,stability=1)
+        for permanent in (False,True):
+            with self.subTest(permanent=permanent):
+                self.runtime = FakeRuntime()
+                owner = self.own(attempts=3)
+                calls = []
+                def manager():
+                    calls.append(1)
+                    if permanent or len(calls)==1: raise OSError('synthetic manager unavailable')
+                    return False
+                with patch.object(self.runtime,'manager_stopping',side_effect=manager):
+                    if permanent:
+                        with self.assertRaises(daily.DailyError) as error: self.controller()._recover_locked()
+                        self.assertEqual('critical_system_manager_unavailable',error.exception.code)
+                        self.assertEqual(4,self.runtime.elapsed)
+                        self.assertEqual(owner,self.controller().store.read('owner'))
+                    else:
+                        self.controller()._recover_locked()
+                        self.assertIsNone(self.controller().store.read('owner'))
+                self.assertEqual(0,self.runtime.start_attempts)
+                self.assertNotIn('stop',self.runtime.events)
 
 
 class DailyUnitSafetyTests(unittest.TestCase):

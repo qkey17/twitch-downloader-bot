@@ -343,6 +343,17 @@ def _dead(data):
             and data.get('SubState')=='dead' and data.get('MainPID')=='0' and data.get('Job') in ('','0'))
 
 
+def _stopped(data):
+    return (_dead(data) or (data.get('LoadState')=='loaded' and data.get('ActiveState')=='failed'
+            and data.get('SubState')=='failed' and data.get('MainPID')=='0' and data.get('Job') in ('','0')))
+
+
+def _process_identity(data):
+    if not _active(data) or not re.fullmatch(r'[0-9]+',data.get('NRestarts','')):
+        return None
+    return data['MainPID'],data['InvocationID'],data['NRestarts']
+
+
 class Controller:
     def __init__(self,config,runtime=None):
         self.config, self.runtime = config, runtime or Runtime(config)
@@ -393,55 +404,109 @@ class Controller:
             self.runtime.sleep(min(1,max(0,end-self.runtime.monotonic())))
 
     def _ready(self,owner=None):
-        data = self.runtime.service()
-        if not _active(data): return False
+        return self._ready_process(owner) is not None
+
+    def _ready_process(self,owner=None,read=None):
+        read = read or self.runtime.service
+        data = read()
+        identity = _process_identity(data)
+        if identity is None: return None
         try:
             with self.runtime.gate(int(data['MainPID'])) as gate:
                 reply = gate.status()
                 if owner is not None and reply['token']==owner['token']:
                     # All controller children are gone before an independent recovery
                     # can own both locks; no stop job is pending in this observed invocation.
-                    if gate.release(owner['token'])['status']!='released': return False
+                    if gate.release(owner['token'])['status']!='released': return None
                     reply = gate.status()
                 if (reply['status']!='running' or not reply['running'] or reply['token'] is not None
-                        or reply['committed']): return False
+                        or reply['committed']): return None
         except (OSError,ValueError,DailyError):
-            return False
-        after = self.runtime.service()
-        return _active(after) and (after['MainPID'],after['InvocationID'])==(data['MainPID'],data['InvocationID'])
+            return None
+        return identity if _process_identity(read())==identity else None
+
+    def _recovery_read(self,operation,deadline,code):
+        while True:
+            try: return operation()
+            except (OSError,UnicodeError,DailyError,offsite.OffsiteError):
+                if self.runtime.monotonic()>=deadline: raise DailyError(code) from None
+            self.runtime.sleep(min(1,max(0,deadline-self.runtime.monotonic())))
 
     def _recover_locked(self):
         owner = self._owner()
         if owner is None: return dict(status='ok',code='nothing_to_recover')
         if self._held(): raise DailyError('critical_manual_hold_with_restart_ownership')
         self.runtime.recovery_mode()
-        if self.runtime.manager_stopping(): return dict(status='deferred',code='recovery_deferred_until_boot')
-        # Do not cancel an in-flight graceful stop or kill a hung bot.
-        if not self._wait(lambda:self.runtime.service().get('Job') in ('','0')
-                          and self.runtime.service().get('ActiveState') not in ('deactivating','activating'),
-                          self.config.stop_timeout_seconds):
-            raise DailyError('critical_service_job_did_not_settle')
-        timeout = (self.config.start_timeout_seconds if owner['attempts']<self.config.recovery_attempts
-                   and self.runtime.service().get('ActiveState') in ('active','activating') else 0)
+        c = self.config
+        remaining = max(0,c.recovery_attempts-owner['attempts'])
+        now = self.runtime.monotonic()
+        # Existing phase limits also bound repeated automatic restarts/query errors.
+        deadline = now+c.stop_timeout_seconds+(remaining+1)*(c.start_timeout_seconds+c.stability_seconds)
+        deadline += max(0,remaining-1)*c.restart_retry_seconds
+        job_deadline, next_start = now+c.stop_timeout_seconds, now
+        ready_deadline = unknown_deadline = stable_process = stable_since = None
+
+        def read():
+            return self._recovery_read(self.runtime.service,
+                min(deadline,self.runtime.monotonic()+c.start_timeout_seconds),'critical_service_state_unavailable')
+
+        def stopping():
+            return self._recovery_read(self.runtime.manager_stopping,
+                min(deadline,self.runtime.monotonic()+c.start_timeout_seconds),'critical_system_manager_unavailable')
+
         while True:
-            if self._wait(lambda:self._ready(owner),timeout):
-                first = self.runtime.service()
-                self.runtime.sleep(self.config.stability_seconds)
-                second = self.runtime.service()
-                if (self._ready(owner) and (first['MainPID'],first['InvocationID'],first['NRestarts'])==
-                        (second['MainPID'],second['InvocationID'],second['NRestarts'])):
+            if self.runtime.monotonic()>=deadline: raise DailyError('critical_recovery_timed_out')
+            if stopping(): return dict(status='deferred',code='recovery_deferred_until_boot')
+            data = read()
+            now = self.runtime.monotonic()
+            if _active(data):
+                if ready_deadline is None: ready_deadline = now+c.start_timeout_seconds
+                process = self._ready_process(owner,read)
+                now = self.runtime.monotonic()
+                if process is None:
+                    stable_process = stable_since = None
+                elif process!=stable_process:
+                    stable_process,stable_since = process,now
+                if (stable_process is not None and now-stable_since>=c.stability_seconds
+                        and now<=min(deadline,ready_deadline+c.stability_seconds)):
                     self.store.write('owner',None)
                     return dict(status='ok',code='bot_restored')
-            if self.runtime.manager_stopping(): return dict(status='deferred',code='recovery_deferred_until_boot')
-            if owner['attempts']>=self.config.recovery_attempts:
-                raise DailyError('critical_restart_attempts_exhausted')
-            owner['attempts']+=1
-            self.store.write('owner',owner)  # Consume budget before start, even across SIGKILL/reboot.
-            try: self.runtime.start()
-            except Exception: pass
-            timeout = self.config.start_timeout_seconds
-            if owner['attempts']>1:
-                self.runtime.sleep(self.config.restart_retry_seconds)
+                allowance = c.stability_seconds if stable_process is not None else 0
+                if now>=ready_deadline+allowance: raise DailyError('critical_application_readiness_timeout')
+                unknown_deadline = None
+            elif _stopped(data):
+                stable_process = stable_since = None
+                unknown_deadline = None
+                if now>=next_start:
+                    # Reconcile boot/autorestart jobs again immediately before
+                    # consuming a durable attempt. Never start an uncertain unit.
+                    if stopping(): return dict(status='deferred',code='recovery_deferred_until_boot')
+                    if not _stopped(read()):
+                        self.runtime.sleep(min(1,max(0,deadline-self.runtime.monotonic())))
+                        continue
+                    if self.runtime.monotonic()>=deadline: raise DailyError('critical_recovery_timed_out')
+                    if owner['attempts']>=c.recovery_attempts:
+                        raise DailyError('critical_restart_attempts_exhausted')
+                    owner['attempts']+=1
+                    self.store.write('owner',owner)
+                    try: self.runtime.start()
+                    except Exception: pass  # The next observed state reconciles a lost response.
+                    now = self.runtime.monotonic()
+                    ready_deadline = now+c.start_timeout_seconds
+                    job_deadline = now+c.stop_timeout_seconds
+                    next_start = now+c.restart_retry_seconds
+            else:
+                stable_process = stable_since = None
+                if (data.get('LoadState')=='loaded' and
+                        (data.get('Job') not in ('','0') or data.get('ActiveState') in
+                         ('activating','deactivating','reloading'))):
+                    unknown_deadline = None
+                    if now>=job_deadline: raise DailyError('critical_service_job_did_not_settle')
+                else:
+                    if unknown_deadline is None: unknown_deadline = now+c.start_timeout_seconds
+                    if now>=unknown_deadline: raise DailyError('critical_service_state_unknown')
+            if self.runtime.monotonic()>=deadline: raise DailyError('critical_recovery_timed_out')
+            self.runtime.sleep(min(1,max(0,deadline-self.runtime.monotonic())))
 
     def recover(self):
         with self.locked():
@@ -449,8 +514,8 @@ class Controller:
                 result = self._recover_locked()
                 if result['code']=='nothing_to_recover': return result
                 return self.report(**result)
-            except Exception:
-                self._critical('critical_recovery_failed')
+            except Exception as error:
+                self._critical(error.code if isinstance(error,DailyError) else 'critical_recovery_failed')
                 raise
 
     def _critical(self,code):
