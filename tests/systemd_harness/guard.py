@@ -78,7 +78,27 @@ def validate(data):
             'invalid guest machine-id')
 
 
-def check(*, provision=False):
+def upgrade_fence():
+    pointer = ROOT / 'update-current.json'
+    status = ROOT / 'update-status.json'
+    if not status.exists() and not status.is_symlink():
+        require(not pointer.exists() and not pointer.is_symlink(), 'upgrade status missing: run updater verify/recover')
+        return
+    # Only this small root-owned status is public. Unprivileged tdbh fixtures
+    # must never need access to the private transaction/backups directory.
+    no_links(status)
+    info = status.stat()
+    require(stat.S_ISREG(info.st_mode) and info.st_uid == 0 and not info.st_mode & 0o022
+            and info.st_nlink == 1 and info.st_size <= 4096, 'unsafe upgrade status')
+    transaction = json.loads(status.read_text())
+    txid = transaction['id']
+    require(isinstance(txid, str) and len(txid) == 32 and all(c in '0123456789abcdef' for c in txid),
+            'invalid upgrade ID')
+    require(set(transaction) == {'id', 'state'} and transaction['state'] in ('committed', 'rolled_back'),
+            'upgrade incomplete: run the saved updater recover command')
+
+
+def check(*, provision=False, upgrading=False):
     data = evidence()
     validate(data)
     no_links(ROOT)
@@ -100,6 +120,8 @@ def check(*, provision=False):
         record = json.loads(ATTEST.read_text())
         require(record['machine'] == data['machine'] and record['format'] == 'tdb-harness-v1',
                 'guest attestation mismatch')
+        if not upgrading:
+            upgrade_fence()
     return data
 
 

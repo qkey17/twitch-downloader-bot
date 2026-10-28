@@ -5,7 +5,8 @@ provisioning и `systemd-analyze verify` (по результатам польз
 на подготовке case 01 из-за безусловного `reset-failed` для выгруженных units.
 Исправление ниже **ещё не проверено повторным запуском на настоящем systemd**. Это отдельная
 тестовая инфраструктура, не способ установки автоматизации в production.
-Исходный контроллер и maintenance закреплены на `0a9a453aa975615df1c0c0b6ca835f277d7dfe1c`.
+Экспортируемый контроллер и maintenance закреплены на `75d16545c5ccbdb965b7dfd2cd73dd605f6f2e0d`.
+Обновление существующей VM описано в [пошаговой инструкции](harness-update.md); оно ещё не испытано на настоящем systemd.
 Production-файлы репозитория не меняются. Обновление исходной версии требует отдельно
 пересмотреть pin, контракты и тесты стенда.
 
@@ -86,7 +87,7 @@ python tests/systemd_harness/host.py run _work/tdb-harness-vm --iso /absolute/pa
 ```
 
 `bundle` и `init` требуют **новый** destination, никогда не перезаписывают его.
-Bundle содержит только четыре исходных файла audited commit, четыре модуля harness
+Bundle содержит только четыре исходных файла audited commit, шесть модулей harness
 и manifest SHA-256. Нет `.git`, `.env`, данных, credentials и зависимости от секретов.
 На Windows эквивалентные команды выполняйте с доступным Python/QEMU; xorriso нужен
 на отдельной рабочей машине, это не новая runtime dependency TCD. Не заменяйте ISO
@@ -122,70 +123,12 @@ sudo systemd-analyze verify /etc/systemd/system/tdb.service /etc/systemd/system/
 ради обхода collision checks. После успешного provisioning ISO больше не нужен:
 код установлен root в `/var/lib/tdb-harness/code`, admin и данные принадлежат `tdbh`.
 
-## Обновление существующей VM после сбоя reset-failed
+## Обновление существующей VM
 
-Существование unit-файла не означает, что unit сейчас загружен в manager. Systemd
-выгружает неиспользуемые inactive units, а `reset-failed` для такого имени может
-завершиться ошибкой. `Lab.new()` теперь сбрасывает только конкретный unit, для
-которого ожидание остановки вернуло `ActiveState=failed`. При стандартном
-`CollectMode=inactive` failed units сохраняются до сброса. Ошибки чтения состояния,
-тайм-ауты и ошибки `reset-failed` не подавляются. См.
-[unit garbage collection в systemd 255](https://www.freedesktop.org/software/systemd/man/255/systemd.unit.html#Unit%20Garbage%20Collection).
-
-Для этого исправления достаточно заменить **один** установленный файл
-`/var/lib/tdb-harness/code/scenarios.py`. Не повторяйте `init` или `provision`:
-collision checks должны оставаться включены. Не удаляйте `cases`, `report-*.json`,
-`guest.json`, `current.json`, `admin` или журналы.
-
-1. В консоли разрешённой VM выполните существующие `guest.py check`, затем
-   `guest.py cleanup` из раздела завершения. Продолжайте только после
-   `ISOLATED_GUEST_OK` и `CLEANUP_OK`. Не обновляйте активный прогон или незавершённую
-   фазу powercut. Штатно выключите **только эту VM**.
-2. На тестовом компьютере обновите checkout ветки `codex/systemd-integration-harness`,
-   проверьте SHA исправления и соберите новый bundle/ISO в **новые** пути:
-
-   ```sh
-   python tests/systemd_harness/host.py bundle _work/tdb-harness-reset-fix
-   xorriso -as mkisofs -V TDB_HARNESS -o _work/tdb-harness-reset-fix.iso _work/tdb-harness-reset-fix
-   python tests/systemd_harness/host.py run _work/tdb-harness-vm --iso _work/tdb-harness-reset-fix.iso --gui
-   ```
-
-   Используйте прежний каталог VM и qcow2, без `--install`. Сеть и общие каталоги
-   не подключайте.
-3. В консоли VM смонтируйте новый ISO read-only в новый mountpoint и проверьте guard:
-
-   ```sh
-   sudo mkdir /mnt/harness-reset-fix
-   sudo mount -o ro /dev/sr0 /mnt/harness-reset-fix
-   sudo /usr/bin/python3 -I -S -B /var/lib/tdb-harness/code/guest.py check
-   ```
-
-   После успешного guard проверьте checksum нового файла:
-
-   ```sh
-   /usr/bin/python3 -I -S -B - <<'PY'
-   import hashlib, json
-   from pathlib import Path
-   p = Path('/mnt/harness-reset-fix')
-   manifest = json.loads((p / 'bundle.json').read_text())
-   assert manifest['base'] == '0a9a453aa975615df1c0c0b6ca835f277d7dfe1c'
-   assert hashlib.sha256((p / 'scenarios.py').read_bytes()).hexdigest() == manifest['sha256']['scenarios.py']
-   print('SCENARIOS_SHA256_OK')
-   PY
-   ```
-
-4. Только после успешных проверок замените файл внутри guest:
-
-   ```sh
-   sudo install -o root -g root -m 0644 -- /mnt/harness-reset-fix/scenarios.py /var/lib/tdb-harness/code/scenarios.py
-   sudo /usr/bin/python3 -I -S -B /var/lib/tdb-harness/code/guest.py check
-   sudo /usr/bin/python3 -I -S -B /var/lib/tdb-harness/code/scenarios.py run
-   ```
-
-`daemon-reload` для замены Python-файла не требуется: unit-файлы не менялись.
-Attestation/checksums установленных units и sudoers остаются прежними. Существующие
-отчёты и cases сохраняются; новый прогон создаёт новые имена. Эта процедура относится
-только к данному исправлению, а не к произвольным будущим обновлениям harness.
+Используйте [новую инструкцию для Windows CMD и Ubuntu](harness-update.md).
+Она заменяет прежнюю ручную замену одного scenarios.py: теперь обязательно
+проверяются и обновляются обе копии контроллера и metadata версии.
+Повторный provision существующей VM запрещён.
 
 ## Запуск и сценарии
 

@@ -18,6 +18,8 @@ HARNESS = Path(__file__).with_name('systemd_harness')
 
 
 def load(name):
+    if name in sys.modules and Path(sys.modules[name].__file__).resolve() == (HARNESS / (name + '.py')).resolve():
+        return sys.modules[name]
     spec = importlib.util.spec_from_file_location(name, HARNESS / (name + '.py'))
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
@@ -180,15 +182,24 @@ class BundleAndLauncherTests(unittest.TestCase):
     def test_bundle_exports_exact_allowlist_from_audited_commit(self):
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / 'bundle'
-            with patch.object(host.subprocess, 'run', return_value=SimpleNamespace(stdout=b'# synthetic source\n')) as run:
+            def exported(repo, *args):
+                if args == ('rev-parse', 'HEAD'):
+                    return b'a'*40 + b'\n'
+                if args[0] == 'diff':
+                    return b''
+                return b'# synthetic source\n'
+            with patch.object(host, 'git_bytes', side_effect=exported) as run, \
+                    patch.dict(host.release.SOURCE_HASHES, {p: hashlib.sha256(b'# synthetic source\n').hexdigest()
+                                                         for p in host.SOURCE}):
                 host.bundle(target)
             manifest = json.loads((target / 'bundle.json').read_text())
             self.assertEqual(manifest['base'], host.BASE)
             self.assertEqual(set(manifest['sha256']), {*host.SOURCE, *host.HARNESS})
             for name, digest in manifest['sha256'].items():
                 self.assertEqual(hashlib.sha256((target / name).read_bytes()).hexdigest(), digest)
-            self.assertEqual([c.args[0] for c in run.call_args_list],
-                             [['git', 'show', f'{host.BASE}:{name}'] for name in host.SOURCE])
+            self.assertEqual([c.args[1:] for c in run.call_args_list][2:],
+                             [('show', f'{host.BASE}:{name}') for name in host.SOURCE] +
+                             [('show', f'{"a"*40}:tests/systemd_harness/{name}') for name in host.HARNESS])
             self.assertFalse((target / '.env').exists())
             self.assertFalse((target / '.git').exists())
             with self.assertRaises(FileExistsError):

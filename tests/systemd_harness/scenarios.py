@@ -17,6 +17,7 @@ if sys.platform == 'linux':
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import guard
 import guest
+import update
 
 ROOT = guard.ROOT
 DAILY = 'tdb-daily-backup.service'
@@ -34,6 +35,7 @@ class Lab:
     def __init__(self):
         guard.check()
         guard.require(os.geteuid() == 0, 'scenarios require guest root')
+        self.version = update.verify()
         self.case = None
 
     def events(self):
@@ -354,7 +356,10 @@ def run():
     lab = Lab()
     # Avoid crossing the real config's end-of-day window with a test that waits on busy.
     demand(datetime.now(timezone.utc).hour != 23, 'run suite outside 23:00-00:00 UTC')
-    report = dict(base=guest.BASE, kind='REAL_SYSTEMD_WITH_SYNTHETIC_TOOLS',
+    report = dict(base=lab.version['base'], harness=lab.version['harness'],
+                  installation_origin=lab.version['origin'],
+                  attestation_sha256=lab.version['attestation_sha256'],
+                  kind='REAL_SYSTEMD_WITH_SYNTHETIC_TOOLS',
                   systemd=guest.command(['/usr/bin/systemctl', '--version']).stdout.splitlines()[0],
                   python=sys.version.split()[0], cases=[], reboot='NOT_RUN: stage-powercut/resume required')
     report_path = ROOT / ('report-' + uuid.uuid4().hex + '.json')
@@ -417,7 +422,8 @@ def resume():
         demand(lab.seen('snapshot_begin') and not lab.seen('snapshot_done'), 'crash barrier missed')
         demand(not lab.seen('offsite_done'), 'unexpected offsite on boot')
         guest.private_write(ROOT / 'reboot-result.json', dict(status='PASS', old_boot=checkpoint['owner']['boot_id'],
-                                                             new_boot=boot, case=str(lab.case)), user=False)
+                                                             new_boot=boot, case=str(lab.case),
+                                                             base=lab.version['base'], harness=lab.version['harness']), user=False)
         print('PASS 14-real-guest-power-loss-and-boot-recovery')
     finally:
         guest.cleanup()
@@ -429,6 +435,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     try:
         guard.check()
-        {'run': run, 'stage-powercut': stage_powercut, 'resume': resume}[args.action]()
+        with update.lock(shared=True):
+            {'run': run, 'stage-powercut': stage_powercut, 'resume': resume}[args.action]()
     except (guard.Refused, OSError, ValueError, AssertionError, subprocess.SubprocessError) as error:
         sys.exit(f'REFUSED/FAILED: {error}')

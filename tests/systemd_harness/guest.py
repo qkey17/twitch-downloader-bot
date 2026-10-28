@@ -15,16 +15,14 @@ if sys.platform == 'linux':
 # Explicit harness directory also works with the controller's -I -S interpreters.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import guard
+import release
 
 ROOT = guard.ROOT
 CODE = ROOT / 'code'
 ADMIN = ROOT / 'admin'
 CONFIG = ADMIN / 'daily.json'
 USER = 'tdbh'
-BASE = '0a9a453aa975615df1c0c0b6ca835f277d7dfe1c'
-SOURCE = ('tools/daily_backup.py', 'tools/backup_restore.py', 'tools/offsite_backup.py',
-          'src/maintenance.py')
-HARNESS = ('guard.py', 'guest.py', 'synthetic.py', 'scenarios.py')
+BASE, SOURCE, HARNESS = release.BASE, release.SOURCE, release.HARNESS
 
 
 def command(args, *, timeout=15, check=True):
@@ -227,6 +225,9 @@ else:
     guard.ATTEST.write_text(json.dumps(dict(format='tdb-harness-v1', machine=data['machine'],
                                           base=BASE, installed=installed)))
     os.chmod(guard.ATTEST, 0o644)
+    sys.path.insert(0, str(CODE))
+    import update
+    update.register_provision(manifest)
     systemctl('daemon-reload')
     systemctl('enable', 'tdb-backup-recover.service')
     print('PROVISIONED: test units disabled except boot recovery; now run scenarios.py run')

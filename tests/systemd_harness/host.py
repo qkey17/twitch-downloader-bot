@@ -2,15 +2,21 @@
 import argparse
 import hashlib
 import json
+import shutil
 from pathlib import Path
 import subprocess
 import sys
 import uuid
 
-BASE = '0a9a453aa975615df1c0c0b6ca835f277d7dfe1c'
-SOURCE = ('tools/daily_backup.py', 'tools/backup_restore.py', 'tools/offsite_backup.py',
-          'src/maintenance.py')
-HARNESS = ('guard.py', 'guest.py', 'synthetic.py', 'scenarios.py')
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import release
+import iso
+
+BASE, SOURCE, HARNESS = release.BASE, release.SOURCE, release.HARNESS
+
+
+def git_bytes(repo, *args):
+    return subprocess.run(['git', *args], cwd=repo, check=True, capture_output=True).stdout
 
 
 def check_host():
@@ -38,21 +44,73 @@ def bundle(destination):
     """Explicit allowlist; no .git, .env, credentials, working data or dependencies."""
     repo = Path(__file__).resolve().parents[2]
     destination = safe_path(destination)
+    if destination.exists():
+        raise FileExistsError('bundle destination already exists')
+    commit = git_bytes(repo, 'rev-parse', 'HEAD').decode().strip()
+    if len(commit) != 40 or git_bytes(repo, 'diff', 'HEAD', '--', 'tests/systemd_harness').strip():
+        raise ValueError('commit the reviewed harness before building a bundle')
     destination.mkdir(mode=0o700)  # Exclusive, never overwrite an existing bundle.
     hashes = {}
     for name in SOURCE:
         # Export the audited commit, not accidentally changed production sources.
-        content = subprocess.run(['git', 'show', f'{BASE}:{name}'], cwd=repo,
-                                 check=True, capture_output=True).stdout
+        content = git_bytes(repo, 'show', f'{BASE}:{name}')
+        if hashlib.sha256(content).hexdigest() != release.SOURCE_HASHES[name]:
+            raise ValueError('source is not the reviewed commit')
         path = destination / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
         hashes[name] = hashlib.sha256(content).hexdigest()
     for name in HARNESS:
-        content = Path(__file__).with_name(name).read_bytes()
+        content = git_bytes(repo, 'show', f'{commit}:tests/systemd_harness/{name}')
         (destination / name).write_bytes(content)
         hashes[name] = hashlib.sha256(content).hexdigest()
-    (destination / 'bundle.json').write_text(json.dumps(dict(base=BASE, sha256=hashes), indent=2))
+    (destination / 'bundle.json').write_text(json.dumps(dict(base=BASE, harness=commit,
+        old_base=release.OLD_BASE, old_harness=release.OLD_HARNESS, sha256=hashes), indent=2))
+
+
+def prepare_update(repo):
+    check_host()
+    name = 'tdb-update-75d1654-' + uuid.uuid4().hex[:12]
+    directory = repo.parent / name
+    bundle(directory)
+    manifest = json.loads((directory / 'bundle.json').read_text())
+    destination = directory.with_suffix('.iso')
+    iso.create(directory, destination, [*manifest['sha256'], 'bundle.json'])
+    with destination.open('rb') as source:
+        checksum = hashlib.file_digest(source, 'sha256').hexdigest()
+    receipt = dict(iso=str(destination), sha256=checksum,
+                   harness=manifest['harness'], base=BASE)
+    work = repo / '_work'
+    work.mkdir(mode=0o700, exist_ok=True)
+    (work / 'update-iso.json').write_text(json.dumps(receipt))
+    print('ISO_READY ' + str(destination))
+    print('ISO_SHA256 ' + receipt['sha256'])
+    print('SOURCE ' + BASE + ' HARNESS ' + manifest['harness'])
+    print('After shutting down ONLY the guest, run: tests\\systemd_harness\\update.cmd run')
+
+
+def run_update(repo):
+    check_host()
+    if not (repo.parent / 'vm' / 'vm.json').is_file():
+        raise ValueError('existing vm/vm.json missing; never create a replacement VM')
+    receipt = json.loads((repo / '_work/update-iso.json').read_text())
+    if receipt['harness'] != git_bytes(repo, 'rev-parse', 'HEAD').decode().strip():
+        raise ValueError('ISO was built by another harness commit; build again')
+    path = safe_path(receipt['iso'])
+    with path.open('rb') as source:
+        checksum = hashlib.file_digest(source, 'sha256').hexdigest()
+    if receipt['base'] != BASE or checksum != receipt['sha256']:
+        raise ValueError('ISO changed; rebuild from reviewed commit')
+    executable = shutil.which('qemu-system-x86_64')
+    if not executable and sys.platform == 'win32':
+        candidate = Path('C:/Program Files/qemu/qemu-system-x86_64.exe')
+        if candidate.is_file():
+            executable = str(candidate)
+    if not executable:
+        raise ValueError('QEMU executable not found; no installation attempted')
+    command = qemu_argv(repo.parent / 'vm', path)
+    command[0] = executable
+    subprocess.run(command, check=True)
 
 
 def qemu_argv(directory, iso=None, gui=False, install=False):
@@ -85,12 +143,18 @@ def qemu_argv(directory, iso=None, gui=False, install=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('bundle', 'init', 'run', 'plan'))
-    parser.add_argument('directory', type=Path)
+    parser.add_argument('action', choices=('bundle', 'init', 'run', 'plan', 'prepare-update', 'run-update'))
+    parser.add_argument('directory', type=Path, nargs='?')
     parser.add_argument('--iso', type=Path)
     parser.add_argument('--gui', action='store_true', help='local installer display; no remote display server')
     parser.add_argument('--install', action='store_true', help='boot the Ubuntu installer CD once')
     args = parser.parse_args()
+    if args.action in ('prepare-update', 'run-update'):
+        repo = Path(__file__).resolve().parents[2]
+        {'prepare-update': prepare_update, 'run-update': run_update}[args.action](repo)
+        return
+    if args.directory is None:
+        parser.error('directory is required')
     if args.action in ('init', 'run'):
         check_host()
     if args.action == 'bundle':
