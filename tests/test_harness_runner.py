@@ -16,6 +16,7 @@ import guard
 import iso
 import release
 import runner
+import scenarios
 import update
 import wire
 
@@ -153,6 +154,19 @@ class RunnerTests(unittest.TestCase):
 
 
 class SystemdRegressionTests(unittest.TestCase):
+    def test_persistent_repeat_still_requires_original_lifecycle_and_readiness(self):
+        lab = object.__new__(scenarios.Lab)
+        lab.record = lambda name: {'code': 'previous_offsite_verified'} if name == 'status' else None
+        lab.ready = lambda: True
+        lab.assert_order = MagicMock()
+        with self.assertRaisesRegex(AssertionError, 'controller status'):
+            lab.successful()
+        lab.successful(allow_verified_repeat=True)
+        lab.assert_order.assert_called_once_with()
+        lab.ready = lambda: False
+        with self.assertRaisesRegex(AssertionError, 'ready'):
+            lab.successful(allow_verified_repeat=True)
+
     def test_idle_cold_units_with_empty_job_and_timer_without_pids_are_accepted(self):
         def state(unit):
             value = dict(LoadState='loaded', ActiveState='inactive', Job='', UnitFileState='disabled')

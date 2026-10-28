@@ -31,6 +31,9 @@ logs и отдельные JSON/events/journal для suite, powercut и сле�
    исходники берутся из Git и проходят SHA-256, произвольные scripts не добавляются.
 7. Запускается полный существующий suite, включая реальные transitions/jobs,
    Unix socket, SIGTERM/SIGKILL и Restart=on-failure. Сценарий 09 остаётся **8/1 с**.
+   В сценарии 13 минутный тестовый timer выключается после первого offsite. Если он
+   уже успел поставить повтор на границе минуты, допускается `previous_offsite_verified`:
+   полный первоначальный lifecycle и ровно один snapshot всё равно обязательны.
 8. Сценарий 14 сохраняет owner/checkpoint, fsync и sync. HOST принудительно убивает
    **весь созданный им процесс QEMU**, не вызывает shutdown/reboot/service restart guest.
 9. Повторно загружается **тот же overlay** с тем же UUID и seed. Проверяются новый

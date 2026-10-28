@@ -131,8 +131,9 @@ class Lab:
         self.await_event('prepare')
         self.idle()
 
-    def successful(self):
-        demand(self.record('status')['code'] == 'backup_verified_offsite', 'successful controller status')
+    def successful(self, allow_verified_repeat=False):
+        codes = ('backup_verified_offsite', 'previous_offsite_verified') if allow_verified_repeat else ('backup_verified_offsite',)
+        demand(self.record('status')['code'] in codes, 'successful controller status')
         demand(self.record('owner') is None and self.ready(), 'owner cleared only after ready')
         self.assert_order()
 
@@ -288,10 +289,16 @@ def persistent(lab):
     lab.start(RECOVER, TIMER)
     try:
         lab.await_event('offsite_done', 35)
+        # A catch-up crossing a minute boundary can queue a correct same-day
+        # repeat. Disarm future ticks, then validate both the original lifecycle
+        # and the controller's idempotent result; never require a timing accident.
+        triggered = guest.show(TIMER)['LastTriggerUSec']
+        guest.systemctl('stop', TIMER)
         lab.idle()
         lab.restored()
-        demand(guest.show(TIMER)['LastTriggerUSec'] not in ('', 'n/a'), 'Persistent catch-up did not fire')
-        lab.successful()
+        demand(triggered not in ('', 'n/a'), 'Persistent catch-up did not fire')
+        lab.successful(allow_verified_repeat=True)
+        demand(len(lab.seen('snapshot_done')) == 1, 'catch-up repeat created another snapshot')
     finally:
         guest.systemctl('stop', TIMER)
 
