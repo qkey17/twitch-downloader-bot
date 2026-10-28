@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: systemd-integration-${{ github.ref }}
+  group: systemd-integration-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -29,7 +29,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y qemu-system-x86 qemu-utils
       - name: Runner and updater unit tests (no real manager operations)
-        run: python3 -m unittest discover -s tests -p '*harness*.py' -v
+        shell: bash
+        run: |
+          mkdir -p _work
+          python3 -m unittest discover -s tests -p '*harness*.py' -v 2>&1 | tee _work/harness-unit-tests.log
       - name: Real Ubuntu 24.04 / systemd 255, including VM power loss
         run: python3 -B tests/systemd_harness/runner.py --output _work/systemd-ci --timeout 1800
       - name: Job report
@@ -47,6 +50,7 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
           path: |
+            _work/harness-unit-tests.log
             _work/systemd-ci/*.json
             _work/systemd-ci/*.md
             _work/systemd-ci/*.log

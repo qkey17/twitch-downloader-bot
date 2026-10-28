@@ -39,11 +39,15 @@ class UpdateTests(unittest.TestCase):
         self.stack.enter_context(patch.object(guard.os, 'geteuid', return_value=0, create=True))
         self.stack.enter_context(patch.object(update, 'check_units'))
         self.stack.enter_context(patch.object(update, 'check_directories'))
-        # Windows cannot enact POSIX chown/mode. Simulate only this boundary;
-        # real bytes, checksums, fsync, atomic replaces, journals and rollback run.
-        meta = update.attributes(self.root.stat()) | dict(mode=0o666)
+        # Use actual fixture metadata: Linux umask need not produce Windows' 0666.
+        # No privileged chown; retain real POSIX chmod and all data/atomicity checks.
+        probe = self.root / 'permission-probe'
+        probe.write_bytes(b'')
+        meta = update.attributes(probe.stat())
+        probe.unlink()
         self.stack.enter_context(patch.object(update, 'expected_attributes', return_value=meta))
-        self.stack.enter_context(patch.object(update, 'set_attributes'))
+        self.stack.enter_context(patch.object(update, 'set_attributes',
+            side_effect=lambda fd, attributes: os.fchmod(fd, attributes['mode']) if os.name == 'posix' else None))
         if os.name == 'nt':
             # Windows stat/fstat can report different legacy ctime semantics.
             # The Linux implementation retains the ctime mutation fence.

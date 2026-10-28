@@ -163,9 +163,13 @@ class Session:
         self.process = self.connection = None
         self.buffer = bytearray()
         self.summary = dict(status='FAIL', base=config['base'], harness=config['harness'],
-                            run_id=config['run_id'], image_sha256=IMAGE_SHA256, boots=[], powercut=False)
+                            run_id=config['run_id'], image_sha256=IMAGE_SHA256, boots=[], powercut=False,
+                            cases=[dict(name=name, status='NOT RUN') for name in wire.EXPECTED])
 
     def message(self):
+        # Buffered frames must not bypass the overall deadline either.
+        if time.monotonic() >= self.deadline:
+            raise TimeoutError('VM run exceeded overall deadline')
         while b'\n' not in self.buffer:
             if time.monotonic() >= self.deadline:
                 raise TimeoutError('VM run exceeded overall deadline')
@@ -255,6 +259,9 @@ class Session:
             elif kind == 'case':
                 if message.get('name') not in wire.EXPECTED or message.get('status') not in ('RUN', 'PASS'):
                     raise ValueError('invalid live scenario event')
+                for case in self.summary['cases']:
+                    if case['name'] == message['name']:
+                        case['status'] = message['status']
                 print(message['status'] + ' ' + message['name'], flush=True)
             elif kind == 'suite_pass' and index == 1:
                 name = wire.valid_name('suite/reports/' + message['report'])
@@ -302,6 +309,9 @@ class Session:
     def finish(self):
         self.stop()
         self.receiver.close()
+        for case in self.summary['cases']:
+            if case['status'] == 'RUN':
+                case['status'] = 'FAIL/INTERRUPTED'
         self.summary['qemu_stopped'] = self.process is None or self.process.poll() is not None
         self.summary['artifacts'] = self.receiver.files
         (self.root / 'summary.json').write_text(json.dumps(self.summary, indent=2))

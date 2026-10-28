@@ -66,7 +66,7 @@ class RunnerTests(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
         self.config = dict(run_id='11111111-1111-1111-1111-111111111111', base=release.BASE, harness='a'*40)
-        self.session = runner.Session(self.root, self.config, 1000)
+        self.session = runner.Session(self.root, self.config, float('inf'))
         self.addCleanup(self.session.receiver.close)
 
     def test_qemu_is_offline_and_second_boot_uses_identical_disk(self):
@@ -101,10 +101,25 @@ class RunnerTests(unittest.TestCase):
 
     def test_global_timeout_and_wrong_session_are_failures(self):
         self.session.connection = MagicMock()
+        self.session.deadline = 1000
         with patch.object(runner.time, 'monotonic', return_value=1001), self.assertRaises(TimeoutError):
             self.session.message()
+        self.session.deadline = float('inf')
         self.session.buffer = bytearray(wire.encode(dict(type='hello', run_id='foreign')))
         with self.assertRaises(ValueError): self.session.message()
+
+    def test_buffered_messages_cannot_bypass_deadline(self):
+        self.session.deadline = 1000
+        self.session.buffer = bytearray(wire.encode(dict(type='diagnostic', run_id=self.config['run_id'])))
+        with patch.object(runner.time, 'monotonic', return_value=1001), self.assertRaises(TimeoutError):
+            self.session.message()
+
+    def test_failed_run_preserves_completed_and_interrupted_case_results(self):
+        self.session.summary['cases'][0]['status'] = 'PASS'
+        self.session.summary['cases'][1]['status'] = 'RUN'
+        self.session.finish()
+        cases = json.loads((self.root/'summary.json').read_text())['cases']
+        self.assertEqual(['PASS', 'FAIL/INTERRUPTED', 'NOT RUN'], [case['status'] for case in cases[:3]])
 
     def test_suite_requires_all_cases_cleanup_and_exact_version(self):
         report = dict(base=release.BASE, harness='a'*40, cleanup='PASS',
