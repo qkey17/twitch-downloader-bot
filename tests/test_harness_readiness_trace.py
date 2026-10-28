@@ -17,6 +17,8 @@ def identity(data):
 def fixture():
     class Runtime:
         error = None
+        def manager_stopping(self):
+            return False
         def service(self):
             if self.error:
                 raise self.error
@@ -47,6 +49,21 @@ def fixture():
 
 
 class ObserverTests(unittest.TestCase):
+    def test_manager_result_and_constructor_timeout_are_observed_without_substitution(self):
+        m=fixture(); writes=[]; error=TimeoutError(110,'DO_NOT_LOG')
+        def failed_connect(self):
+            raise error
+        with patch.object(m.Gate,'__init__',new=failed_connect):
+            with self.assertRaises(TimeoutError) as caught:
+                with Trace(m,writes.append):
+                    self.assertFalse(m.Runtime().manager_stopping())
+                    m.Gate()
+        self.assertIs(error,caught.exception)
+        records=writes[0]['records']
+        self.assertTrue(any(r['kind']=='manager_end' and r['result'] is False for r in records))
+        self.assertTrue(any(r['kind']=='gate_connect_error' and r['errno']==110 for r in records))
+        self.assertNotIn('DO_NOT_LOG',json.dumps(writes))
+
     def test_success_direct_locals_results_redaction_and_restoration(self):
         m=fixture(); original=m.Controller._recover_locked; service=m.Runtime.service
         writes=[]
@@ -59,6 +76,7 @@ class ObserverTests(unittest.TestCase):
         reads=[r for r in writes[0]['records'] if r.get('method')=='read']
         self.assertEqual(9,reads[0]['direct_locals']['ready_deadline'])
         self.assertEqual('bot_restored',writes[0]['outcomes'][0]['code'])
+        self.assertTrue(any(r['kind']=='gate_connect_end' for r in writes[0]['records']))
 
     def test_exception_timeout_and_systemexit_are_preserved(self):
         for error in (ValueError('DO_NOT_LOG'),TimeoutError('DO_NOT_LOG'),SystemExit(1)):

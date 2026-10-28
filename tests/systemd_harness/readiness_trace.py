@@ -1,4 +1,4 @@
-"""Scenario-09-only observation of unmodified controller calls (Python 3.12+).
+"""Scenario-08/09 observation of unmodified controller calls (Python 3.12+).
 
 No line tracing, response substitution, tokens, config dumps or per-probe file IO.
 Only selected code objects have local PY_RETURN events. Unwind locals are read
@@ -97,10 +97,13 @@ class Trace:
                 try:
                     value = original(*args, **kwargs)
                 except BaseException as error:
-                    self.emit(kind+'_error', error_type=type(error).__name__)
+                    number = getattr(error, 'errno', None)
+                    self.emit(kind+'_error', error_type=type(error).__name__,
+                              errno=number if type(number) is int else None)
                     raise
                 try:
                     self.emit(kind+'_end', result=state(value) if kind == 'systemd' else
+                              value if kind in ('manager', 'gate_connect') else
                               {k: value[k] for k in ('pid','status','running','committed') if k in value},
                               **({'token_present': value.get('token') is not None} if kind == 'socket' else {}))
                 except Exception:
@@ -152,6 +155,9 @@ class Trace:
             self.emit('local_monitor_unavailable')
             self.disable()
         self.patch(self.module.Runtime, 'service', self.observed('systemd', lambda args, kwargs: {}))
+        self.patch(self.module.Runtime, 'manager_stopping', self.observed('manager', lambda args, kwargs: {}))
+        self.patch(self.module.Gate, '__init__', self.observed('gate_connect', lambda args, kwargs: {
+            'expected_pid': args[2] if len(args)>2 else kwargs.get('pid')}))
         self.patch(self.module.Gate, 'request', self.observed('socket', lambda args, kwargs: {
             'action': next((a for a in ('status','release','prepare','commit') if a ==
                            (args[1] if len(args)>1 else kwargs.get('action'))), 'other')}))
