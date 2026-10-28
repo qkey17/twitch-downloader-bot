@@ -222,7 +222,7 @@ def slow_readiness(lab):
 
 
 def autorestart(lab):
-    lab.new(next_ready_delay=4)
+    lab.new(next_ready_delay=4, trace_readiness=True)
     lab.start(DAILY)
     lab.await_event('snapshot_done')
     guest.wait(lambda: guest.show(BOT)['ActiveState'] == 'active')

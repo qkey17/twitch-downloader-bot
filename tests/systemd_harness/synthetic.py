@@ -210,7 +210,13 @@ def controller(action):
         return original(self)
     if control().get('read_fault'):
         module.Runtime.service = service
-    module.main(['--config', str(CONFIG), action])
+    if control().get('trace_readiness'):
+        import guest
+        from readiness_trace import Trace
+        with Trace(module, lambda value: guest.private_write(current() / 'readiness.json', value)):
+            module.main(['--config', str(CONFIG), action])
+    else:
+        module.main(['--config', str(CONFIG), action])
 
 
 def controlled_lock(lock, path, emit, input_fd=0, watchdog=150):
