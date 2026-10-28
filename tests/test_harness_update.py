@@ -336,7 +336,8 @@ class BoundaryTests(unittest.TestCase):
                     result[name] = struct.unpack_from('<I',image,offset+2)[0], struct.unpack_from('<I',image,offset+10)[0]
                     offset += length
                 return result
-            root_entries = entries(20)
+            root_extent = struct.unpack_from('<I',image,16*2048+158)[0]
+            root_entries = entries(root_extent)
             for name, data in content.items():
                 path = Path(name)
                 table = root_entries if path.parent == Path('.') else entries(root_entries[str(path.parent).upper().encode()][0])

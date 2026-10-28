@@ -352,7 +352,7 @@ CASES = (
 )
 
 
-def run():
+def run(progress=None):
     lab = Lab()
     # Avoid crossing the real config's end-of-day window with a test that waits on busy.
     demand(datetime.now(timezone.utc).hour != 23, 'run suite outside 23:00-00:00 UTC')
@@ -368,6 +368,7 @@ def run():
     try:
         for name, scenario in CASES:
             print('RUN', name, flush=True)
+            if progress is not None: progress(name, 'RUN')
             scenario(lab)
             units = {u: guest.show(u) for u in guard.UNITS}
             report['cases'].append(dict(name=name, status='PASS', case=str(lab.case),
@@ -376,6 +377,7 @@ def run():
                                                 'NRestarts', 'MemoryPeak', 'CPUUsageNSec')} for u, state in units.items()}))
             save()
             print('PASS', name, flush=True)
+            if progress is not None: progress(name, 'PASS')
     except BaseException as error:
         report['cases'].append(dict(name=name, status='FAIL', error=type(error).__name__,
                                     detail=str(error)[:240], case=str(lab.case)))
@@ -391,6 +393,7 @@ def run():
         finally:
             save()
             print('REPORT', report_path, flush=True)
+    return report_path
 
 
 def stage_powercut():

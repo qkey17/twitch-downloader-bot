@@ -1,0 +1,53 @@
+name: Isolated systemd integration
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/automated-systemd-integration, codex/systemd-integration-harness]
+    paths: ['tests/systemd_harness/**', 'tests/test*harness*.py', '.github/workflows/systemd-integration.yml']
+  pull_request:
+    paths: ['tests/systemd_harness/**', 'tests/test*harness*.py', '.github/workflows/systemd-integration.yml']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: systemd-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  isolated-vm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install host-only QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y qemu-system-x86 qemu-utils
+      - name: Runner and updater unit tests (no real manager operations)
+        run: python3 -m unittest discover -s tests -p '*harness*.py' -v
+      - name: Real Ubuntu 24.04 / systemd 255, including VM power loss
+        run: python3 -B tests/systemd_harness/runner.py --output _work/systemd-ci --timeout 1800
+      - name: Job report
+        if: always()
+        run: |
+          if test -f _work/systemd-ci/report.md; then
+            cat _work/systemd-ci/report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Integration did not reach the VM runner. See setup/unit-test logs.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: systemd-integration-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            _work/systemd-ci/*.json
+            _work/systemd-ci/*.md
+            _work/systemd-ci/*.log
+            _work/systemd-ci/artifacts/
