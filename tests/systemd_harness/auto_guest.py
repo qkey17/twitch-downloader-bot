@@ -154,7 +154,7 @@ def artifacts(channel, phase):
     for case in (ROOT / 'cases').iterdir():
         if not case.is_dir() or len(case.name) != 32:
             continue
-        for name in ('events.jsonl', 'control.json'):
+        for name in ('events.jsonl', 'control.json', 'readiness.json'):
             path = case / name
             if path.exists():
                 files.append((path, f'{phase}/cases/{case.name}/{name}'))

@@ -9,7 +9,7 @@ SOURCE_HASHES = {
     'src/maintenance.py': '990c10b548d62fe77c96e26f4682de15439e3418d20473397a33aee3914d877a',
 }
 SOURCE = tuple(SOURCE_HASHES)
-HARNESS = ('guard.py', 'guest.py', 'synthetic.py', 'scenarios.py', 'release.py', 'update.py', 'auto_guest.py', 'wire.py')
+HARNESS = ('guard.py', 'guest.py', 'synthetic.py', 'scenarios.py', 'release.py', 'update.py', 'auto_guest.py', 'wire.py', 'readiness_trace.py')
 # Old Windows bundles read the four harness modules from the working checkout.
 # Permit exactly the reviewed LF or CRLF bytes, never arbitrary normalized code.
 OLD_HASHES = {

@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import select
 import sqlite3
 import sys
 import time
@@ -209,7 +210,37 @@ def controller(action):
         return original(self)
     if control().get('read_fault'):
         module.Runtime.service = service
-    module.main(['--config', str(CONFIG), action])
+    if control().get('trace_readiness'):
+        import guest
+        from readiness_trace import Trace
+        with Trace(module, lambda value: guest.private_write(current() / 'readiness.json', value)):
+            module.main(['--config', str(CONFIG), action])
+    else:
+        module.main(['--config', str(CONFIG), action])
+
+
+def controlled_lock(lock, path, emit, input_fd=0, watchdog=150):
+    """Driver-owned lifetime; EOF/watchdog are failures, never successful release."""
+    reason = 'error'
+    metadata = {}
+    try:
+        with lock(path) as fd:
+            info = os.fstat(fd)
+            metadata = dict(st_dev=info.st_dev, st_ino=info.st_ino, holder_pid=os.getpid())
+            deadline = time.monotonic() + watchdog
+            emit('lock_held', **metadata)
+            ready, _, _ = select.select([input_fd], [], [], watchdog)
+            if not ready or time.monotonic() >= deadline:
+                reason = 'watchdog'
+                emit('lock_watchdog', **metadata)
+                raise guard.Refused('deployment holder watchdog expired')
+            if os.read(input_fd, 8) != b'release\n':
+                reason = 'driver_closed_or_invalid_command'
+                raise guard.Refused('deployment holder lost driver or invalid release')
+            reason = 'driver_release'
+            emit('lock_releasing', **metadata)
+    finally:
+        emit('lock_released', reason=reason, **metadata)
 
 
 def state_action(action, *args):
@@ -228,10 +259,7 @@ def state_action(action, *args):
         store.write('hold', args[0] == 'true')
     elif action == 'lock':
         path = config.deploy_lock if args[0] == 'deploy' else config.state_dir / 'offsite.lock'
-        # Real lock implementation, with a bounded synthetic holder.
-        with module.file_lock(path):
-            event('lock_held', kind=args[0])
-            time.sleep(4)
+        controlled_lock(module.file_lock, path, event)
     elif action == 'ready':
         print(json.dumps(module.Controller(config, rt)._ready()))
     else:
