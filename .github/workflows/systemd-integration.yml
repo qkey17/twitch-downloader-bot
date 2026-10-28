@@ -3,7 +3,7 @@ name: Isolated systemd integration
 on:
   workflow_dispatch:
   push:
-    branches: [codex/automated-systemd-integration, codex/systemd-integration-harness]
+    branches: [codex/systemd-integration-harness]
     paths: ['tests/systemd_harness/**', 'tests/test*harness*.py', '.github/workflows/systemd-integration.yml']
   pull_request:
     paths: ['tests/systemd_harness/**', 'tests/test*harness*.py', '.github/workflows/systemd-integration.yml']
