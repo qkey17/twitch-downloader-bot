@@ -444,11 +444,21 @@ class Controller:
         deadline = now+c.stop_timeout_seconds+(remaining+1)*(c.start_timeout_seconds+c.stability_seconds)
         deadline += max(0,remaining-1)*c.restart_retry_seconds
         job_deadline, next_start = now+c.stop_timeout_seconds, now
-        ready_deadline = unknown_deadline = stable_process = stable_since = None
+        ready_process = ready_deadline = unknown_deadline = stable_process = stable_since = None
 
         def read():
-            return self._recovery_read(self.runtime.service,
+            nonlocal ready_process, ready_deadline, stable_process, stable_since
+            data = self._recovery_read(self.runtime.service,
                 min(deadline,self.runtime.monotonic()+c.start_timeout_seconds),'critical_service_state_unavailable')
+            process = _process_identity(data)
+            if process is not None and process!=ready_process:
+                # Observe every read, including the socket's before/after fence.
+                # Only a confirmed new identity grants a new readiness window;
+                # query errors, pending jobs and an unready socket do not.
+                ready_process = process
+                ready_deadline = min(deadline,self.runtime.monotonic()+c.start_timeout_seconds)
+                stable_process = stable_since = None
+            return data
 
         def stopping():
             return self._recovery_read(self.runtime.manager_stopping,
@@ -459,20 +469,24 @@ class Controller:
             if stopping(): return dict(status='deferred',code='recovery_deferred_until_boot')
             data = read()
             now = self.runtime.monotonic()
+            if now>=deadline: raise DailyError('critical_recovery_timed_out')
             if _active(data):
                 if ready_deadline is None: ready_deadline = now+c.start_timeout_seconds
                 process = self._ready_process(owner,read)
                 now = self.runtime.monotonic()
+                if now>=deadline: raise DailyError('critical_recovery_timed_out')
                 if process is None:
                     stable_process = stable_since = None
                 elif process!=stable_process:
+                    # The complete first probe must finish on time. Once timely,
+                    # stability and its final probe use only the global deadline.
+                    if now>ready_deadline: raise DailyError('critical_application_readiness_timeout')
                     stable_process,stable_since = process,now
-                if (stable_process is not None and now-stable_since>=c.stability_seconds
-                        and now<=min(deadline,ready_deadline+c.stability_seconds)):
+                if stable_process is not None and now-stable_since>=c.stability_seconds:
                     self.store.write('owner',None)
                     return dict(status='ok',code='bot_restored')
-                allowance = c.stability_seconds if stable_process is not None else 0
-                if now>=ready_deadline+allowance: raise DailyError('critical_application_readiness_timeout')
+                if stable_process is None and now>=ready_deadline:
+                    raise DailyError('critical_application_readiness_timeout')
                 unknown_deadline = None
             elif _stopped(data):
                 stable_process = stable_since = None

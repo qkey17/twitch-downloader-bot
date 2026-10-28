@@ -201,6 +201,42 @@ class FakeRuntime:
                     archive='synthetic-test.tar.gz.age', sha256='d'*64, bytes=128)
 
 
+class CostlyRecoveryRuntime(FakeRuntime):
+    """Deterministic query durations and process events, without real waiting."""
+    def __init__(self,service_cost=.15,manager_cost=.15,socket_cost=.05):
+        super().__init__()
+        self.service_cost, self.manager_cost, self.socket_cost = service_cost,manager_cost,socket_cost
+        self.observe = lambda: None
+        self.after_probe = lambda: None
+        self.service_calls = self.manager_calls = 0
+        self.probes = []
+
+    def service(self):
+        self.service_calls+=1
+        self.sleep(self.service_cost)
+        self.observe()
+        return super().service()
+
+    def manager_stopping(self):
+        self.manager_calls+=1
+        self.sleep(self.manager_cost)
+        return super().manager_stopping()
+
+    @contextmanager
+    def gate(self,pid):
+        with super().gate(pid) as gate:
+            original = gate.status
+            def status():
+                self.sleep(self.socket_cost)
+                self.observe()
+                result = original()
+                self.probes.append((self.elapsed,daily._process_identity(self.properties),result['running']))
+                self.after_probe()
+                return result
+            gate.status = status
+            yield gate
+
+
 class DailyBackupTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix='tdb-daily-', dir=Path(__file__).parent)
@@ -784,9 +820,12 @@ class RecoveryRegressionTests(unittest.TestCase):
             generation = int(self.runtime.elapsed)//2
             self.runtime.properties.update(MainPID=str(401+generation),InvocationID=f'{generation:032x}',NRestarts=str(generation))
             return original()
-        with patch.object(self.runtime,'service',side_effect=read), self.assertRaises(daily.DailyError):
+        with patch.object(self.runtime,'service',side_effect=read), self.assertRaises(daily.DailyError) as error:
             self.controller()._recover_locked()
-        self.assertLessEqual(self.runtime.elapsed,16)
+        # Each new invocation now has its own window, but the original total
+        # bound remains stop(6) + one readiness/stability interval(12+4).
+        self.assertEqual('critical_recovery_timed_out',error.exception.code)
+        self.assertEqual(22,self.runtime.elapsed)
         self.assertEqual(owner,self.controller().store.read('owner'))
         self.assertEqual(0,self.runtime.start_attempts)
 
@@ -909,6 +948,171 @@ class RecoveryRegressionTests(unittest.TestCase):
                         self.assertIsNone(self.controller().store.read('owner'))
                 self.assertEqual(0,self.runtime.start_attempts)
                 self.assertNotIn('stop',self.runtime.events)
+
+
+class RecoveryDeadlineTests(unittest.TestCase):
+    setUp = DailyBackupTests.setUp
+    controller = DailyBackupTests.controller
+    configure = RecoveryRegressionTests.configure
+    own = RecoveryRegressionTests.own
+
+    def assert_no_extra_commands(self):
+        self.assertEqual(0,self.runtime.start_attempts)
+        self.assertNotIn('stop',self.runtime.events)
+
+    def test_timely_readiness_allows_costly_final_probe_past_old_stability_cutoff(self):
+        self.configure(timeout=8,stability=1,stop=7)
+        for replacement in (False,True):
+            with self.subTest(replacement=replacement):
+                self.runtime = CostlyRecoveryRuntime()
+                self.own(attempts=3)
+                def observe():
+                    if replacement and self.runtime.elapsed>=2.605:
+                        self.runtime.properties.update(MainPID='402',InvocationID='b'*32,NRestarts='1')
+                    self.runtime.application_running = self.runtime.elapsed>=6.8
+                self.runtime.observe = observe
+                result = self.controller()._recover_locked()
+                first = next(t for t,_,ready in self.runtime.probes if ready)+self.runtime.service_cost
+                self.assertAlmostEqual(8.15,first)
+                self.assertLess(first,8.3)  # Initial window: first state at .3 + 8.
+                self.assertGreater(self.runtime.elapsed,8.3+1)
+                self.assertGreaterEqual(self.runtime.elapsed-first,1)
+                self.assertIsNone(self.controller().store.read('owner'))
+                self.assertEqual('bot_restored',result['code'])
+                self.assert_no_extra_commands()
+
+    def test_first_complete_probe_after_readiness_deadline_is_not_accepted(self):
+        self.configure(timeout=8,stability=1,stop=7)
+        self.runtime = CostlyRecoveryRuntime(socket_cost=7.8)
+        owner = self.own(attempts=3)
+        # Socket response arrives at 8.25, but final state validation ends at
+        # 8.4, after the 8.3 deadline. A partial early probe is insufficient.
+        with self.assertRaises(daily.DailyError) as error: self.controller()._recover_locked()
+        self.assertEqual('critical_application_readiness_timeout',error.exception.code)
+        self.assertAlmostEqual(8.4,self.runtime.elapsed)
+        self.assertEqual(1,len(self.runtime.probes))
+        self.assertEqual(owner,self.controller().store.read('owner'))
+        self.assert_no_extra_commands()
+
+    def test_automatic_restart_near_old_deadline_grants_each_identity_a_new_window(self):
+        self.configure(timeout=8,stability=1,stop=20)
+        for changes in ({'MainPID':'402'},{'InvocationID':'b'*32},{'NRestarts':'1'}):
+            with self.subTest(changes=changes):
+                self.runtime = CostlyRecoveryRuntime(0,0,0)
+                self.own(attempts=3)
+                def observe():
+                    t = self.runtime.elapsed
+                    self.runtime.application_running = t>=12.2
+                    if 7<=t<8:
+                        self.runtime.properties.update(ActiveState='activating',SubState='auto-restart',Job='7')
+                    elif t>=8:
+                        self.runtime.properties.update(ActiveState='active',SubState='running',Job='0',**changes)
+                self.runtime.observe = observe
+                self.controller()._recover_locked()
+                self.assertEqual(14,self.runtime.elapsed)  # First ready at 13, stable at 14.
+                self.assertIsNone(self.controller().store.read('owner'))
+                self.assert_no_extra_commands()
+
+    def test_identity_change_during_final_socket_probe_restarts_both_phases(self):
+        self.configure(timeout=1,stability=1,stop=7)
+        for changes in ({'MainPID':'402'},{'InvocationID':'b'*32},{'NRestarts':'1'}):
+            with self.subTest(changes=changes):
+                self.runtime = CostlyRecoveryRuntime(0,0,0)
+                self.own(attempts=3)
+                changed = []
+                def after_probe():
+                    if self.runtime.elapsed>=1 and not changed:
+                        self.assertIsNotNone(self.controller().store.read('owner'))
+                        self.runtime.properties.update(changes)
+                        changed.append(self.runtime.elapsed)
+                def observe():
+                    self.runtime.application_running = not changed or self.runtime.elapsed>=2
+                self.runtime.after_probe, self.runtime.observe = after_probe,observe
+                self.controller()._recover_locked()
+                self.assertEqual([1],changed)
+                self.assertEqual(3,self.runtime.elapsed)  # New process ready at its deadline 2.
+                self.assertIsNone(self.controller().store.read('owner'))
+                self.assert_no_extra_commands()
+
+    def test_several_automatic_restarts_with_costly_queries_recover_without_start(self):
+        self.configure(timeout=8,stability=1,stop=20)
+        self.runtime = CostlyRecoveryRuntime()
+        self.own(attempts=3)
+        def observe():
+            generation = min(3,int(self.runtime.elapsed)//2)
+            self.runtime.properties.update(MainPID=str(401+generation),
+                InvocationID=f'{generation:032x}',NRestarts=str(generation))
+            self.runtime.application_running = self.runtime.elapsed>=10
+        self.runtime.observe = observe
+        self.controller()._recover_locked()
+        self.assertGreater(self.runtime.elapsed,10+1)
+        self.assertLess(self.runtime.elapsed,20+8+1)
+        self.assertEqual('3',self.runtime.probes[-1][1][2])
+        self.assertIsNone(self.controller().store.read('owner'))
+        self.assert_no_extra_commands()
+
+    def test_restarting_forever_cannot_extend_the_original_global_deadline(self):
+        self.configure(timeout=12,stability=4,stop=6)
+        self.runtime = CostlyRecoveryRuntime()
+        owner = self.own(attempts=3)
+        def observe():
+            generation = int(self.runtime.elapsed)
+            self.runtime.properties.update(MainPID=str(401+generation),
+                InvocationID=f'{generation:032x}',NRestarts=str(generation))
+        self.runtime.observe = observe
+        with self.assertRaises(daily.DailyError) as error: self.controller()._recover_locked()
+        self.assertEqual('critical_recovery_timed_out',error.exception.code)
+        self.assertGreaterEqual(self.runtime.elapsed,22)
+        self.assertLess(self.runtime.elapsed,23)
+        self.assertEqual(owner,self.controller().store.read('owner'))
+        self.assert_no_extra_commands()
+
+    def test_same_unready_process_and_transient_query_errors_do_not_renew_window(self):
+        self.configure(timeout=3,stability=1,stop=10)
+        for unavailable in (False,True):
+            with self.subTest(unavailable=unavailable):
+                self.runtime = CostlyRecoveryRuntime()
+                self.runtime.application_running = False
+                owner = self.own(attempts=3)
+                def observe():
+                    if unavailable and self.runtime.service_calls==3:
+                        raise OSError('synthetic read failure')
+                self.runtime.observe = observe
+                with self.assertRaises(daily.DailyError) as error: self.controller()._recover_locked()
+                self.assertEqual('critical_application_readiness_timeout',error.exception.code)
+                self.assertGreaterEqual(self.runtime.elapsed,3.3)
+                self.assertLess(self.runtime.elapsed,6)
+                self.assertEqual(owner,self.controller().store.read('owner'))
+                self.assert_no_extra_commands()
+
+    def test_pending_job_or_unknown_state_does_not_grant_a_new_process_window(self):
+        self.configure(timeout=3,stability=1,stop=10)
+        for changes in ({'Job':'9','MainPID':'999','InvocationID':'b'*32,'NRestarts':'1'},
+                        {'LoadState':'not-found'}):
+            with self.subTest(changes=changes):
+                self.runtime = CostlyRecoveryRuntime(0,0,0)
+                self.runtime.application_running = False
+                owner = self.own(attempts=3)
+                initial = dict(self.runtime.properties)
+                def observe():
+                    self.runtime.properties = initial | (changes if self.runtime.elapsed==2 else {})
+                self.runtime.observe = observe
+                with self.assertRaises(daily.DailyError) as error: self.controller()._recover_locked()
+                self.assertEqual('critical_application_readiness_timeout',error.exception.code)
+                self.assertEqual(3,self.runtime.elapsed)
+                self.assertEqual(owner,self.controller().store.read('owner'))
+                self.assert_no_extra_commands()
+
+    def test_successful_final_probe_cannot_clear_owner_after_global_deadline(self):
+        self.configure(timeout=3,stability=1,stop=1)
+        self.runtime = CostlyRecoveryRuntime(0,0,0)
+        owner = self.own(attempts=3)
+        self.runtime.after_probe = lambda: setattr(self.runtime,'socket_cost',10)
+        with self.assertRaises(daily.DailyError) as error: self.controller()._recover_locked()
+        self.assertEqual('critical_recovery_timed_out',error.exception.code)
+        self.assertEqual(11,self.runtime.elapsed)
+        self.assertEqual(owner,self.controller().store.read('owner'))
+        self.assert_no_extra_commands()
 
 
 class DailyUnitSafetyTests(unittest.TestCase):
