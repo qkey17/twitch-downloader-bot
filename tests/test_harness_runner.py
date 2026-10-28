@@ -13,6 +13,7 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).with_name('systemd_harness')))
 import guard
+import guest
 import iso
 import release
 import runner
@@ -154,6 +155,27 @@ class RunnerTests(unittest.TestCase):
 
 
 class SystemdRegressionTests(unittest.TestCase):
+    def test_offsite_observer_allows_a_full_cycle_but_preserves_readiness_fence(self):
+        lab = MagicMock()
+        lab.record.return_value = None
+        def arrival(name, timeout=15):
+            # Virtual arrival after measured TCG pipeline latency; no sleep.
+            if timeout < 24:
+                raise TimeoutError('observer expired before the whole cycle')
+        lab.await_event.side_effect = arrival
+        with patch.object(guest, 'show', return_value={'ActiveState': 'active'}):
+            scenarios.offsite_fence(lab)
+            lab.successful.assert_called_once_with()
+            lab.ready.return_value = False
+            with self.assertRaisesRegex(AssertionError, 'offsite while not recovered'):
+                scenarios.offsite_fence(lab)
+
+    def test_event_timeout_names_the_missing_event_and_bound(self):
+        lab = object.__new__(scenarios.Lab)
+        with patch.object(guest, 'wait', side_effect=TimeoutError), \
+                self.assertRaisesRegex(TimeoutError, "offsite_begin.*65s"):
+            lab.await_event('offsite_begin', 65)
+
     def test_persistent_repeat_still_requires_original_lifecycle_and_readiness(self):
         lab = object.__new__(scenarios.Lab)
         lab.record = lambda name: {'code': 'previous_offsite_verified'} if name == 'status' else None

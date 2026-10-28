@@ -47,7 +47,10 @@ class Lab:
         return [e for e in self.events() if e['event'] == name]
 
     def await_event(self, name, timeout=15):
-        return guest.wait(lambda: self.seen(name), timeout)[-1]
+        try:
+            return guest.wait(lambda: self.seen(name), timeout)[-1]
+        except TimeoutError:
+            raise TimeoutError(f'event {name!r} not observed within {timeout}s') from None
 
     def record(self, name):
         return json.loads(guest.user_command('record', name).stdout)
@@ -336,7 +339,10 @@ def holds_and_locks(lab):
 def offsite_fence(lab):
     lab.new(block='offsite')
     lab.start(DAILY)
-    lab.await_event('offsite_begin')
+    # Observe the WHOLE cycle (stop + backup + verify + readiness + verify),
+    # not a single command. Match idle()'s existing 65s cycle bound. Real TCG
+    # evidence reaches offsite at 22s; controller readiness stays at 8s/1s.
+    lab.await_event('offsite_begin', 65)
     demand(lab.ready() and lab.record('owner') is None, 'offsite while not recovered')
     demand(guest.show(BOT)['ActiveState'] == 'active', 'bot stopped during offsite')
     lab.change(block=None)
