@@ -72,8 +72,13 @@ Root label/NoCloud применяются только к новой checksum-п
 данными. Предварительно требуется 2 ГиБ свободной RAM и 8 ГиБ свободного диска.
 KVM используется только если доступен; иначе TCG. Наличие nested virtualization
 не предполагается обязательным. Глобальный runner timeout — 30 минут, job — 45 минут;
-boot handshake — до 5 минут, загрузка image — до 8 минут. Это пределы ожидания,
+первый boot handshake — до 8 минут, повторный — до 5 минут, загрузка image — до 8 минут. Это пределы ожидания,
 не увеличение readiness timeout контроллера. Логи journald ограничены внутри VM.
+На реальном hosted runner KVM оказался недоступен, выбран TCG. В CI cloud-init final
+начался только на 288-й секунде: pinned image ожидает network-online около 120 с
+даже без NIC, затем выполняет config/final. Поэтому первый boot имеет отдельный
+8-минутный предел; сообщение о его превышении указывает boot и serial log. Общий
+30-минутный бюджет, повторный boot и controller readiness 8/1 с не увеличены.
 
 Workflow не использует repository secrets, environments, SSH или deployment. Токен
 checkout имеет только `contents: read` и не сохраняется в checkout/seed. На forks

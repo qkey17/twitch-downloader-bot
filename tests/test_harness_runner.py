@@ -116,6 +116,23 @@ class RunnerTests(unittest.TestCase):
         with patch.object(runner.time, 'monotonic', return_value=1001), self.assertRaises(TimeoutError):
             self.session.message()
 
+    def test_cold_boot_has_a_separate_bounded_budget_and_specific_diagnostic(self):
+        process = MagicMock()
+        process.poll.return_value = None
+        with patch.object(runner.subprocess, 'Popen', return_value=process), \
+                patch.object(runner.socket, 'socket') as reserve, \
+                patch.object(runner.socket, 'create_connection'), \
+                patch.object(runner.time, 'monotonic', return_value=0):
+            reserve.return_value.__enter__.return_value.getsockname.return_value = ('127.0.0.1', 1234)
+            for index, seconds in ((1, 480), (2, 300)):
+                def timeout():
+                    self.assertEqual(seconds, self.session.deadline)
+                    raise TimeoutError
+                self.session.message = timeout
+                with self.assertRaisesRegex(TimeoutError, f'boot {index} handshake.*{seconds}s.*serial-boot{index}'):
+                    self.session.boot('qemu', self.root/'payload.iso', self.root/'seed.iso', 'tcg', index)
+                self.assertEqual(float('inf'), self.session.deadline)
+
     def test_failed_run_preserves_completed_and_interrupted_case_results(self):
         self.session.summary['cases'][0]['status'] = 'PASS'
         self.session.summary['cases'][1]['status'] = 'RUN'

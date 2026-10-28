@@ -229,9 +229,17 @@ class Session:
                 time.sleep(.1)
         self.buffer.clear()
         original_deadline = self.deadline
-        self.deadline = min(original_deadline, time.monotonic()+300)
+        # The pinned offline cloud image waits ~120s for network-online before
+        # cloud-init final/provisioning. Real hosted TCG reached final at 288s,
+        # before any controller ran. Budget that boot separately from readiness.
+        boot_seconds = 480 if index == 1 else 300
+        self.deadline = min(original_deadline, time.monotonic()+boot_seconds)
+        print(f'BOOT {index}: waiting for guest handshake (up to {boot_seconds}s, within overall budget)', flush=True)
         try:
             hello = self.message()
+        except TimeoutError:
+            raise TimeoutError(f'guest boot {index} handshake deadline (up to {boot_seconds}s within overall budget); '
+                               f'see serial-boot{index}.log') from None
         finally:
             self.deadline = original_deadline
         expected_phase = 'suite' if index == 1 else 'resume'
