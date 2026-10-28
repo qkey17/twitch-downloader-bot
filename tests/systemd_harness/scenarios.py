@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import signal
 import subprocess
 import sys
 import time
@@ -18,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import guard
 import guest
 import update
+import synthetic
 
 ROOT = guard.ROOT
 DAILY = 'tdb-daily-backup.service'
@@ -306,6 +308,47 @@ def persistent(lab):
         guest.systemctl('stop', TIMER)
 
 
+def confirm_deployment_lock(lab, process, held):
+    import fcntl
+    demand(process.poll() is None and not lab.seen('lock_released'), 'deployment holder exited prematurely')
+    path = lab.case / 'locks/deploy.lock'
+    guard.no_links(path)
+    fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(fd)
+        demand((info.st_dev, info.st_ino) == (held['st_dev'], held['st_ino']), 'deployment lock inode changed')
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            synthetic.event('lock_confirmed', holder_pid=held['holder_pid'], st_dev=info.st_dev, st_ino=info.st_ino)
+        else:
+            raise AssertionError('deployment holder released lock prematurely')
+    finally:
+        os.close(fd)
+
+
+def finish_holder(process):
+    # Closing stdin makes loss of the driver explicit. Bound even broken runuser/child.
+    try:
+        process.stdin.close()
+    except (BrokenPipeError, OSError):
+        pass
+    try:
+        process.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(process.pid, sig)
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=3)
+                break
+            except subprocess.TimeoutExpired:
+                if sig == signal.SIGKILL:
+                    raise
+
+
 def holds_and_locks(lab):
     lab.new()
     guest.user_command('controller', 'hold')
@@ -313,13 +356,17 @@ def holds_and_locks(lab):
     lab.idle()
     demand(lab.record('status')['code'] == 'manual_hold' and not lab.seen('prepare'), 'manual hold ignored')
     guest.user_command('controller', 'unhold')
-    # Real deployment lock, no fake systemctl responses. Holder has a 4-second bound.
+    # Four 30s reads/commands + the 20s startup observation and protocol margin.
     process = subprocess.Popen(['/usr/sbin/runuser', '-u', guest.USER, '--', '/usr/bin/python3',
                                 '-I', '-S', '-B', str(guest.CODE / 'synthetic.py'), 'lock', 'deploy'],
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               start_new_session=True,
                                env=dict(PATH='/usr/sbin:/usr/bin:/sbin:/bin', HOME=f'/home/{guest.USER}'))
+    held = None
     try:
-        lab.await_event('lock_held')
+        held = lab.await_event('lock_held')
+        confirm_deployment_lock(lab, process, held)
+        synthetic.event('lock_check_begin', holder_pid=held['holder_pid'], st_dev=held['st_dev'], st_ino=held['st_ino'])
         lab.start(DAILY)
         guest.wait(lambda: guest.show(DAILY)['MainPID'] != '0')
         time.sleep(.5)
@@ -330,10 +377,27 @@ def holds_and_locks(lab):
         other = guest.user_command('controller', 'run', check=False)
         demand(other.returncode != 0 and 'run_requires_systemd_supervision' in other.stderr,
                'unsupervised second run accepted')
+        # Re-read both assertions while the very same holder/inode is still locked.
+        demand(not lab.seen('prepare') and lab.record('owner') is None, 'deployment lock ignored')
+        confirm_deployment_lock(lab, process, held)
+        synthetic.event('lock_check_end', holder_pid=held['holder_pid'], st_dev=held['st_dev'], st_ino=held['st_ino'])
+        synthetic.event('lock_release_requested', holder_pid=held['holder_pid'], st_dev=held['st_dev'], st_ino=held['st_ino'])
+        process.stdin.write(b'release\n')
+        process.stdin.flush()
+        demand(process.wait(timeout=10) == 0, 'deployment holder failed (inspect watchdog/release events)')
+        released = lab.await_event('lock_released')
+        demand(released['reason'] == 'driver_release' and released['holder_pid'] == held['holder_pid'],
+               'deployment holder did not acknowledge release')
         lab.idle()
         lab.successful()
     finally:
-        process.wait(timeout=6)
+        try:
+            finish_holder(process)
+        finally:
+            synthetic.event('lock_holder_finished' if process.poll() is not None else 'lock_holder_cleanup_failed',
+                            holder_pid=held['holder_pid'] if held else None, wrapper_pid=process.pid,
+                            st_dev=held['st_dev'] if held else None, st_ino=held['st_ino'] if held else None,
+                            returncode=process.returncode)
 
 
 def offsite_fence(lab):
