@@ -47,7 +47,10 @@ class Lab:
         return [e for e in self.events() if e['event'] == name]
 
     def await_event(self, name, timeout=15):
-        return guest.wait(lambda: self.seen(name), timeout)[-1]
+        try:
+            return guest.wait(lambda: self.seen(name), timeout)[-1]
+        except TimeoutError:
+            raise TimeoutError(f'event {name!r} not observed within {timeout}s') from None
 
     def record(self, name):
         return json.loads(guest.user_command('record', name).stdout)
@@ -131,8 +134,9 @@ class Lab:
         self.await_event('prepare')
         self.idle()
 
-    def successful(self):
-        demand(self.record('status')['code'] == 'backup_verified_offsite', 'successful controller status')
+    def successful(self, allow_verified_repeat=False):
+        codes = ('backup_verified_offsite', 'previous_offsite_verified') if allow_verified_repeat else ('backup_verified_offsite',)
+        demand(self.record('status')['code'] in codes, 'successful controller status')
         demand(self.record('owner') is None and self.ready(), 'owner cleared only after ready')
         self.assert_order()
 
@@ -288,10 +292,16 @@ def persistent(lab):
     lab.start(RECOVER, TIMER)
     try:
         lab.await_event('offsite_done', 35)
+        # A catch-up crossing a minute boundary can queue a correct same-day
+        # repeat. Disarm future ticks, then validate both the original lifecycle
+        # and the controller's idempotent result; never require a timing accident.
+        triggered = guest.show(TIMER)['LastTriggerUSec']
+        guest.systemctl('stop', TIMER)
         lab.idle()
         lab.restored()
-        demand(guest.show(TIMER)['LastTriggerUSec'] not in ('', 'n/a'), 'Persistent catch-up did not fire')
-        lab.successful()
+        demand(triggered not in ('', 'n/a'), 'Persistent catch-up did not fire')
+        lab.successful(allow_verified_repeat=True)
+        demand(len(lab.seen('snapshot_done')) == 1, 'catch-up repeat created another snapshot')
     finally:
         guest.systemctl('stop', TIMER)
 
@@ -329,7 +339,10 @@ def holds_and_locks(lab):
 def offsite_fence(lab):
     lab.new(block='offsite')
     lab.start(DAILY)
-    lab.await_event('offsite_begin')
+    # Observe the WHOLE cycle (stop + backup + verify + readiness + verify),
+    # not a single command. Match idle()'s existing 65s cycle bound. Real TCG
+    # evidence reaches offsite at 22s; controller readiness stays at 8s/1s.
+    lab.await_event('offsite_begin', 65)
     demand(lab.ready() and lab.record('owner') is None, 'offsite while not recovered')
     demand(guest.show(BOT)['ActiveState'] == 'active', 'bot stopped during offsite')
     lab.change(block=None)
@@ -352,7 +365,7 @@ CASES = (
 )
 
 
-def run():
+def run(progress=None):
     lab = Lab()
     # Avoid crossing the real config's end-of-day window with a test that waits on busy.
     demand(datetime.now(timezone.utc).hour != 23, 'run suite outside 23:00-00:00 UTC')
@@ -368,6 +381,7 @@ def run():
     try:
         for name, scenario in CASES:
             print('RUN', name, flush=True)
+            if progress is not None: progress(name, 'RUN')
             scenario(lab)
             units = {u: guest.show(u) for u in guard.UNITS}
             report['cases'].append(dict(name=name, status='PASS', case=str(lab.case),
@@ -376,6 +390,7 @@ def run():
                                                 'NRestarts', 'MemoryPeak', 'CPUUsageNSec')} for u, state in units.items()}))
             save()
             print('PASS', name, flush=True)
+            if progress is not None: progress(name, 'PASS')
     except BaseException as error:
         report['cases'].append(dict(name=name, status='FAIL', error=type(error).__name__,
                                     detail=str(error)[:240], case=str(lab.case)))
@@ -391,6 +406,7 @@ def run():
         finally:
             save()
             print('REPORT', report_path, flush=True)
+    return report_path
 
 
 def stage_powercut():

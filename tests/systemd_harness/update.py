@@ -168,9 +168,16 @@ def check_directories():
 
 
 def service_state(unit):
-    raw = subprocess.run(['/usr/bin/systemctl', 'show', unit, '--no-pager'], check=True,
-                         capture_output=True, text=True, timeout=15,
-                         env=dict(PATH='/usr/sbin:/usr/bin:/sbin:/bin', HOME='/root')).stdout
+    properties = 'LoadState,ActiveState,SubState,Job,MainPID,ControlPID,UnitFileState'
+    # v255 prints no-job as an empty property, omitted entirely without --all.
+    try:
+        raw = subprocess.run(['/usr/bin/systemctl', 'show', unit, '--no-pager', '--all', '--property=' + properties], check=True,
+                             capture_output=True, text=True, timeout=15,
+                             env=dict(PATH='/usr/sbin:/usr/bin:/sbin:/bin', HOME='/root')).stdout
+    except subprocess.TimeoutExpired:
+        raise guard.Refused(f'{unit}: systemctl show timed out after 15 seconds') from None
+    except subprocess.CalledProcessError as error:
+        raise guard.Refused(f'{unit}: systemctl show failed, exit={error.returncode}; {str(error.stderr)[:300]}') from None
     return dict(line.split('=', 1) for line in raw.splitlines() if '=' in line)
 
 
@@ -179,11 +186,18 @@ def check_units():
     # stop, reset, enable, mask or remove a unit during an update.
     for unit in guard.UNITS:
         state = service_state(unit)
-        guard.require(state.get('LoadState') == 'loaded' and state.get('ActiveState') in ('inactive', 'failed')
-                      and state.get('Job') in ('', '0') and state.get('MainPID', '0') == '0'
-                      and state.get('ControlPID', '0') == '0', 'test unit/job is active or unknown')
+        def field(name, allowed):
+            value = state.get(name)
+            guard.require(value in allowed, f'{unit}: {name}={value!r}; expected {allowed!r}')
+        field('LoadState', ('loaded',))
+        field('ActiveState', ('inactive', 'failed'))
+        field('Job', ('', '0'))
+        for name in ('MainPID', 'ControlPID'):
+            # Timer units do not expose service process properties.
+            if unit.endswith('.service') or name in state:
+                field(name, ('0',))
         allowed = ('static', 'disabled') if unit == 'tdb-daily-backup.service' else ('disabled',)
-        guard.require(state.get('UnitFileState') in allowed, 'run guest.py cleanup before updating')
+        field('UnitFileState', allowed)
     uid, _ = account()
     names = {'scenarios.py', 'guest.py', 'synthetic.py', 'daily_backup.py', 'backup_restore.py', 'offsite_backup.py'}
     for directory in Path('/proc').iterdir():
@@ -316,7 +330,7 @@ def apply(directory):
     old = {}
     for target, source in controller_paths().items():
         path = ROOT / target
-        if source in ('release.py', 'update.py'):
+        if source not in release.OLD_HASHES:
             guard.require(not path.exists() and not path.is_symlink(), 'new module already exists')
             old[target] = None
             continue

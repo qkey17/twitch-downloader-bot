@@ -1,4 +1,4 @@
-"""Tiny ISO9660 level-2 writer for the fixed ASCII offline bundle; stdlib only.
+"""ISO9660/Joliet writer for the offline bundle and NoCloud seed; stdlib only.
 
 No boot code, symlinks, Rock Ridge, host mounts or arbitrary file discovery.
 Linux mounts the upper-case ISO identifiers as lower case with map=normal.
@@ -7,7 +7,6 @@ import math
 from pathlib import Path
 import re
 import shutil
-import struct
 
 BLOCK = 2048
 DATE = bytes((126, 1, 1, 0, 0, 0, 0))
@@ -30,56 +29,63 @@ def record(name, extent, length, directory=False):
     return bytes(result)
 
 
-def create(bundle, destination, names):
+def create(bundle, destination, names, volume='TDB_UPDATE'):
     names = sorted(names)
-    if any(not re.fullmatch(r'(?:tools/|src/)?[a-z_]+\.(?:py|json)', name) for name in names):
+    if (volume not in ('TDB_UPDATE', 'CIDATA') or any(not re.fullmatch(
+            r'(?:tools/|src/)?[a-z_]+\.(?:py|json)|user-data|meta-data', name) for name in names)):
         raise ValueError('ISO only supports the fixed bundle names')
     directories = ['', 'src', 'tools']
-    extents = {name: 20 + i for i, name in enumerate(directories)}
-    offset = 23
+    trees = [{name: 23 + i + tree*3 for i, name in enumerate(directories)} for tree in range(2)]
+    offset = 29
     files = {}
     for name in names:
         size = (bundle / name).stat().st_size
         files[name] = (offset, size)
         offset += max(1, math.ceil(size / BLOCK))
-    pvd = bytearray(BLOCK)
-    pvd[:7] = b'\x01CD001\x01'
-    pvd[8:40] = b'TDB_HARNESS'.ljust(32, b' ')
-    pvd[40:72] = b'TDB_UPDATE'.ljust(32, b' ')
-    pvd[80:88] = both(offset)
-    pvd[120:124] = both(1, 2)
-    pvd[124:128] = both(1, 2)
-    pvd[128:132] = both(BLOCK, 2)
-    paths = []
-    for endian in ('little', 'big'):
-        table = bytearray()
-        for name in directories:
-            ident = name.upper().encode() if name else b'\0'
-            table += bytes((len(ident), 0)) + extents[name].to_bytes(4, endian) + (1).to_bytes(2, endian)
-            table += ident + (b'\0' if len(ident) % 2 else b'')
-        paths.append(table)
-    pvd[132:140] = both(len(paths[0]))
-    pvd[140:144] = (18).to_bytes(4, 'little')
-    pvd[148:152] = (19).to_bytes(4, 'big')
-    pvd[156:190] = record(b'\0', extents[''], BLOCK, True)
-    pvd[881] = 1
+    descriptors, paths, contents = [], [], []
+    for tree, extents in enumerate(trees):
+        def encode(name):
+            return name.encode('utf-16-be') if tree else name.upper().encode()
+        pvd = bytearray(BLOCK)
+        pvd[:7] = bytes((2 if tree else 1,)) + b'CD001\x01'
+        pvd[8:40] = b'TDB_HARNESS'.ljust(32, b' ')
+        pvd[40:72] = encode(volume).ljust(32, b'\0' if tree else b' ')
+        if tree:
+            pvd[88:91] = b'%/E'
+        pvd[80:88] = both(offset)
+        pvd[120:124], pvd[124:128], pvd[128:132] = both(1, 2), both(1, 2), both(BLOCK, 2)
+        for endian in ('little', 'big'):
+            table = bytearray()
+            for name in directories:
+                ident = encode(name) if name else b'\0'
+                table += bytes((len(ident), 0)) + extents[name].to_bytes(4, endian) + (1).to_bytes(2, endian)
+                table += ident + (b'\0' if len(ident) % 2 else b'')
+            paths.append(table)
+        pvd[132:140] = both(len(paths[-1]))
+        pvd[140:144] = (19+tree*2).to_bytes(4, 'little')
+        pvd[148:152] = (20+tree*2).to_bytes(4, 'big')
+        pvd[156:190] = record(b'\0', extents[''], BLOCK, True)
+        pvd[881] = 1
+        descriptors.append(pvd)
+        for directory in directories:
+            entries = record(b'\0', extents[directory], BLOCK, True) + record(b'\x01', extents[''], BLOCK, True)
+            if not directory:
+                for sub in directories[1:]:
+                    entries += record(encode(sub), extents[sub], BLOCK, True)
+            for name, (extent, size) in files.items():
+                if str(Path(name).parent).replace('\\', '/') == (directory or '.'):
+                    entries += record(encode(Path(name).name + ';1'), extent, size)
+            if len(entries) > BLOCK:
+                raise ValueError('bundle directory exceeds ISO layout')
+            contents.append(entries)
     with destination.open('xb') as output:
         output.write(bytes(BLOCK * 16))
-        output.write(pvd)
+        for descriptor in descriptors:
+            output.write(descriptor)
         output.write((b'\xffCD001\x01').ljust(BLOCK, b'\0'))
         for table in paths:
             output.write(table.ljust(BLOCK, b'\0'))
-        for directory in directories:
-            entries = record(b'\0', extents[directory], BLOCK, True)
-            entries += record(b'\x01', extents[''], BLOCK, True)
-            if not directory:
-                for sub in directories[1:]:
-                    entries += record(sub.upper().encode(), extents[sub], BLOCK, True)
-            for name, (extent, size) in files.items():
-                if str(Path(name).parent).replace('\\', '/') == (directory or '.'):
-                    entries += record((Path(name).name.upper() + ';1').encode(), extent, size)
-            if len(entries) > BLOCK:
-                raise ValueError('bundle directory exceeds ISO layout')
+        for entries in contents:
             output.write(entries.ljust(BLOCK, b'\0'))
         for name, (_, size) in files.items():
             with (bundle / name).open('rb') as source:
