@@ -77,8 +77,12 @@ class Lab:
         # All earlier case data/owner records are retained. Never reset an owner.
         for unit in (TIMER, DAILY, RECOVER, BOT):
             guest.systemctl('stop', '--no-block', unit)
-            self.idle(unit, 85 if unit in (DAILY, RECOVER) else 12)
-        guest.systemctl('reset-failed', *guard.UNITS)
+            state = self.idle(unit, 85 if unit in (DAILY, RECOVER) else 12)
+            # Inactive units can be garbage-collected as soon as idle() returns.
+            # Failed units remain referenced with our default CollectMode; reset
+            # only those, by exact name. Do not ignore manager/reset errors.
+            if state['ActiveState'] == 'failed':
+                guest.systemctl('reset-failed', unit)
         guest.systemctl('enable', RECOVER)
         case = ROOT / 'cases' / uuid.uuid4().hex
         case.mkdir(mode=0o700)

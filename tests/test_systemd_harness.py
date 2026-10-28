@@ -6,6 +6,7 @@ import importlib.util
 import json
 from pathlib import Path
 import struct
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -100,6 +101,79 @@ class IsolationTests(unittest.TestCase):
         self.assertNotIn('Runtime.stop =', text)
         self.assertIn('module.Runtime.service = service', text)
         self.assertIn('return original(self)', text)
+
+
+class CasePreparationTests(unittest.TestCase):
+    class Prepared(Exception):
+        """Stop the synthetic run before any case files/users are accessed."""
+
+    def prepare(self, states, *, collect=False, reset_error=None, read_error=None):
+        calls, loaded = [], set(guard.UNITS)
+        lab = scenarios.Lab.__new__(scenarios.Lab)
+
+        def systemctl(*args):
+            calls.append(args)
+            if args[0] == 'enable':
+                raise self.Prepared()
+            if args[0] == 'reset-failed':
+                # Model systemd's refusal for an unloaded unit, including the old
+                # batch command; never let a no-argument/global reset pass.
+                self.assertGreater(len(args), 1)
+                self.assertTrue(set(args[1:]) <= set(guard.UNITS))
+                if reset_error or any(unit not in loaded for unit in args[1:]):
+                    raise subprocess.CalledProcessError(1, args)
+                for unit in args[1:]:
+                    states[unit] = 'inactive'
+
+        def idle(unit, timeout):
+            if read_error:
+                raise read_error
+            state = dict(LoadState='loaded', ActiveState=states[unit], Job='0')
+            if collect and states[unit] == 'inactive':
+                loaded.discard(unit)  # GC between show/idle and the next command.
+            return state
+
+        lab.idle = idle
+        with patch.object(guest, 'systemctl', side_effect=systemctl), \
+                patch.object(guest.Path, 'mkdir') as mkdir:
+            try:
+                lab.new()
+            finally:
+                mkdir.assert_not_called()
+                self.calls = calls
+
+    def test_first_run_with_garbage_collected_units_needs_no_reset(self):
+        with self.assertRaises(self.Prepared):
+            self.prepare(dict.fromkeys(guard.UNITS, 'inactive'), collect=True)
+        self.assertFalse(any(call[0] == 'reset-failed' for call in self.calls))
+        self.assertEqual(self.calls[-1], ('enable', scenarios.RECOVER))
+
+    def test_loaded_inactive_units_need_no_reset(self):
+        with self.assertRaises(self.Prepared):
+            self.prepare(dict.fromkeys(guard.UNITS, 'inactive'))
+        self.assertFalse(any(call[0] == 'reset-failed' for call in self.calls))
+
+    def test_real_failed_service_and_timer_are_reset_by_exact_name(self):
+        states = dict.fromkeys(guard.UNITS, 'inactive')
+        states[scenarios.DAILY] = states[scenarios.TIMER] = 'failed'
+        with self.assertRaises(self.Prepared):
+            self.prepare(states, collect=True)
+        self.assertEqual([call for call in self.calls if call[0] == 'reset-failed'],
+                         [('reset-failed', scenarios.TIMER), ('reset-failed', scenarios.DAILY)])
+        self.assertTrue(all(state == 'inactive' for state in states.values()))
+
+    def test_reset_error_propagates_and_case_is_not_created(self):
+        states = dict.fromkeys(guard.UNITS, 'inactive')
+        states[scenarios.DAILY] = 'failed'
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.prepare(states, reset_error=True)
+        self.assertFalse(any(call[0] == 'enable' for call in self.calls))
+
+    def test_state_read_error_propagates_without_reset_or_case_creation(self):
+        with self.assertRaises(subprocess.TimeoutExpired):
+            self.prepare(dict.fromkeys(guard.UNITS, 'inactive'),
+                         read_error=subprocess.TimeoutExpired('synthetic show', 1))
+        self.assertEqual(self.calls, [('stop', '--no-block', scenarios.TIMER)])
 
 
 class BundleAndLauncherTests(unittest.TestCase):
