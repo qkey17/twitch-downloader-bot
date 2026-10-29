@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 import re
 from typing import Literal
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from .config import VOD_URL_RE
 from .database.db_results import normalize_vod_id
@@ -56,7 +56,8 @@ def _classify_input(text: str) -> ClassifiedInput:
     VOD IDs have precedence over numeric logins. Existing HTTP(S), bare-host,
     /videos/ID and /channel/v/ID forms retain their query/fragment support.
     Channel URLs require a single login segment, with an optional trailing
-    slash and no query/fragment. Commands beginning with '/' are not logins.
+    slash and optional sharing query parameters. Fragments are not channel input.
+    Documented Twitch app channel deep links are also accepted.
     Syntax does not establish that a channel or VOD exists.
     """
     if not isinstance(text, str):
@@ -73,8 +74,22 @@ def _classify_input(text: str) -> ClassifiedInput:
         target = urlsplit(text if '://' in text else 'https://' + text)
     except ValueError:
         raise InputClassificationError('Invalid Twitch URL') from None
+    if target.scheme == 'twitch':
+        login = ''
+        if target.netloc.lower() in ('stream', 'channel'):
+            login = target.path.removeprefix('/').removesuffix('/')
+        elif target.netloc.lower() == 'open' and target.path in ('', '/'):
+            query = parse_qs(target.query, keep_blank_values=True)
+            destinations = set(query) & {'stream', 'channel', 'video', 'game'}
+            if len(destinations) == 1 and destinations <= {'stream', 'channel'}:
+                values = query[next(iter(destinations))]
+                if len(values) == 1:
+                    login = values[0]
+        if '#' not in text and _LOGIN_RE.fullmatch(login) and login.lower() not in _SITE_ROUTES:
+            return ClassifiedInput('channel', login.lower())
+        raise InputClassificationError('Unsupported Twitch app URL')
     if (target.scheme not in ('http', 'https')
-            or target.netloc.lower() not in ('twitch.tv', 'www.twitch.tv')):
+            or target.netloc.lower() not in ('twitch.tv', 'www.twitch.tv', 'm.twitch.tv')):
         raise InputClassificationError('Unsupported Twitch URL')
 
     path = target.path.removesuffix('/')
@@ -86,7 +101,7 @@ def _classify_input(text: str) -> ClassifiedInput:
         return _vod(match.group(1))
 
     login = path[1:] if path.startswith('/') else ''
-    if ('?' not in text and '#' not in text and _LOGIN_RE.fullmatch(login)
+    if ('#' not in text and _LOGIN_RE.fullmatch(login)
             and login.lower() not in _SITE_ROUTES):
         return ClassifiedInput('channel', login.lower())
     raise InputClassificationError('Unsupported Twitch URL')

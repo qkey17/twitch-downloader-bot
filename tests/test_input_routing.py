@@ -63,7 +63,11 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_text_and_commands_for_channels_use_real_browser_and_owned_tasks(self):
         for method, text in (('text', 'fixture_channel'), ('text', 'https://www.twitch.tv/ChAnNeL'),
-                             ('command', 'channel'), ('command', 'https://twitch.tv/channel')):
+                             ('command', 'channel'), ('command', 'https://twitch.tv/channel'),
+                             ('text', 'https://m.twitch.tv/channel/?tt_medium=mobile_web_share'),
+                             ('command', 'https://twitch.tv/channel?sr=a'),
+                             ('text', 'twitch://stream/channel'),
+                             ('command', 'twitch://open?channel=channel')):
             with self.subTest(method=method, text=text):
                 self.context = self.context_for_user()
                 videos.fetch_user_by_login.reset_mock()

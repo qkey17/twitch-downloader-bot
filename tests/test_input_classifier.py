@@ -90,8 +90,8 @@ class InputClassifierTests(unittest.TestCase):
             'https://[invalid/channel', 'https://twitch.tv', 'twitch.tv/',
             'https://twitch.tv/channel/extra', 'https://twitch.tv/channel//',
             'https://twitch.tv//channel', 'https://twitch.tv/%63hannel',
-            'https://twitch.tv/channel?sr=a', 'https://twitch.tv/channel#about',
-            'https://twitch.tv/channel?', 'https://twitch.tv/channel#',
+            'https://twitch.tv/channel#about',
+            'https://twitch.tv/channel#',
             'https://twitch.tv/videos/123abc', 'https://twitch.tv/videos/123/extra',
             'https://twitch.tv/videos/123//', 'https://twitch.tv/channel/v/123/v/123',
             'https://twitch.tv/?videos=123', 'https://twitch.tv/Videos/123',
@@ -109,6 +109,32 @@ class InputClassifierTests(unittest.TestCase):
         ):
             with self.subTest(text=text), self.assertRaises(InputClassificationError):
                 classify_input(text)
+
+    def test_shared_channel_links(self):
+        for scheme in ('https://', 'http://', ''):
+            for host in ('twitch.tv', 'www.twitch.tv', 'm.twitch.tv', 'M.TWITCH.TV'):
+                for suffix in ('', '/', '?sr=a', '/?utm_source=android&desktop-redirect=true', '?tt_content=channel&tt_medium=mobile_web_share'):
+                    with self.subTest(scheme=scheme, host=host, suffix=suffix):
+                        self.assertEqual(ClassifiedInput('channel', 'channel_123'), classify_input(scheme+host+'/ChAnNeL_123'+suffix))
+        for link in ('twitch://stream/ChAnNeL_123', 'twitch://channel/ChAnNeL_123/',
+                     'twitch://open?stream=ChAnNeL_123', 'twitch://open?channel=ChAnNeL_123&utm_source=ios'):
+            with self.subTest(link=link):
+                self.assertEqual(ClassifiedInput('channel', 'channel_123'), classify_input(link))
+
+    def test_shared_links_cannot_change_destination_or_host(self):
+        for link in ('https://m.twitch.tv.evil/channel', 'https://evil@m.twitch.tv/channel',
+                     'https://m.twitch.tv:443/channel', 'https://m.twitch.tv/videos/123/extra',
+                     'https://m.twitch.tv/channel/clip/slug?x=1', 'https://m.twitch.tv/directory?x=1',
+                     'twitch://open?video=123', 'twitch://video/123', 'twitch://game/chess',
+                     'twitch://open?stream=channel&video=123', 'twitch://open?stream=a&channel=b',
+                     'twitch://open?stream=a&stream=b', 'twitch://open?stream=',
+                     'twitch://evil@stream/channel', 'twitch://stream/channel/extra'):
+            with self.subTest(link=link), self.assertRaises(InputClassificationError):
+                classify_input(link)
+        for suffix in ('', '/', '?t=1h', '/?tt_medium=mobile_web_share'):
+            self.assertEqual(ClassifiedInput('vod', '123'), classify_input('https://m.twitch.tv/videos/123'+suffix))
+            with self.assertRaises(InputClassificationError):
+                classify_input('https://m.twitch.tv/videos/123'+suffix, expected_kind='channel')
 
     def test_classification_uses_no_http_sqlite_or_credentials(self):
         with patch('sqlite3.connect', side_effect=AssertionError('SQLite used')) as sql, \

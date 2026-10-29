@@ -72,7 +72,7 @@ class ChannelVodsTests(unittest.IsolatedAsyncioTestCase):
         return await self.browser.handle_callback(self.http, owner, callback_data(view, action), chat, message)
 
     async def test_empty_single_and_full_api_page_have_exact_counts(self):
-        for count in (0, 1, 100):
+        for count in (0, 1, 2, 31, 100):
             with self.subTest(count=count):
                 view = await self.open([vod(i+1) for i in range(count)])
                 self.assertEqual(str(count), view.count_label)
@@ -82,6 +82,34 @@ class ChannelVodsTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(view.has_previous)
                 self.assertEqual('1' if count else None, view.vod.id if view.vod else None)
                 self.assertFalse(any(b.text == '⬅️' for b in buttons(view)))
+
+    async def test_unknown_counts_remain_consistent_until_empty_final_page(self):
+        for count in (1, 2, 31, 100):
+            with self.subTest(count=count):
+                self.fetch_vods.reset_mock()
+                view = await self.open([vod(i+1) for i in range(count)], 'A')
+                for position in range(count):
+                    self.assertFalse(view.complete)
+                    text, _ = build_channel_vod_card(view)
+                    self.assertIn(f'VODs канала: {count}+', text)
+                    self.assertIn(f'{position+1}/{count}+', [b.text for b in buttons(view)])
+                    self.fetch_vods.assert_awaited_once()
+                    if position < count-1:
+                        view = await self.go(view, 'next')
+                self.fetch_vods.return_value = ([], None)
+                view = await self.go(view, 'next')
+                self.assertTrue(view.complete)
+                self.assertFalse(view.has_next)
+                self.assertEqual(str(count), view.count_label)
+                self.assertEqual(2, self.fetch_vods.await_count)
+                for position in reversed(range(count)):
+                    text, _ = build_channel_vod_card(view)
+                    self.assertIn(f'VODs канала: {count}', text)
+                    self.assertNotIn(f'{count}+', text)
+                    self.assertIn(f'{position+1}/{count}', [b.text for b in buttons(view)])
+                    if position:
+                        view = await self.go(view, 'prev')
+                self.assertEqual(2, self.fetch_vods.await_count)
 
     async def test_lazy_pagination_forward_and_back_do_not_refetch_loaded_vods(self):
         first = await self.open([vod(1), vod(2)], 'A')
