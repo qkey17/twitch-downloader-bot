@@ -134,6 +134,74 @@ class StaleListTests(unittest.IsolatedAsyncioTestCase):
         release.set()
         await asyncio.wait_for(newer, 1)
 
+    async def test_new_list_is_usable_and_replaceable_while_old_edit_is_delayed(self):
+        old, a = await self.open(20)
+        entered, release = asyncio.Event(), asyncio.Event()
+        async def slow(*args, **kwargs):
+            entered.set()
+            await release.wait()
+        old.edit_text.side_effect = slow
+        new = self.message(21)
+        opening = self.task(h._open_and_show(new, self.context, 7, 'second'))
+        await asyncio.wait_for(entered.wait(), 1)
+        self.assertFalse(opening.done())
+        new.edit_text.assert_awaited_once()  # Before the old edit is released.
+        self.assertIsNotNone(new.edit_text.await_args.kwargs['reply_markup'])
+        session = next(s for s in self.browser._sessions.values() if s.owner_id == 7)
+        b = self.browser._view(session)
+        q = self.update(callback(b, 'pages'), new)
+        b = await asyncio.wait_for(h.channel_vods_callback(q, self.context), 1)
+        q.callback_query.answer.assert_awaited_once()
+        stale_a = self.update(callback(a, 'select', 0), old)
+        await h.channel_vods_callback(stale_a, self.context)
+        stale_a.callback_query.answer.assert_awaited_once_with(h.STALE_BUTTON)
+        # A third request and its selected HTML card must not wait for A either.
+        latest, c = await asyncio.wait_for(self.open(22, 'third'), 1)
+        stale_b = self.update(callback(b, 'pages'), new)
+        await h.channel_vods_callback(stale_b, self.context)
+        stale_b.callback_query.answer.assert_awaited_once_with(h.STALE_BUTTON)
+        self.ready.return_value = self.ready_result()
+        await h.channel_vods_callback(self.update(callback(c, 'select', 0), latest), self.context)
+        before = latest.edit_text.await_count
+        release.set()
+        await asyncio.wait_for(opening, 1)
+        self.assertEqual(before, latest.edit_text.await_count)
+        self.assertEqual('Готовый HTML доступен.', latest.edit_text.await_args.args[0])
+        self.assertTrue(old.edit_text.await_args.args[0].endswith(h.STALE_LIST))
+        self.assertIsNone(old.edit_text.await_args.kwargs['reply_markup'])
+
+    async def test_old_edit_timeout_occurs_after_new_render_and_remains_bounded(self):
+        old, a = await self.open(20)
+        new = self.message(21)
+        async def stuck(*args, **kwargs):
+            new.edit_text.assert_awaited_once()
+            await asyncio.Event().wait()
+        old.edit_text.side_effect = stuck
+        real_timeout = asyncio.timeout
+        with patch.object(h.asyncio, 'timeout', side_effect=lambda seconds: real_timeout(min(seconds, 0.02))):
+            view = await asyncio.wait_for(h._open_and_show(new, self.context, 7, 'second'), 1)
+        self.assertTrue(self.browser.is_current(view))
+        self.assertIsNotNone(new.edit_text.await_args.kwargs['reply_markup'])
+        self.assertIsNone(getattr(self.browser._sessions.get(a.session_id), 'list_render', None))
+
+    async def test_cancelling_old_cleanup_leaves_new_session_usable_without_background_work(self):
+        old, a = await self.open(20)
+        entered = asyncio.Event()
+        async def stuck(*args, **kwargs):
+            entered.set()
+            await asyncio.Event().wait()
+        old.edit_text.side_effect = stuck
+        new = self.message(21)
+        opening = self.task(h._open_and_show(new, self.context, 7, 'second'))
+        await asyncio.wait_for(entered.wait(), 1)
+        new.edit_text.assert_awaited_once()
+        opening.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await asyncio.wait_for(opening, 1)
+        latest, view = await asyncio.wait_for(self.open(22), 1)
+        self.assertTrue(self.browser.is_current(view))
+        self.assertEqual(2, old.edit_text.await_count)  # Initial render and one cleanup.
+
     async def test_navigation_edit_is_serialized_before_replacement(self):
         message, a = await self.open(20)
         entered, release = asyncio.Event(), asyncio.Event()

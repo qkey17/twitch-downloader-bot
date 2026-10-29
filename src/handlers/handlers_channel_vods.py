@@ -76,16 +76,22 @@ async def _open_and_show(message, context, owner_id, login):
     if old is not None:
         async with _ui_lock(old):
             view = await open_new()
-            await _expire_message(browser, old)
     else:
         view = await open_new()
-    session = browser._sessions.get(view.session_id)
-    if session is not None:
-        async with _ui_lock(session):
-            if browser.is_current(view):
-                await _render_list(message, view, session)
-    elif view.session_id is None:
-        await _edit(message, view)
+    try:
+        session = browser._sessions.get(view.session_id)
+        if session is not None:
+            async with _ui_lock(session):
+                if browser.is_current(view):
+                    await _render_list(message, view, session)
+        elif view.session_id is None:
+            await _edit(message, view)
+    finally:
+        # Render/unlock the new list first. Old-message cleanup stays bounded
+        # and owned by this request, without blocking the new session's UI.
+        if old is not None:
+            async with _ui_lock(old):
+                await _expire_message(browser, old)
     return view
 
 

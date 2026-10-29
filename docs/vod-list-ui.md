@@ -70,6 +70,11 @@ mark it stale. Once the browser has accepted replacement, its existing rules
 invalidate the old token even if Twitch loading subsequently fails. Warning
 editing is best effort, has a ten-second bound, and is attempted at most once;
 an unavailable/deleted old message does not prevent rendering the new list.
+The new list is rendered and its UI lock released before the old-message edit
+starts. Slow cleanup therefore does not delay display or callback interaction
+with the new list. Cleanup remains awaited by the original request (including
+its existing input-route guard), not a detached task. Reacquiring the old
+session's lock and rechecking its list ownership preserves the edit fence.
 Expiry, restart or interrupted loading can leave an old keyboard visible; the
 safe callback answer handles these cases without guessing message contents.
 The coordination covers only list-owned messages, not arbitrary external edits
