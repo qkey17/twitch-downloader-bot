@@ -8,6 +8,7 @@ from src.html_renderer import render_viewer_html, write_viewer_html
 from src.html_publisher import publish_html, publish_html_local, publish_html_stream
 from src.chat_spool import ChatSpool
 from .worker_io import run_blocking
+from src.resource_usage import stage, measure_stage
 from src.twitch_api import (
     fetch_7tv_emote_map,
     fetch_bttv_emote_map,
@@ -42,59 +43,61 @@ async def build_html_result(
     sent_files: List[Dict[str, str]] = []
     html_result_ref: Optional[str] = None
 
-    cdn_emotes: Dict[str, str] = {}
-    combined_map: Dict[str, str] = {}
-    twitch_emote_id_map: Dict[str, str] = {}
-    badge_images: Dict[str, str] = {}
+    with stage('emotes_badges'):
+        cdn_emotes: Dict[str, str] = {}
+        combined_map: Dict[str, str] = {}
+        twitch_emote_id_map: Dict[str, str] = {}
+        badge_images: Dict[str, str] = {}
 
-    # 7TV
-    if meta.channel_id:
+        # 7TV
+        if meta.channel_id:
+            check_cancelled()
+            m = await fetch_7tv_emote_map(session, meta.channel_id)
+            check_cancelled()
+            combined_map.update(m)
+
+        # BTTV
+        if meta.channel_id:
+            check_cancelled()
+            m = await fetch_bttv_emote_map(session, meta.channel_id, cancel_check=cancel_check)
+            check_cancelled()
+            combined_map.update(m)
+
+        # FFZ
+        if meta.channel:
+            check_cancelled()
+            m = await fetch_ffz_emote_map(session, meta.channel, cancel_check=cancel_check)
+            check_cancelled()
+            combined_map.update(m)
+
+        # Twitch Global
         check_cancelled()
-        m = await fetch_7tv_emote_map(session, meta.channel_id)
+        m = await fetch_twitch_global_emote_map(session)
         check_cancelled()
         combined_map.update(m)
 
-    # BTTV
-    if meta.channel_id:
-        check_cancelled()
-        m = await fetch_bttv_emote_map(session, meta.channel_id, cancel_check=cancel_check)
-        check_cancelled()
-        combined_map.update(m)
+        # Twitch Channel
+        if meta.channel_id:
+            check_cancelled()
+            name_map, id_map = await fetch_twitch_channel_emote_maps(session, meta.channel_id)
+            check_cancelled()
+            combined_map.update(name_map)
+            twitch_emote_id_map.update(id_map)
+            # Channel/subscriber emotes should be available even if the text scan misses
+            # a token boundary or the row has no fragment metadata.
+            cdn_emotes.update(name_map)
+            cdn_emotes.update(id_map)
 
-    # FFZ
-    if meta.channel:
+        # Twitch badges
         check_cancelled()
-        m = await fetch_ffz_emote_map(session, meta.channel, cancel_check=cancel_check)
+        badge_images.update(await fetch_twitch_global_badge_map(session))
         check_cancelled()
-        combined_map.update(m)
+        if meta.channel_id:
+            check_cancelled()
+            badge_images.update(await fetch_twitch_channel_badge_map(session, str(meta.channel_id)))
+            check_cancelled()
 
-    # Twitch Global
-    check_cancelled()
-    m = await fetch_twitch_global_emote_map(session)
-    check_cancelled()
-    combined_map.update(m)
-
-    # Twitch Channel
-    if meta.channel_id:
-        check_cancelled()
-        name_map, id_map = await fetch_twitch_channel_emote_maps(session, meta.channel_id)
-        check_cancelled()
-        combined_map.update(name_map)
-        twitch_emote_id_map.update(id_map)
-        # Channel/subscriber emotes should be available even if the text scan misses
-        # a token boundary or the row has no fragment metadata.
-        cdn_emotes.update(name_map)
-        cdn_emotes.update(id_map)
-
-    # Twitch badges
-    check_cancelled()
-    badge_images.update(await fetch_twitch_global_badge_map(session))
-    check_cancelled()
-    if meta.channel_id:
-        check_cancelled()
-        badge_images.update(await fetch_twitch_channel_badge_map(session, str(meta.channel_id)))
-        check_cancelled()
-
+    @measure_stage('analysis_html_publication')
     def render_and_publish():
         targets = set()
         targets_by_id = set()
