@@ -52,7 +52,7 @@ class ListTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(1, len(row))
                         self.assertEqual('2026-01-02 03:04 UTC', row[0].text)
                     if count > 5:
-                        self.assertEqual(f'📄 Стр. 1/{view.page_count} ▾', rows[-1][0].text)
+                        self.assertEqual(f'Стр. 1/{view.page_count}', rows[-1][0].text)
                     else:
                         self.assertTrue(all(':select:' in row[0].callback_data for row in rows))
                 else:
@@ -62,7 +62,7 @@ class ListTests(unittest.IsolatedAsyncioTestCase):
         view = await self.open(100)
         view = await self.go(view, 'next')
         self.assertEqual(1, view.page)
-        self.assertEqual('📄 Стр. 2/20 ▾', build_list(view)[1].inline_keyboard[-1][1].text)
+        self.assertEqual('Стр. 2/20', build_list(view)[1].inline_keyboard[-1][1].text)
         grid = await self.go(view, 'pages')
         self.assertTrue(grid.grid)
         text, kb = build_list(grid)
@@ -72,6 +72,10 @@ class ListTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, grid.group)
         view = await self.go(grid, 'page', 19)
         self.assertEqual(19, view.page)
+        self.assertEqual('Стр. 20/20', build_list(view)[1].inline_keyboard[-1][-1].text)
+        middle = await self.go(view, 'page', 12)
+        self.assertEqual(['⬅️', 'Стр. 13/20', '➡️'], [b.text for b in build_list(middle)[1].inline_keyboard[-1]])
+        view = await self.go(middle, 'page', 19)
         picked = await self.go(view, 'select', 99)
         self.assertIsInstance(picked, VodSelection)
         self.assertEqual('100', picked.vod_id)
@@ -211,7 +215,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         rows = message.edit_text.await_args.kwargs['reply_markup'].inline_keyboard
         regen, back = rows[1][0].callback_data, rows[2][0].callback_data
         await channel.channel_vods_callback(self.update(back, message), self.context)
-        self.assertEqual('📄 Стр. 2/2 ▾', message.edit_text.await_args.kwargs['reply_markup'].inline_keyboard[-1][1].text)
+        self.assertEqual('Стр. 2/2', message.edit_text.await_args.kwargs['reply_markup'].inline_keyboard[-1][1].text)
         await chat.chat_callback(self.update(regen, message), self.context)
         self.runner.assert_not_awaited()
         message.reply_text.assert_not_awaited()
