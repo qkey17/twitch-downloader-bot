@@ -47,11 +47,14 @@ class ListTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(max(1, (count+99)//100), self.fetch_vods.await_count)
                 if count:
                     rows = kb.inline_keyboard
-                    self.assertEqual(min(count, 5)+1, len(rows))
-                    for row in rows[:-1]:
+                    self.assertEqual(min(count, 5)+(count > 5), len(rows))
+                    for row in rows[:-1] if count > 5 else rows:
                         self.assertEqual(1, len(row))
                         self.assertEqual('2026-01-02 03:04 UTC', row[0].text)
-                    self.assertEqual('1', rows[-1][0].text)
+                    if count > 5:
+                        self.assertEqual(f'📄 Стр. 1/{view.page_count} ▾', rows[-1][0].text)
+                    else:
+                        self.assertTrue(all(':select:' in row[0].callback_data for row in rows))
                 else:
                     self.assertIsNone(kb)
 
@@ -59,9 +62,11 @@ class ListTests(unittest.IsolatedAsyncioTestCase):
         view = await self.open(100)
         view = await self.go(view, 'next')
         self.assertEqual(1, view.page)
+        self.assertEqual('📄 Стр. 2/20 ▾', build_list(view)[1].inline_keyboard[-1][1].text)
         grid = await self.go(view, 'pages')
         self.assertTrue(grid.grid)
-        _, kb = build_list(grid)
+        text, kb = build_list(grid)
+        self.assertIn('Выберите страницу', text)
         self.assertEqual(12, sum(b.text.isdigit() for row in kb.inline_keyboard for b in row))
         grid = await self.go(grid, 'group', 1)
         self.assertEqual(1, grid.group)
@@ -83,6 +88,16 @@ class ListTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('invalid', (await self.go(view, 'page', 2)).status)
         await self.go(view, 'next')
         self.assertEqual('stale', (await self.go(view, 'next')).status)
+
+    async def test_one_page_does_not_open_page_picker(self):
+        for count in (1, 2, 5):
+            with self.subTest(count=count):
+                view = await self.open(count)
+                view = await self.go(view, 'pages')
+                self.assertFalse(view.grid)
+                text, keyboard = build_list(view)
+                self.assertNotIn('Выберите страницу', text)
+                self.assertEqual(count, len(keyboard.inline_keyboard))
 
     async def test_incomplete_cycle_limit_and_api_failure_never_display_partial_total(self):
         for pages in (([cards.vod()], 'A'),):
@@ -196,7 +211,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         rows = message.edit_text.await_args.kwargs['reply_markup'].inline_keyboard
         regen, back = rows[1][0].callback_data, rows[2][0].callback_data
         await channel.channel_vods_callback(self.update(back, message), self.context)
-        self.assertEqual('2', message.edit_text.await_args.kwargs['reply_markup'].inline_keyboard[-1][1].text)
+        self.assertEqual('📄 Стр. 2/2 ▾', message.edit_text.await_args.kwargs['reply_markup'].inline_keyboard[-1][1].text)
         await chat.chat_callback(self.update(regen, message), self.context)
         self.runner.assert_not_awaited()
         message.reply_text.assert_not_awaited()
@@ -207,6 +222,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             await chat.legacy_open_callback(self.update('ui:result:open:123456789'), self.context)
             history.assert_called_once_with(7, 1)
         options = self.context.bot.edit_message_text.await_args.kwargs
+        self.assertEqual('🔗 Ссылка на VOD', options['reply_markup'].inline_keyboard[0][-1].text)
         urls = [b.url for row in options['reply_markup'].inline_keyboard for b in row]
         self.assertEqual([self.ready_result()['html_ref'], 'https://www.twitch.tv/videos/123456789'], urls)
         self.assertEqual((10, 20), (options['chat_id'], options['message_id']))
