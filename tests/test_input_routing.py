@@ -2,6 +2,7 @@
 import asyncio
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from telegram import Update
 from telegram.ext import CommandHandler
@@ -17,7 +18,13 @@ from src.twitch_api.client import TwitchAPIError
 
 class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
     _setupAsyncioRunner = fixture.ChannelSelectionTests._setupAsyncioRunner
-    setUp = fixture.ChannelSelectionTests.setUp
+    def setUp(self):
+        # Preserve regression coverage of the retained legacy preparation flow.
+        # Active HTML-only routes are exercised in test_vod_list.py.
+        fixture.ChannelSelectionTests.setUp(self)
+        legacy = patch.object(inputs, 'prepare_vod_choice', vod.prepare_vod_choice)
+        legacy.start()
+        self.addCleanup(legacy.stop)
     asyncTearDown = fixture.ChannelSelectionTests.asyncTearDown
     context_for_user = fixture.ChannelSelectionTests.context_for_user
     task = fixture.ChannelSelectionTests.task
