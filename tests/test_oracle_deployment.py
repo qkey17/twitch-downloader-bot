@@ -371,6 +371,49 @@ ssh() {
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertNotIn('timeout 120 git_cmd', SCRIPT.read_text())
 
+    def test_emergency_workflow_exact_sha_protocol(self):
+        run = textwrap.dedent(WORKFLOW.read_text().split('        run: |\n', 1)[1])
+        script = self.root/'workflow-recovery.sh'
+        mocks = r'''
+ssh-keygen() { return 0; }
+ssh() {
+    echo "${!#}" >> "$RUNNER_TEMP/calls"
+    case "${!#}" in
+        "check-recovery $EXPECTED_CURRENT $TARGET_INPUT")
+            [[ "$FAKE_CASE" != bad_check ]] || return 1
+            echo "RECOVERY_CHECK_OK $EXPECTED_CURRENT $TARGET_INPUT";;
+        "recover $EXPECTED_CURRENT $TARGET_INPUT")
+            [[ "$FAKE_CASE" != bad_deploy ]] || return 1
+            echo "DEPLOYED $TARGET_INPUT";;
+        *) return 91;;
+    esac
+}
+'''
+        script.write_text(mocks+'\n'+run, encoding='utf-8', newline='\n')
+        for expected, target, check, case, count, ok in (
+            (OLD, TARGET, 'true', 'ok', 1, True),
+            (OLD, TARGET, 'false', 'ok', 2, True),
+            ('', TARGET, 'false', 'ok', 0, False),
+            (OLD, '', 'false', 'ok', 0, False),
+            (OLD, OLD, 'false', 'ok', 0, False),
+            (OLD+'; id', TARGET, 'false', 'ok', 0, False),
+            (OLD, TARGET, 'false', 'bad_check', 1, False),
+            (OLD, TARGET, 'false', 'bad_deploy', 2, False),
+        ):
+            with self.subTest(case=case, check=check, count=count):
+                calls=self.root/'calls'; calls.unlink(missing_ok=True)
+                env=os.environ|dict(EMERGENCY_RECOVERY='true',EXPECTED_CURRENT=expected,
+                    TARGET_INPUT=target,CHECK_ONLY=check,FAKE_CASE=case,GITHUB_REF='refs/heads/main',
+                    GITHUB_SHA=TARGET,ORACLE_SSH_PRIVATE_KEY='PRIVATE_TEST_SENTINEL',
+                    ORACLE_SSH_KNOWN_HOSTS='PRIVATE_TEST_SENTINEL',RUNNER_TEMP=shell_path(self.root),
+                    GITHUB_STEP_SUMMARY=shell_path(self.root/'summary'))
+                p=subprocess.run([BASH,'--noprofile','--norc',shell_path(script)],env=env,
+                                 capture_output=True,text=True,timeout=10)
+                self.assertEqual(p.returncode==0,ok,p.stderr)
+                self.assertEqual(len(calls.read_text().splitlines()) if calls.exists() else 0,count)
+                self.assertNotIn('PRIVATE_TEST_SENTINEL',p.stdout+p.stderr)
+                self.assertFalse(list(self.root.glob('tdb-ssh.*')))
+
 
 if __name__ == '__main__':
     unittest.main()
