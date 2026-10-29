@@ -13,6 +13,15 @@ on:
         required: true
         default: true
         type: boolean
+      emergency_recovery:
+        description: Recover a stopped bot by fast-forward; requires BOTH exact SHA inputs
+        required: true
+        default: false
+        type: boolean
+      expected_current_commit:
+        description: Exact current Oracle checkout SHA; mandatory for emergency recovery
+        required: false
+        type: string
 
 # No checkout, GitHub API calls or third-party actions are needed.
 permissions: {}
@@ -33,6 +42,8 @@ jobs:
         env:
           TARGET_INPUT: ${{ inputs.commit }}
           CHECK_ONLY: ${{ inputs.check_only }}
+          EMERGENCY_RECOVERY: ${{ inputs.emergency_recovery }}
+          EXPECTED_CURRENT: ${{ inputs.expected_current_commit }}
           ORACLE_SSH_PRIVATE_KEY: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}
           ORACLE_SSH_KNOWN_HOSTS: ${{ secrets.ORACLE_SSH_KNOWN_HOSTS }}
         run: |
@@ -43,6 +54,21 @@ jobs:
           [[ "$target" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'Provide a full 40-character commit SHA.' >&2; exit 1; }
           target="${target,,}"
           [[ "$CHECK_ONLY" == true || "$CHECK_ONLY" == false ]] || exit 1
+          recovery="${EMERGENCY_RECOVERY:-false}"
+          [[ "$recovery" == true || "$recovery" == false ]] || exit 1
+          check_request=check
+          check_reply='CHECK_OK protocol=1'
+          deploy_request="deploy $target"
+          if [[ "$recovery" == true ]]; then
+            [[ "$TARGET_INPUT" =~ ^[0-9a-fA-F]{40}$ && "${EXPECTED_CURRENT:-}" =~ ^[0-9a-fA-F]{40}$ ]] || {
+              echo 'Recovery requires exact target and expected current SHA.' >&2; exit 1;
+            }
+            expected="${EXPECTED_CURRENT,,}"
+            [[ "$target" != "$expected" ]] || exit 1
+            check_request="check-recovery $expected $target"
+            check_reply="RECOVERY_CHECK_OK $expected $target"
+            deploy_request="recover $expected $target"
+          fi
           [[ -n "$ORACLE_SSH_PRIVATE_KEY" && -n "$ORACLE_SSH_KNOWN_HOSTS" ]] || {
             echo 'Configure both Oracle SSH secrets in the oracle-production environment.' >&2; exit 1;
           }
@@ -71,8 +97,8 @@ jobs:
             -o HostKeyAlgorithms=ssh-ed25519 -o LogLevel=ERROR
             -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=3
           )
-          ssh "${ssh_options[@]}" ubuntu@129.153.145.173 check > "$work/check.txt"
-          grep -qx 'CHECK_OK protocol=1' "$work/check.txt" || {
+          ssh "${ssh_options[@]}" ubuntu@129.153.145.173 "$check_request" > "$work/check.txt"
+          grep -Fqx "$check_reply" "$work/check.txt" || {
             echo 'The restricted server helper did not confirm the expected protocol.' >&2; exit 1;
           }
           if [[ "$CHECK_ONLY" == true ]]; then
@@ -80,7 +106,7 @@ jobs:
             echo '### Preflight passed — no deployment performed' >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          ssh "${ssh_options[@]}" ubuntu@129.153.145.173 "deploy $target" > "$work/deploy.txt"
+          ssh "${ssh_options[@]}" ubuntu@129.153.145.173 "$deploy_request" > "$work/deploy.txt"
           grep -qx "DEPLOYED $target" "$work/deploy.txt" || {
             echo 'Deployment was not confirmed; inspect the safe stage diagnostics.' >&2; exit 1;
           }

@@ -149,13 +149,21 @@ restrict,command="/usr/local/libexec/tdb-deploy" ssh-ed25519 <PUBLIC_KEY> tdb-gi
 
 Замените `<PUBLIC_KEY>` публичной частью нового ключа. Каталог `.ssh` должен
 иметь режим 0700, authorized_keys — 0600, владельца `ubuntu`. Для этого ключа
-запрещены shell/PTY, перенаправления портов и агента; разрешены только команды
-`check` и `deploy <полный SHA>`, которые разбирает установленный помощник.
+запрещены shell/PTY, перенаправления портов и агента; разрешён только фиксированный
+протокол установленного помощника (`check` и `deploy <полный SHA>`, а после
+отдельного обновления helper — описанные ниже аварийные команды).
 Не ослабляйте права существующих ключей и не меняйте их содержимое.
 Убедитесь, что sshd не разрешает этому пользователю задавать произвольное
 окружение: сохраните `PermitUserEnvironment no`, не разрешайте через `AcceptEnv`
 переменные вроде `BASH_ENV`, `ENV`, `PATH`, `LD_*` и `GIT_*`. Forced command
 не должен запускаться через подконтрольный клиенту файл инициализации shell.
+
+Новая версия helper также принимает только две фиксированные аварийные команды:
+`check-recovery <EXPECTED_SHA> <TARGET_SHA>` и `recover <EXPECTED_SHA> <TARGET_SHA>`.
+Оба SHA — ровно 40 строчных hex-символов. Остальные строки, дополнительные
+аргументы, shell-операторы и произвольные команды запрещены. Forced command,
+`restrict`, sudo whitelist и проверка host key остаются обязательными; расширять
+SSH до shell/PTY или выдавать sudo на Python для этого не нужно. Подробности ниже.
 
 Получите host key через доверенную консоль Oracle или уже проверенное
 административное соединение, сверив fingerprint независимо:
@@ -222,3 +230,146 @@ Workflow должен находиться на `main`, чтобы появил�
 [OpenSSH authorized_keys](https://man.openbsd.org/sshd.8),
 [Git merge: защита игнорируемых файлов](https://git-scm.com/docs/git-merge),
 [systemd invocation fields](https://www.freedesktop.org/software/systemd/man/251/systemd.journal-fields.html).
+
+## Аварийный forward deployment остановленного бота
+
+Это **отдельно разрешаемое восстановление кода**, а не восстановление SQLite/HTML.
+Обычные `check/deploy` по-прежнему требуют уже работающую `active/running` службу.
+Раньше именно этот preflight блокировал установку исправляющего commit после
+ошибки запуска. Error trap обычного deployment только запрашивает запуск текущего
+чистого checkout, а не возвращает старый код.
+
+В Actions вручную выберите **emergency_recovery=true** и задайте **оба** поля:
+
+- `expected_current_commit`: полный SHA checkout Oracle, установленный отдельной
+  безопасной диагностикой; это не последний успешный SHA по памяти.
+- `commit`: полный SHA нового проверенного исправляющего commit из `main`.
+
+Сначала `check_only=true`. Workflow вызовет `check-recovery EXPECTED TARGET`,
+а не обычный `check`. Успешный ответ — `RECOVERY_CHECK_OK EXPECTED TARGET`.
+Это не read-only аудит: preflight может создавать lock state, делает Git fetch
+и временную инвентаризацию, но не обновляет checkout и не запускает службу.
+После отдельного разрешения запустите с теми же SHA и `check_only=false`.
+Все проверки выполняются заново под общей блокировкой; прежний успешный check
+не является пропуском. Итоговый успех — `DEPLOYED TARGET` и summary workflow,
+затем нужна функциональная проверка бота владельцем.
+
+Для обычного обновления оставляйте `emergency_recovery=false`; прежний выбор
+`commit` и `check_only` не меняется. Не включайте recovery для работающего бота.
+
+### Условия допуска и защищённые границы
+
+- Цель — **новый** commit: текущий HEAD должен точно совпадать с EXPECTED,
+  отличаться от TARGET и быть его предком; TARGET должен принадлежать
+  полученному `origin/main`. Downgrade, reset/rebase/force и произвольный checkout
+  не предусмотрены. Защита main применяется при подготовке PR обычным порядком.
+- Служба должна быть loaded, строго `inactive/dead` либо `failed/failed`,
+  MainPID=0, ControlPID=0, без задач cgroup и без Job. Unknown, transitioning,
+  `auto-restart`, оставшиеся дочерние процессы и ошибки чтения вызывают отказ.
+  Наличие процесса нельзя обходить ручным убийством ради preflight.
+- Daily/recovery units должны отсутствовать или быть так же завершены.
+  Timer должен отсутствовать либо быть disabled и inactive/dead без job.
+  Уже запущенный backup не отменяется одним отключением timer.
+- Используется **существующий** приватный deployment lock. Пока он удерживается,
+  кооперативный daily/recovery не может получить право остановки. Дополнительно
+  проверяется занятость daily state lease. Обратный порядок блокировок не вызывает
+  ожидания: проба lease неблокирующая, при занятости — отказ.
+- Поддерживается только документированная привязка
+  `/home/ubuntu/tdb-admin/daily-backup.json`, `/home/ubuntu/tdb-daily-state`,
+  `tdb.service` и общий deployment lock. Custom state/config требуют отдельного
+  плана: этот узкий режим не ищет и не угадывает альтернативные пути.
+- До установки daily-компонентов оба config/state могут отсутствовать.
+  После установки нужны приватные config/state и существующий `offsite.lock`.
+  Неполная установка, orphan state, symlink/hardlink, неверные права,
+  нечитаемый/повреждённый журнал, ненулевой owner, manual hold и runtime marker
+  `control.sock.committed` запрещают операцию. Marker также нельзя удалять ради
+  обхода проверки: он может означать незавершённый commit обслуживания.
+  Завершённый owner имеет штатное значение `null`; не удаляйте его вручную.
+  Config без state должен быть разобран отдельно; штатный `daily_backup.py status`
+  при первоначальной установке создаёт state/lease, поэтому он не является
+  строго read-only командой. Его выполнение также требует разрешения.
+- Состояние повторно проверяется после fetch перед обновлением и после
+  compile/import перед start. Сохраняются прежние запреты на protected paths,
+  зависимости/схему, грязный checkout, коллизии файлов и небезопасные родители.
+
+После fast-forward выполняются настоящие compile/import и **один явный запрос
+start**. Сохраняются проверки новой InvocationID, marker текущего PID,
+180-секундный старт и 10-секундная стабильность; в конце recovery дополнительно
+перепроверяет PID/InvocationID/NRestarts после заключительного readiness probe.
+Аварийный error trap не делает дополнительных start и не пытается откатить Git.
+Действующая systemd Restart policy не изменяется: её собственные рестарты не
+считаются успехом и требуют наблюдения оператора при повторной неисправности.
+
+### Подготовка исправляющего commit и диагностика
+
+1. По безопасной диагностике установите фактический HEAD, состояние службы,
+   jobs, чистоту checkout и версию установленного helper. Не публикуйте `.env`,
+   rclone.conf, environment или полный journal приложения.
+2. Подготовьте отдельный PR поверх актуального main: исправление или возврат
+   исходников к проверенному поведению. Данные, runtime paths и SQLite не
+   включать. После review/tests объедините обычным разрешённым способом и
+   зафиксируйте итоговый SHA main — не SHA незамерженной ветки и не старый SHA.
+3. Проверьте ancestry от фактического production HEAD, diff, отсутствие изменений
+   dependencies/database и совместимость с уже установленным maintenance.
+4. Если есть owner, активный backup/recovery, manual hold или неизвестное
+   состояние, recovery deployment **не запускать**. Сначала отдельно восстановить
+   согласованность по daily runbook. Не удалять locks, owner, state, снимки и HTML.
+5. При повторной неудаче сохраните safe stage/error, оба SHA, PID/InvocationID,
+   systemd Result и локальные журналы с ограниченным доступом. Checkout может
+   уже содержать исправляющую версию. Не повторяйте операцию с прежним EXPECTED,
+   не запускайте второй бот и не выдавайте `active` за готовность.
+6. При повреждённом checkout, неопределённом systemd или исчерпанном recovery
+   budget остановитесь для отдельного административного решения. Этот механизм
+   не ремонтирует Git, приложение, диск или пользовательскую БД.
+
+### Bootstrap: helper должен быть установлен заранее
+
+**Merge PR и deployment checkout не обновляют `/usr/local/libexec/tdb-deploy`.**
+Аварийный механизм необходимо отдельно установить и проверить **до** первого
+рискованного обновления бота. Иначе старый forced command отвергнет новые команды.
+
+Только после отдельного разрешения владельца, через существующий административный
+SSH, без работающего deployment/backup/recovery:
+
+1. Зафиксировать SHA256, владельца и mode текущего helper. Создать уникальную
+   root-owned резервную копию вне checkout и web root, не перезаписывая прежние
+   сохранения; проверить её SHA256. Сохранить существующие forced command/sudoers.
+2. Передать reviewed helper отдельно в новый staging-файл. Сверить SHA256 с
+   проверенным commit, выполнить `bash -n`, проверить отсутствие symlink и
+   посторонних писателей. Не копировать `.env` или приватные ключи.
+3. При общей deployment-блокировке и отсутствии активных административных jobs
+   установить root:root 0755 через новый root-owned staging в том же каталоге
+   `/usr/local/libexec`, затем атомарно заменить только helper. Проверить итоговый
+   hash/mode. Не изменять authorized_keys, sudoers или бота ради этой замены.
+4. Через ограниченный CI-ключ отдельно разрешённым обычным `check` подтвердить
+   сохранение протокола. Некорректный recovery-запрос должен отвергаться до
+   управления службой. Положительный recovery из failed/inactive сначала
+   квалифицируется на изолированном systemd, а не намеренной поломкой production.
+5. Если bootstrap-проверка не пройдена — при отсутствии выполняемого helper,
+   под тем же lock вернуть **проверенную сохранённую копию** атомарной заменой,
+   сверить hash и повторить обычный check. Не использовать reset Git и не
+   затрагивать данные. Возвращённый старый helper не поддерживает recovery:
+   рискованный deployment остаётся NO-GO.
+
+Резервная копия helper — rollback административного компонента, не rollback
+исходников бота. После включения daily-автоматизации её owner и boot recovery
+требуют отдельной координации; наличие нового helper не отменяет этот протокол.
+
+### Изолированная квалификация
+
+Offline-регрессии: `python3 -B -m unittest tests.test_oracle_deployment tests.test_oracle_recovery -v`.
+Второй модуль использует настоящую временную историю Git
+working → broken → fixed, локальный origin и безопасную имитацию systemd.
+
+Для ограниченной **настоящей** systemd-проверки предназначен
+`tests/deployment_recovery_lab.py`. Он отказывает вне новой offline QEMU VM
+с DMI `TDB-Harness/TDB-Isolated-VM`, PID 1 systemd, virtio root, без общих
+mounts и production paths. Проверенные helper/tests заранее передаются в
+`/opt/recovery-source` через read-only seed; никакого Oracle доступа/секретов.
+Запуск: `sudo python3 -B /opt/recovery-source/tests/deployment_recovery_lab.py`.
+VM должна иметь Git, Bash, sudo, Python 3.12 и systemd. Результат сохраняется
+в `/opt/recovery-lab/report.json`, включая SHA256 исходника, явные lab bindings,
+реальные process identities, journal, хеши синтетических данных и cleanup.
+Venv здесь синтетический: только `pip check` заменён успешной заглушкой;
+compile/import, systemd-служба и проверки journal/readiness выполняются реально.
+Сеть гостя отключена; production dependencies и Telegram API этим не проверяются.
