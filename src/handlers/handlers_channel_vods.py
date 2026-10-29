@@ -46,6 +46,27 @@ async def _render_list(message, view, session):
     session.list_render = (message, build_list(view)[0]) if view.status in ('ready', 'empty') and view.complete else None
 
 
+def _consume_selection(session):
+    # Fence the source AND info actions before callback answers/Telegram awaits.
+    from .handlers_vod_info import take_info
+    session.list_render = None
+    return take_info(session)
+
+
+async def _prepare_selection(query, message, context, browser, session, result, card):
+    try:
+        await query.answer()
+        await prepare_chat(message, context, result.owner_id, result.vod_id,
+                           is_current=lambda: browser.is_current(result.view), edit=True,
+                           back=callback(result.view, 'back'), on_start=lambda: browser.retire(result.view))
+    finally:
+        # Show the normal text screen first. Cleanup touches only the captured
+        # info message, never the list/result or a newly opened info card.
+        if card is not None:
+            from .handlers_vod_info import close_info
+            await close_info(session, card)
+
+
 async def _expire_message(browser, old):
     record = getattr(old, 'list_render', None)
     from .handlers_vod_info import close_info
@@ -122,22 +143,21 @@ async def _list_callback(update, context, browser):
         if not isinstance(result, (ListView, VodSelection, VodInformation)):
             await query.answer(STALE_BUTTON)
             return
-        await query.answer()
         view = result.view if isinstance(result, (VodSelection, VodInformation)) else result
         if isinstance(result, VodInformation):
             from .handlers_vod_info import show_info
+            await query.answer()
             await show_info(browser, session, message, result)
             return result
         if isinstance(result, VodSelection):
-            # Fence the message BEFORE metadata or any HTML/progress edit.
-            session.list_render = None
-        elif browser.is_current(view):
-            context.user_data.pop('chat_choice', None)
-            await _render_list(message, view, session)
+            card = _consume_selection(session)
+        else:
+            await query.answer()
+            if browser.is_current(view):
+                context.user_data.pop('chat_choice', None)
+                await _render_list(message, view, session)
     if isinstance(result, VodSelection):
-        await prepare_chat(message, context, update.effective_user.id, result.vod_id,
-                           is_current=lambda: browser.is_current(view), edit=True,
-                           back=callback(view, 'back'), on_start=lambda: browser.retire(view))
+        await _prepare_selection(query, message, context, browser, session, result, card)
     return result
 
 

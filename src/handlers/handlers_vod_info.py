@@ -45,8 +45,17 @@ def preview_url(value):
     return value
 
 
-async def close_info(session):
+def take_info(session):
+    """Consume actions synchronously; the selecting request owns cleanup now."""
     card = getattr(session, 'info_card', None)
+    if card is not None:
+        card.nonce = ''
+        session.info_card = None
+    return card
+
+
+async def close_info(session, card=None):
+    card = card if card is not None else getattr(session, 'info_card', None)
     if card is None:
         return True
     try:
@@ -54,7 +63,8 @@ async def close_info(session):
             await card.message.delete()
     except Exception:
         return False
-    session.info_card = None
+    if getattr(session, 'info_card', None) is card:
+        session.info_card = None
     return True
 
 
@@ -117,8 +127,8 @@ async def show_info(browser, session, source, request):
 
 
 async def info_callback(update, context):
-    from .handlers_channel_vods import get_channel_browser, _ui_lock, STALE_BUTTON
-    from .handlers_chat import prepare_chat
+    from .handlers_channel_vods import (get_channel_browser, _ui_lock, STALE_BUTTON,
+                                        _consume_selection, _prepare_selection)
     q = update.callback_query
     match = _ACTION.fullmatch(q.data or '')
     browser = get_channel_browser(context.application)
@@ -154,12 +164,5 @@ async def info_callback(update, context):
         if not isinstance(result, VodSelection):
             await q.answer(STALE_BUTTON)
             return
-        await q.answer()
-        session.list_render = None
-        # Invalidate action before awaits; deletion failure cannot allow a rerun.
-        card.nonce = ''
-        await close_info(session)
-        progress = await source.reply_text('Проверка VOD…')
-    await prepare_chat(progress, context, update.effective_user.id, result.vod_id,
-                       is_current=lambda: browser.is_current(result.view), edit=True,
-                       on_start=lambda: browser.retire(result.view))
+        card = _consume_selection(session)
+    await _prepare_selection(q, source, context, browser, session, result, card)

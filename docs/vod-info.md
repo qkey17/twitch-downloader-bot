@@ -30,20 +30,30 @@ Repeated info for the same VOD reuses its card. Changing VOD reuses text via
 edit_text or photo via edit_media (also the supported text-to-media transition).
 Photo-to-text requires deletion and sending a new text message; if deletion
 fails, no additional card is created. Photo send failures fall back to text.
-API transactions are bounded (show 10 seconds, close 5 seconds) under the
-source session's existing UI lock. There is no detached task. A deleted card
-can be recreated when Telegram reports the old message is missing.
+API transactions are bounded (show 10 seconds, close 5 seconds). Rendering uses
+the source session's existing UI lock. There is no detached task. A deleted
+card can be recreated when Telegram reports the old message is missing.
 
 The original list is not edited by info opening/back. Back deletes only the
 info message. Session token, revision, owner, source chat/message, card message,
 nonce, state and TTL fence actions. Navigation/replacement invalidate old
 actions; concurrent info presses serialize. Callback answer is sent once.
 
-Process consumes selection through the existing browser before awaits, disables
-the card nonce and creates a separate text message. Existing prepare_chat then
-checks ready HTML or starts the existing downloader, with its single slot and
-cancellation rules. It never tries to edit a photograph into progress text.
-The source list's consumed buttons become stale as for ordinary selection.
+Both the left VOD button and info Process consume selection through the same
+browser/UI lock. Before any callback answer or Telegram await, they fence
+list_render and invalidate/detach the info card. Both use the same prepare_chat
+path on the original TEXT list message: ready HTML offers Open/Regenerate/Back,
+and uncached VODs start the existing downloader/progress there. Back from the
+offer restores the list and its ownership. No extra preparation message or
+photo-to-text edit is needed. The single slot/cancellation rules are unchanged.
+
+The selecting request best-effort deletes its captured info message in finally,
+after prepare_chat has rendered the screen or returned/failed. Slow deletion
+therefore does not delay that screen, block the session UI lock or prevent a
+new channel request. Cleanup can only delete that captured photo/text message;
+it cannot edit the list/result or clear a newer info-card record. Failure or
+cancellation may leave a visible inert card; its old actions cannot select
+again. Cleanup waits at most five seconds and creates no background task.
 No history/result preview support is included.
 
 References: [Helix videos](https://dev.twitch.tv/docs/api/videos) and
