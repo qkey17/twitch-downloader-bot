@@ -38,6 +38,10 @@ The original list is not edited by info opening/back. Back deletes only the
 info message. Session token, revision, owner, source chat/message, card message,
 nonce, state and TTL fence actions. Navigation/replacement invalidate old
 actions; concurrent info presses serialize. Callback answer is sent once.
+Page arrows, page-picker opening, page/group selection and return from the grid
+synchronously detach/invalidate the current info card under the UI lock.
+Navigation renders the new list before bounded cleanup of the captured message
+outside the lock. A newer card/list cannot be changed by that late cleanup.
 
 Both the left VOD button and info Process consume selection through the same
 browser/UI lock. Before any callback answer or Telegram await, they fence

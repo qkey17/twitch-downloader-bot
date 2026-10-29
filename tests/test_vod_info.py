@@ -23,8 +23,10 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
     ready_result = fixture.StaleListTests.ready_result
     open = fixture.StaleListTests.open
 
-    async def setup_list(self, preview=URL):
-        videos.fetch_archive_vods.return_value = ([cards.vod(123456789, thumbnail_url=preview), cards.vod(2, thumbnail_url=preview)], None)
+    async def setup_list(self, preview=URL, count=2):
+        vods = [cards.vod(123456789, thumbnail_url=preview)]
+        vods.extend(cards.vod(n, thumbnail_url=preview) for n in range(2, count+1))
+        videos.fetch_archive_vods.return_value = (vods, None)
         source, view = await self.open(20)
         self.card = self.message(99)
         self.card.edit_media = AsyncMock()
@@ -391,6 +393,196 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         query.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
         source.reply_photo.assert_awaited_once()
         self.runner.assert_not_awaited()
+
+    async def test_all_navigation_actions_consume_info_before_answer_and_delete_after_render(self):
+        cases = [('next', None, None), ('prev', None, 'next'), ('pages', None, None),
+                 ('page', 1, 'pages'), ('group', 1, 'pages'), ('back', None, 'pages')]
+        for action, number, before in cases:
+            with self.subTest(action=action):
+                source, view = await self.setup_list(count=70)
+                if before:
+                    view = await lists.channel_vods_callback(self.update(callback(view, before), source), self.context)
+                await self.show(source, view, view.page*5)
+                record = self.record(view)
+                old_nonce = record.nonce
+                query = self.update(callback(view, action, number), source)
+                session = self.browser._sessions[view.session_id]
+                async def answer():
+                    self.assertEqual('', record.nonce)
+                    self.assertIsNone(session.info_card)
+                    self.card.delete.assert_not_awaited()
+                async def deleted():
+                    current = self.browser._view(session)
+                    self.assertEqual(build_list(current)[0], source.edit_text.await_args.args[0])
+                    self.assertFalse(lists._ui_lock(session).locked())
+                query.callback_query.answer.side_effect = answer
+                self.card.delete.side_effect = deleted
+                new_view = await lists.channel_vods_callback(query, self.context)
+                query.callback_query.answer.assert_awaited_once()
+                self.card.delete.assert_awaited_once()
+                self.assertIsNotNone(session.list_render)
+                self.assertEqual(build_list(new_view)[0], session.list_render[1])
+                for old_action in ('process', 'back'):
+                    stale = self.update(f'ui:vi:{view.session_id}:{old_nonce}:{old_action}', self.card)
+                    await info.info_callback(stale, self.context)
+                    stale.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+                source.reply_text.assert_not_awaited()
+        self.runner.assert_not_awaited()
+        self.metadata.assert_not_awaited()
+
+    async def test_grid_sequence_does_not_delete_same_card_again(self):
+        source, view = await self.setup_list(count=70)
+        await self.show(source, view)
+        for action, number in [('pages', None), ('group', 1), ('page', 12), ('pages', None), ('back', None)]:
+            view = await lists.channel_vods_callback(self.update(callback(view, action, number), source), self.context)
+        self.card.delete.assert_awaited_once()
+        self.assertEqual(12, view.page)
+        self.assertFalse(view.grid)
+        self.assertEqual(build_list(view)[0], source.edit_text.await_args.args[0])
+        source.reply_text.assert_not_awaited()
+
+    async def test_failed_navigation_cleanup_preserves_list_and_allows_selection(self):
+        source, view = await self.setup_list(count=6)
+        await self.show(source, view)
+        self.card.delete.side_effect = BadRequest('cannot delete')
+        stale = self.process_update(view)
+        view = await lists.channel_vods_callback(self.update(callback(view, 'next'), source), self.context)
+        await info.info_callback(stale, self.context)
+        stale.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+        self.assertEqual(1, view.page)
+        self.assertIsNone(self.record(view))
+        self.ready.return_value = self.ready_result()
+        await lists.channel_vods_callback(self.update(callback(view, 'select', 5), source), self.context)
+        self.assertEqual('Готовый HTML доступен.', source.edit_text.await_args.args[0])
+        source.reply_text.assert_not_awaited()
+
+    async def test_slow_navigation_cleanup_allows_new_info_and_never_clears_or_edits_it(self):
+        source, view = await self.setup_list(count=6)
+        await self.show(source, view)
+        old_card = self.card
+        entered, release = asyncio.Event(), asyncio.Event()
+        async def slow_delete():
+            entered.set()
+            await release.wait()
+        old_card.delete.side_effect = slow_delete
+        data = callback(view, 'next')
+        navigating = self.task(lists.channel_vods_callback(self.update(data, source), self.context))
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            session = self.browser._sessions[view.session_id]
+            latest = self.browser._view(session)
+            self.assertFalse(lists._ui_lock(session).locked())
+            self.assertEqual(1, latest.page)
+            self.assertEqual(build_list(latest)[0], source.edit_text.await_args.args[0])
+            repeated = self.update(data, source)
+            await asyncio.wait_for(lists.channel_vods_callback(repeated, self.context), 1)
+            repeated.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+            self.card = self.message(199)
+            self.card.edit_media, self.card.edit_reply_markup = AsyncMock(), AsyncMock()
+            source.reply_photo.return_value = self.card
+            await asyncio.wait_for(asyncio.gather(self.show(source, latest, 5), self.show(source, latest, 5)), 1)
+            current_card = self.record(view)
+            self.assertEqual(2, source.reply_photo.await_count)  # Old + exactly one new.
+            list_edits = source.edit_text.await_count
+            release.set()
+            await asyncio.wait_for(navigating, 1)
+            self.assertIs(current_card, self.record(view))
+            self.assertTrue(current_card.nonce)
+            self.assertEqual(list_edits, source.edit_text.await_count)
+            self.card.delete.assert_not_awaited()
+            self.card.edit_media.assert_not_awaited()
+            # The new info card can still select via the shared preparation path.
+            self.ready.return_value = self.ready_result()
+            await info.info_callback(self.process_update(latest), self.context)
+            self.assertEqual('Готовый HTML доступен.', source.edit_text.await_args.args[0])
+            source.reply_text.assert_not_awaited()
+        finally:
+            release.set()
+            await asyncio.wait_for(navigating, 1)
+
+    async def test_channel_replacement_during_navigation_cleanup_preserves_new_list(self):
+        source, view = await self.setup_list(count=6)
+        await self.show(source, view)
+        entered, release = asyncio.Event(), asyncio.Event()
+        async def slow_delete():
+            entered.set()
+            await release.wait()
+        self.card.delete.side_effect = slow_delete
+        navigating = self.task(lists.channel_vods_callback(self.update(callback(view, 'next'), source), self.context))
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            new_source, latest = await asyncio.wait_for(self.open(21, 'second'), 1)
+            old_edits, new_edits = source.edit_text.await_count, new_source.edit_text.await_count
+            self.assertTrue(source.edit_text.await_args.args[0].endswith(lists.STALE_LIST))
+            release.set()
+            await asyncio.wait_for(navigating, 1)
+            self.assertTrue(self.browser.is_current(latest))
+            self.assertEqual(old_edits, source.edit_text.await_count)
+            self.assertEqual(new_edits, new_source.edit_text.await_count)
+            self.card.delete.assert_awaited_once()
+        finally:
+            release.set()
+            await asyncio.wait_for(navigating, 1)
+
+    async def test_navigation_cleanup_timeout_and_cancel_leave_rendered_list_usable(self):
+        for cancel in (False, True):
+            with self.subTest(cancel=cancel):
+                source, view = await self.setup_list(count=6)
+                await self.show(source, view)
+                entered, stopped = asyncio.Event(), asyncio.Event()
+                async def stuck():
+                    entered.set()
+                    try:
+                        await asyncio.Event().wait()
+                    finally:
+                        stopped.set()
+                self.card.delete.side_effect = stuck
+                real_timeout = asyncio.timeout
+                with patch.object(info.asyncio, 'timeout', side_effect=lambda seconds: real_timeout(min(seconds, 0.05))):
+                    navigating = self.task(lists.channel_vods_callback(self.update(callback(view, 'next'), source), self.context))
+                    await asyncio.wait_for(entered.wait(), 1)
+                    if cancel:
+                        navigating.cancel()
+                        with self.assertRaises(asyncio.CancelledError):
+                            await asyncio.wait_for(navigating, 1)
+                    else:
+                        await asyncio.wait_for(navigating, 1)
+                self.assertTrue(stopped.is_set())
+                session = self.browser._sessions[view.session_id]
+                self.assertIsNone(session.info_card)
+                self.assertEqual(build_list(self.browser._view(session))[0], source.edit_text.await_args.args[0])
+                latest = await asyncio.wait_for(lists.channel_vods_callback(self.update(callback(self.browser._view(session), 'prev'), source), self.context), 1)
+                self.assertEqual(0, latest.page)
+                source.reply_text.assert_not_awaited()
+
+    async def test_navigation_render_failure_still_cleans_inert_card_and_unlocks(self):
+        source, view = await self.setup_list(count=6)
+        await self.show(source, view)
+        stale = self.process_update(view)
+        source.edit_text.side_effect = BadRequest('cannot edit')
+        with self.assertRaises(BadRequest):
+            await lists.channel_vods_callback(self.update(callback(view, 'next'), source), self.context)
+        self.card.delete.assert_awaited_once()
+        session = self.browser._sessions[view.session_id]
+        self.assertFalse(lists._ui_lock(session).locked())
+        await info.info_callback(stale, self.context)
+        stale.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+        source.edit_text.side_effect = None
+        await lists.channel_vods_callback(self.update(callback(self.browser._view(session), 'prev'), source), self.context)
+        self.assertEqual(0, self.browser._view(session).page)
+        self.runner.assert_not_awaited()
+
+    async def test_invalid_or_foreign_navigation_does_not_consume_info(self):
+        source, view = await self.setup_list(count=6)
+        await self.show(source, view)
+        record = self.record(view)
+        for data, owner in [(callback(view, 'page', 999), 7), (callback(view, 'next'), 8)]:
+            query = self.update(data, source, owner=owner)
+            await lists.channel_vods_callback(query, self.context)
+            query.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+        self.assertIs(record, self.record(view))
+        self.assertTrue(record.nonce)
+        self.card.delete.assert_not_awaited()
 
     async def test_concurrent_info_clicks_create_one_card(self):
         source, view = await self.setup_list()

@@ -131,31 +131,41 @@ async def _list_callback(update, context, browser):
             or (session.chat_id, session.message_id) != (message.chat_id, message.message_id)):
         await query.answer(STALE_BUTTON)
         return
-    async with _ui_lock(session):
-        if not browser._live(session) or str(session.revision) != parts[3]:
-            await query.answer(STALE_BUTTON)
-            return
-        if is_busy(context):
-            await query.answer()
-            return
-        result = await browser.handle_callback(context.application.bot_data['aiohttp'], update.effective_user.id,
-                                               query.data, message.chat_id, message.message_id)
-        if not isinstance(result, (ListView, VodSelection, VodInformation)):
-            await query.answer(STALE_BUTTON)
-            return
-        view = result.view if isinstance(result, (VodSelection, VodInformation)) else result
-        if isinstance(result, VodInformation):
-            from .handlers_vod_info import show_info
-            await query.answer()
-            await show_info(browser, session, message, result)
-            return result
-        if isinstance(result, VodSelection):
-            card = _consume_selection(session)
-        else:
-            await query.answer()
-            if browser.is_current(view):
-                context.user_data.pop('chat_choice', None)
-                await _render_list(message, view, session)
+    navigation_card = None
+    try:
+        async with _ui_lock(session):
+            if not browser._live(session) or str(session.revision) != parts[3]:
+                await query.answer(STALE_BUTTON)
+                return
+            if is_busy(context):
+                await query.answer()
+                return
+            result = await browser.handle_callback(context.application.bot_data['aiohttp'], update.effective_user.id,
+                                                   query.data, message.chat_id, message.message_id)
+            if not isinstance(result, (ListView, VodSelection, VodInformation)):
+                await query.answer(STALE_BUTTON)
+                return
+            view = result.view if isinstance(result, (VodSelection, VodInformation)) else result
+            if isinstance(result, VodInformation):
+                from .handlers_vod_info import show_info
+                await query.answer()
+                await show_info(browser, session, message, result)
+                return result
+            if isinstance(result, VodSelection):
+                card = _consume_selection(session)
+            else:
+                from .handlers_vod_info import take_info
+                navigation_card = take_info(session)
+                await query.answer()
+                if browser.is_current(view):
+                    context.user_data.pop('chat_choice', None)
+                    await _render_list(message, view, session)
+    finally:
+        # Navigation renders first; only this captured card is deleted, outside
+        # the UI lock. Failures/cancellation cannot revive its consumed actions.
+        if navigation_card is not None:
+            from .handlers_vod_info import close_info
+            await close_info(session, navigation_card)
     if isinstance(result, VodSelection):
         await _prepare_selection(query, message, context, browser, session, result, card)
     return result
