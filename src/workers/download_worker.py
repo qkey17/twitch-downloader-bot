@@ -8,7 +8,7 @@ from typing import Tuple, List, Dict, Optional
 
 from src.config import OUT_DIR, SPOOL_DIR, SPOOL_BATCH_MESSAGES, SPOOL_BATCH_BYTES
 from src.chat_spool import ChatSpool, encode_row
-from src.resource_usage import log_resources
+from src.resource_usage import log_resources, stage
 from .worker_io import run_blocking
 from src.twitch_api import fetch_vod_meta, gql_fetch_comments, get_client_id
 from src.ui.ui import fmt_hhmmss
@@ -47,13 +47,14 @@ async def download_and_send(
         client_id = get_client_id()
 
         raise_if_cancelled(context, operation_id)
-        meta = await fetch_vod_meta(
-            session,
-            client_id,
-            vod_id,
-            cancel_check=lambda: is_cancelled(context, operation_id),
-        )
-        raise_if_cancelled(context, operation_id)
+        with stage('vod_metadata'):
+            meta = await fetch_vod_meta(
+                session,
+                client_id,
+                vod_id,
+                cancel_check=lambda: is_cancelled(context, operation_id),
+            )
+            raise_if_cancelled(context, operation_id)
 
         meta_dict = {
             "title": meta.title,
@@ -81,67 +82,68 @@ async def download_and_send(
         await progress(0, 0, done=False)
         raise_if_cancelled(context, operation_id)
 
-        comment_iter = gql_fetch_comments(
-            session,
-            client_id,
-            vod_id,
-            cancel_check=lambda: is_cancelled(context, operation_id),
-        )
+        with stage('messages_spool'):
+            comment_iter = gql_fetch_comments(
+                session,
+                client_id,
+                vod_id,
+                cancel_check=lambda: is_cancelled(context, operation_id),
+            )
 
-        try:
-            raise_if_cancelled(context, operation_id)
-            first = await asyncio.wait_for(comment_iter.__anext__(), timeout=10)
-            raise_if_cancelled(context, operation_id)
-        except StopAsyncIteration:
-            raise RuntimeError("CHAT_EMPTY")
-
-        spool = ChatSpool(SPOOL_DIR)
-        await run_blocking(spool.open, on_cancel=stop.set)
-        batch = []
-        batch_bytes = 0
-        received = 0
-
-        async def flush():
-            nonlocal batch, batch_bytes, spool_bytes
-            if not batch:
-                return
-            pending_batch, batch = batch, []
-            batch_bytes = 0
-            await run_blocking(spool.append_batch, pending_batch, cancel_check, on_cancel=stop.set)
-            spool_bytes = spool.size_bytes()
-            if spool.messages % 5000 == 0:
-                log_resources("chat_spooled", messages=spool.messages, spool_bytes=spool_bytes)
-
-        async def save(comment):
-            nonlocal batch_bytes, received, last_progress_time
-            raise_if_cancelled(context, operation_id)
-            offset, created_at, user, text, fragments, color, badges = comment
-            t = fmt_hhmmss(int(offset)) if isinstance(offset, (int, float)) else "00:00:00"
-            row = {"t": t, "user": user, "text": text, "fragments": fragments,
-                   "color": color, "badges": badges}
-            encoded = encode_row(row)
-            size = len(encoded[1].encode("utf-8"))
-            if batch and batch_bytes + size > SPOOL_BATCH_BYTES:
-                await flush()
-            batch.append(encoded)
-            batch_bytes += size
-            received += 1
-            now = time.monotonic()
-            if (len(batch) >= SPOOL_BATCH_MESSAGES or batch_bytes >= SPOOL_BATCH_BYTES
-                    or received % progress_every_n == 0 or now - last_progress_time >= progress_interval_s):
-                await flush()
-            if received % progress_every_n == 0 or now - last_progress_time >= progress_interval_s:
-                last_progress_time = now
-                await progress(spool.messages, spool.unique_users, done=False)
+            try:
                 raise_if_cancelled(context, operation_id)
+                first = await asyncio.wait_for(comment_iter.__anext__(), timeout=10)
+                raise_if_cancelled(context, operation_id)
+            except StopAsyncIteration:
+                raise RuntimeError("CHAT_EMPTY")
 
-        await save(first)
-        async for comment in comment_iter:
-            await save(comment)
-        await flush()
-        raise_if_cancelled(context, operation_id)
-        await progress(spool.messages, spool.unique_users, done=True)
-        raise_if_cancelled(context, operation_id)
+            spool = ChatSpool(SPOOL_DIR)
+            await run_blocking(spool.open, on_cancel=stop.set)
+            batch = []
+            batch_bytes = 0
+            received = 0
+
+            async def flush():
+                nonlocal batch, batch_bytes, spool_bytes
+                if not batch:
+                    return
+                pending_batch, batch = batch, []
+                batch_bytes = 0
+                await run_blocking(spool.append_batch, pending_batch, cancel_check, on_cancel=stop.set)
+                spool_bytes = spool.size_bytes()
+                if spool.messages % 5000 == 0:
+                    log_resources("chat_spooled", messages=spool.messages, spool_bytes=spool_bytes)
+
+            async def save(comment):
+                nonlocal batch_bytes, received, last_progress_time
+                raise_if_cancelled(context, operation_id)
+                offset, created_at, user, text, fragments, color, badges = comment
+                t = fmt_hhmmss(int(offset)) if isinstance(offset, (int, float)) else "00:00:00"
+                row = {"t": t, "user": user, "text": text, "fragments": fragments,
+                       "color": color, "badges": badges}
+                encoded = encode_row(row)
+                size = len(encoded[1].encode("utf-8"))
+                if batch and batch_bytes + size > SPOOL_BATCH_BYTES:
+                    await flush()
+                batch.append(encoded)
+                batch_bytes += size
+                received += 1
+                now = time.monotonic()
+                if (len(batch) >= SPOOL_BATCH_MESSAGES or batch_bytes >= SPOOL_BATCH_BYTES
+                        or received % progress_every_n == 0 or now - last_progress_time >= progress_interval_s):
+                    await flush()
+                if received % progress_every_n == 0 or now - last_progress_time >= progress_interval_s:
+                    last_progress_time = now
+                    await progress(spool.messages, spool.unique_users, done=False)
+                    raise_if_cancelled(context, operation_id)
+
+            await save(first)
+            async for comment in comment_iter:
+                await save(comment)
+            await flush()
+            raise_if_cancelled(context, operation_id)
+            await progress(spool.messages, spool.unique_users, done=True)
+            raise_if_cancelled(context, operation_id)
 
         sent_files: List[Dict[str, str]] = []
         html_result_ref: Optional[str] = None

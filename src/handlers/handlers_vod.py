@@ -1,5 +1,7 @@
 # handlers_vod.py
 import logging
+import asyncio
+from src.resource_usage import OperationTelemetry, observe_operation, record_failure, stage
 import json
 import re
 import secrets
@@ -414,6 +416,8 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
     if operation_id is None:
         await q.message.reply_text("Сейчас обрабатывается чат VOD. Повторите попытку позже.")
         return False
+    telemetry = OperationTelemetry(operation_id)
+    telemetry.begin()
     if regenerate:
         context.user_data.pop("vod_result_choice",None)
     try:
@@ -423,11 +427,13 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
                 [InlineKeyboardButton(CANCEL, callback_data=CB_PENDING_CANCEL)]
             ])
         )
-    except BaseException:
+    except BaseException as exc:
+        telemetry.fail(exc)
         try:
             await _restore_start_prompt(q.message,context,vod_id,regenerate, modern=modern)
         finally:
             finish_download(context, operation_id)
+            telemetry.finish()
         raise
 
     runner_coro = _runner(
@@ -439,21 +445,30 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
         fmt=fmt,
         user_id=update.effective_user.id,
         operation_id=operation_id,
+        _telemetry=telemetry,
     )
     try:
         task = context.application.create_task(runner_coro)
-    except BaseException:
+    except BaseException as exc:
+        telemetry.fail(exc)
         runner_coro.close()
         try:
             await _restore_start_prompt(q.message,context,vod_id,regenerate, modern=modern)
         finally:
             finish_download(context, operation_id)
+            telemetry.finish()
         raise
 
     def release_finished_task(_task):
         # Also cover cancellation before _runner gets its first turn.
         runner_coro.close()
         finish_download(context, operation_id)
+        if not telemetry.finished:
+            if _task.cancelled():
+                telemetry.fail(asyncio.CancelledError())
+            elif _task.exception() is not None:
+                telemetry.fail(_task.exception())
+            telemetry.finish()
 
     task.add_done_callback(release_finished_task)
     clear_pending(context)
@@ -477,6 +492,7 @@ async def _restore_start_prompt(message,context,vod_id,regenerate, *, modern=Fal
     await _restore_format_prompt(message)
 
 
+@observe_operation
 async def _runner(
     context,
     chat_id: int,
@@ -490,7 +506,8 @@ async def _runner(
     publication = None
     try:
         publication = results.Publication(vod_id,fmt,mode=HTML_PUBLISH_MODE)
-        await run_blocking(publication.reserve)
+        with stage('result_reserve'):
+            await run_blocking(publication.reserve)
         meta, stats, files, html_result_ref = await download_and_send(
             context=context,
             chat_id=chat_id,
@@ -508,9 +525,10 @@ async def _runner(
         publication.meta,publication.stats = meta,stats
         if html_result_ref != publication.ref:
             raise ValueError("Unexpected HTML generation reference")
-        cache_id = await run_blocking(publication.complete)
-        if config.HISTORY_ENABLED:
-            db.add_user_history(user_id, cache_id)
+        with stage('result_commit'):
+            cache_id = await run_blocking(publication.complete)
+            if config.HISTORY_ENABLED:
+                db.add_user_history(user_id, cache_id)
 
         item = _make_item(meta, stats, vod_url, fmt)
         html_url = html_result_ref
@@ -524,6 +542,7 @@ async def _runner(
         )
 
     except RuntimeError as e:
+        record_failure(e)
         await _record_generation_failure(publication,e)
         if str(e) == "CHAT_EMPTY":
             try:
@@ -551,6 +570,7 @@ async def _runner(
         raise
 
     except Exception as e:
+        record_failure(e)
         await _record_generation_failure(publication,e)
         logging.exception("Download failed")
         if isinstance(e, TwitchAPIError):
