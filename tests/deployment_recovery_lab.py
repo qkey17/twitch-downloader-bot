@@ -19,6 +19,15 @@ SOURCE = Path('/opt/recovery-source')
 UNIT = 'tdb-forward-recovery-lab.service'
 
 
+class LabError(RuntimeError):
+    pass
+
+
+def demand(condition, message):
+    if not condition:
+        raise LabError(message)
+
+
 def run(args, *, user=False, check=True, env=None, cwd=None, timeout=30):
     if user:
         args=['/usr/sbin/runuser','-u','ubuntu','--',*args]
@@ -29,23 +38,23 @@ def run(args, *, user=False, check=True, env=None, cwd=None, timeout=30):
 
 
 def isolated():
-    assert os.geteuid()==0 and Path('/proc/1/comm').read_text().strip()=='systemd'
-    assert Path('/sys/class/dmi/id/sys_vendor').read_text().strip()=='TDB-Harness'
-    assert Path('/sys/class/dmi/id/product_name').read_text().strip()=='TDB-Isolated-VM'
-    assert sorted(p.name for p in Path('/sys/class/net').iterdir())==['lo']
-    assert os.readlink('/proc/self/ns/pid')==os.readlink('/proc/1/ns/pid')
-    assert not Path('/.dockerenv').exists() and not Path('/run/systemd/container').exists()
+    demand(os.geteuid()==0 and Path('/proc/1/comm').read_text().strip()=='systemd', "lab condition failed at original line 32")
+    demand(Path('/sys/class/dmi/id/sys_vendor').read_text().strip()=='TDB-Harness', "lab condition failed at original line 33")
+    demand(Path('/sys/class/dmi/id/product_name').read_text().strip()=='TDB-Isolated-VM', "lab condition failed at original line 34")
+    demand(sorted(p.name for p in Path('/sys/class/net').iterdir())==['lo'], "lab condition failed at original line 35")
+    demand(os.readlink('/proc/self/ns/pid')==os.readlink('/proc/1/ns/pid'), "lab condition failed at original line 36")
+    demand(not Path('/.dockerenv').exists() and not Path('/run/systemd/container').exists(), "lab condition failed at original line 37")
     mounts=[l.split() for l in Path('/proc/self/mountinfo').read_text().splitlines()]
-    assert not any(m[m.index('-')+1] in ('9p','virtiofs','nfs','nfs4','cifs','fuse.sshfs') for m in mounts)
+    demand(not any(m[m.index('-')+1] in ('9p','virtiofs','nfs','nfs4','cifs','fuse.sshfs') for m in mounts), "lab condition failed at original line 39")
     root=next(m for m in mounts if m[4]=='/')
     dev=Path('/dev/vda1').stat()
-    assert stat.S_ISBLK(dev.st_mode) and root[2]==f'{os.major(dev.st_rdev)}:{os.minor(dev.st_rdev)}'
+    demand(stat.S_ISBLK(dev.st_mode) and root[2]==f'{os.major(dev.st_rdev)}:{os.minor(dev.st_rdev)}', "lab condition failed at original line 42")
     with socket.socket(socket.AF_UNIX) as peer:
         peer.connect('/run/systemd/private')
         pid,uid,_=struct.unpack('3i',peer.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))
-        assert (pid,uid)==(1,0)
-    assert not any(Path(p).exists() for p in ('/home/ubuntu/twitch-downloader-bot','/home/ubuntu/tdb-admin','/var/www/tdb'))
-    assert not ROOT.exists()
+        demand((pid,uid)==(1,0), "lab condition failed at original line 46")
+    demand(not any(Path(p).exists() for p in ('/home/ubuntu/twitch-downloader-bot','/home/ubuntu/tdb-admin','/var/www/tdb')), "lab condition failed at original line 47")
+    demand(not ROOT.exists(), "lab condition failed at original line 48")
 
 
 def properties():
@@ -109,7 +118,7 @@ def main():
             'https://github.com/qkey17/twitch-downloader-bot.git':str(remote),
         }
         for old,new in bindings.items():
-            assert old in code;code=code.replace(old,new)
+            demand(old in code, "lab condition failed at original line 112");code=code.replace(old,new)
         helper.write_text(code);helper.chmod(0o755)
         report['bindings']=bindings;report['bound_helper_sha256']=hashlib.sha256(helper.read_bytes()).hexdigest()
         unit.write_text(f'''[Unit]
@@ -136,27 +145,27 @@ StandardError=journal
         run(['/usr/bin/systemctl','start',UNIT])
         end=time.monotonic()+40
         while run([str(helper),'ready'],check=False).returncode:
-            assert time.monotonic()<end;time.sleep(.5)
+            demand(time.monotonic()<end, "lab condition failed at original line 139");time.sleep(.5)
         original=properties()
         run(['/usr/bin/systemctl','stop',UNIT])
         git('merge','--ff-only',broken,cwd=project)
         run(['/usr/bin/systemctl','start',UNIT],check=False)
         end=time.monotonic()+30
         while properties()['ActiveState']!='failed':
-            assert time.monotonic()<end;time.sleep(.2)
-        assert helper_call('check',check=False).returncode!=0
+            demand(time.monotonic()<end, "lab condition failed at original line 146");time.sleep(.2)
+        demand(helper_call('check',check=False).returncode!=0, "lab condition failed at original line 147")
         for initial,current,target in (('failed',broken,fixed),('inactive',fixed,again)):
             if initial=='inactive':run(['/usr/bin/systemctl','stop',UNIT])
-            before=properties();assert before['ActiveState']==initial and before['MainPID']=='0' and not before['Job']
+            before=properties();demand(before['ActiveState']==initial and before['MainPID']=='0' and not before['Job'], "lab condition failed at original line 150")
             pre=helper_call(f'check-recovery {current} {target}')
-            assert pre.stdout.strip()==f'RECOVERY_CHECK_OK {current} {target}'
-            assert git('rev-parse','HEAD',cwd=project)==current
+            demand(pre.stdout.strip()==f'RECOVERY_CHECK_OK {current} {target}', "lab condition failed at original line 152")
+            demand(git('rev-parse','HEAD',cwd=project)==current, "lab condition failed at original line 153")
             result=helper_call(f'recover {current} {target}')
-            assert result.stdout.strip()=='DEPLOYED '+target
-            after=properties();assert after['ActiveState']=='active' and after['SubState']=='running'
-            assert after['MainPID']!='0' and after['InvocationID']!=before['InvocationID'] and after['NRestarts']=='0'
-            assert git('rev-parse','HEAD',cwd=project)==target
-            assert all(hashlib.sha256(p.read_bytes()).hexdigest()==hashes[p.name] for p in fixtures)
+            demand(result.stdout.strip()=='DEPLOYED '+target, "lab condition failed at original line 155")
+            after=properties();demand(after['ActiveState']=='active' and after['SubState']=='running', "lab condition failed at original line 156")
+            demand(after['MainPID']!='0' and after['InvocationID']!=before['InvocationID'] and after['NRestarts']=='0', "lab condition failed at original line 157")
+            demand(git('rev-parse','HEAD',cwd=project)==target, "lab condition failed at original line 158")
+            demand(all(hashlib.sha256(p.read_bytes()).hexdigest()==hashes[p.name] for p in fixtures), "lab condition failed at original line 159")
             report['cases'].append({'initial':initial,'before':before,'after':after,'sha':target,'stdout':result.stdout,'stderr':result.stderr})
         report.update(status='PASS',original=original,versions=versions,data_sha256=hashes)
     except Exception as e:
@@ -167,10 +176,15 @@ StandardError=journal
         report['final_state']=properties()
         for p in (unit,sudoers):p.unlink(missing_ok=True)
         run(['/usr/bin/systemctl','daemon-reload'])
-        report['cleanup']=report['final_state']['MainPID']=='0' and report['final_state']['ActiveState']=='inactive'
+        report['cleanup']=(report['final_state']['MainPID']=='0' and report['final_state']['ActiveState']=='inactive'
+                           and not report['final_state']['Job'] and not unit.exists() and not sudoers.exists())
+        if not report['cleanup']:
+            report.update(status='FAIL', error='lab cleanup incomplete')
         (ROOT/'report.json').write_text(json.dumps(report,indent=2))
     return report
 
 
 if __name__=='__main__':
-    print(json.dumps(main(),indent=2))
+    result = main()
+    print(json.dumps(result,indent=2))
+    raise SystemExit(0 if result['status']=='PASS' and result['cleanup'] else 1)
