@@ -47,6 +47,35 @@ Telegram's unchanged-message response does not create a duplicate fallback card.
 No production deployment or infrastructure changes accompany this PR. Real
 Telegram/Twitch end-to-end interaction still requires a separate smoke test.
 
+## Replaced lists
+
+Accepted replacement of an owner session invalidates the previous token as
+before. The list adapter now marks the previous message with
+`⚠️ Список устарел. Отправьте имя канала повторно.` and removes its keyboard,
+but only if it still owns a confirmed list render. It retains the HTML text
+that its own renderer successfully sent, never `Message.text` from a callback
+snapshot. The record and an asyncio lock live on the existing bounded/expiring
+session; there is no global message registry or background notification task.
+
+Navigation renders and replacement use that session's lock. The lock is not
+global; other users remain independent. Selection clears the list render before
+any metadata/HTML/progress await, so those later states are never overwritten
+by replacement. Returning to the list establishes a fresh confirmed render.
+Queued callbacks recheck owner, chat/message, session and revision under the
+lock. Removed/restarted/expired sessions get exactly one callback answer:
+`⚠️ Этот список устарел. Запросите канал повторно.` No warning message is sent.
+
+An invalid/rejected request that leaves the previous session live does not
+mark it stale. Once the browser has accepted replacement, its existing rules
+invalidate the old token even if Twitch loading subsequently fails. Warning
+editing is best effort, has a ten-second bound, and is attempted at most once;
+an unavailable/deleted old message does not prevent rendering the new list.
+Expiry, restart or interrupted loading can leave an old keyboard visible; the
+safe callback answer handles these cases without guessing message contents.
+The coordination covers only list-owned messages, not arbitrary external edits
+or a universal Telegram synchronization mechanism. Chat processing, task
+concurrency, Twitch fetching/cache limits and busy notices remain unchanged.
+
 ## Navigation labels and deferred busy notifications
 
 A single UI page has only VOD buttons. Multi-page lists show
