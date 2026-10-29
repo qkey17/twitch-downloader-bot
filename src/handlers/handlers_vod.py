@@ -8,6 +8,7 @@ from src.twitch_api import fetch_vod_meta, get_client_id
 from src.twitch_api.client import TwitchAPIError
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from src.database import database as db
@@ -126,6 +127,9 @@ async def _edit_progress_message_with_card(context, chat_id: int, message_id: in
             parse_mode="HTML",
             reply_markup=final_kb,
         )
+    except BadRequest as exc:
+        if 'message is not modified' not in str(exc).lower():
+            await context.bot.send_message(chat_id=chat_id, text=text, parse_mode='HTML', reply_markup=final_kb)
     except Exception:
         await context.bot.send_message(
             chat_id=chat_id,

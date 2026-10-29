@@ -32,10 +32,17 @@ request generation. No private data is sent to other users' sessions.
 `ChannelBrowser`, `build_channel_vod_card`, the legacy default mode of
 `prepare_vod_choice`, the format chooser text and functions remain for reference
 and compatibility regression tests. Production routing uses `VodListBrowser`
-and the HTML-only entry. Old format/result keyboards are rejected; they cannot
+and the HTML-only entry. Old format/regeneration keyboards are rejected; they cannot
 restore the retired confirmation screen. Legacy tests including lower-bound
 `+` tests exercise only this preserved, inactive implementation; new active UI
 tests assert exact counts without `+`.
+
+Old `ui:result:open:<id>` buttons still resolve the current ready HTML and record
+history for the requesting user. Missing results report unavailability without
+preparing a new download. Both compatible opening and the active Open HTML
+action edit the existing card using the shared result renderer and its local/
+public URL restrictions. Repeated active opening is consumed before awaiting;
+Telegram's unchanged-message response does not create a duplicate fallback card.
 
 No production deployment or infrastructure changes accompany this PR. Real
 Telegram/Twitch end-to-end interaction still requires a separate smoke test.

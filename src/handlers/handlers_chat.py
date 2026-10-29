@@ -1,5 +1,6 @@
 """Active HTML-only entry; shares metadata checks and download lifecycle."""
 import secrets
+import re
 import time
 from types import SimpleNamespace
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -59,16 +60,33 @@ async def chat_callback(update, context):
             or not choice['current']() or is_busy(context) or context.user_data.get('vod_link_lookup')):
         return
     if parts[2] == 'open':
-        ready = vod.results.get_ready_result(choice['vod_id'])
-        if ready:
-            if vod.config.HISTORY_ENABLED and ready['cache_id'] is not None:
-                vod.db.add_user_history(update.effective_user.id, ready['cache_id'])
-            item = vod._make_item(ready['meta'], ready['stats'], f"https://www.twitch.tv/videos/{choice['vod_id']}", 'html_online')
-            await vod._send_card_with_buttons(context, q.message.chat_id, item, ready['html_ref'])
-        else:
-            await q.message.edit_text('Готовый HTML недоступен. Выберите VOD заново.')
+        if choice.get('opened'):
+            return
+        choice['opened'] = True  # Consume before edits, including fallback awaits.
+        await show_ready(q.message, context, update.effective_user.id, choice['vod_id'])
         return
     context.user_data.pop('chat_choice', None)  # Consume before the first await.
     started = await vod._start_download(update, context, choice['vod_id'], regenerate=True, modern=True)
     if started and choice.get('on_start'):
         choice['on_start']()
+
+
+async def show_ready(message, context, user_id, vod_id):
+    """Resolve the current usable generation using existing access/history rules."""
+    ready = vod.results.get_ready_result(vod_id)
+    if not ready:
+        await message.edit_text('Готовый HTML недоступен. Выберите VOD заново.')
+        return
+    if vod.config.HISTORY_ENABLED and ready['cache_id'] is not None:
+        vod.db.add_user_history(user_id, ready['cache_id'])
+    item = vod._make_item(ready['meta'], ready['stats'], f'https://www.twitch.tv/videos/{vod_id}', 'html_online')
+    await vod._edit_progress_message_with_card(context, message.chat_id, message.message_id, item, ready['html_ref'])
+
+
+async def legacy_open_callback(update, context):
+    """Compatibility only: never prepare a missing result or regenerate it."""
+    q = update.callback_query
+    await q.answer()
+    match = re.fullmatch(r'ui:result:open:([1-9][0-9]{0,19})', q.data or '')
+    if match and q.message:
+        await show_ready(q.message, context, update.effective_user.id, match[1])

@@ -3,6 +3,7 @@ import asyncio
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
+from telegram.error import BadRequest
 
 import test_channel_vods as cards
 import test_channel_selection as selection
@@ -172,7 +173,10 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         await chat.chat_callback(self.update(regen, prompt, owner=8), self.context)
         self.runner.assert_not_awaited()
         await chat.chat_callback(self.update(open_data, prompt), self.context)
-        self.context.bot.send_message.assert_awaited_once()
+        self.context.bot.edit_message_text.assert_awaited_once()
+        self.context.bot.send_message.assert_not_awaited()
+        await chat.chat_callback(self.update(open_data, prompt), self.context)
+        self.context.bot.edit_message_text.assert_awaited_once()
         await chat.chat_callback(self.update(regen, prompt), self.context)
         await chat.chat_callback(self.update(regen, prompt), self.context)
         await asyncio.gather(*self.tasks)
@@ -196,6 +200,72 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         await chat.chat_callback(self.update(regen, message), self.context)
         self.runner.assert_not_awaited()
         message.reply_text.assert_not_awaited()
+
+    async def test_legacy_open_uses_ready_generation_and_history_without_format(self):
+        self.ready.return_value = self.ready_result()
+        with patch.object(chat.vod.config, 'HISTORY_ENABLED', True), patch.object(chat.vod.db, 'add_user_history') as history:
+            await chat.legacy_open_callback(self.update('ui:result:open:123456789'), self.context)
+            history.assert_called_once_with(7, 1)
+        options = self.context.bot.edit_message_text.await_args.kwargs
+        urls = [b.url for row in options['reply_markup'].inline_keyboard for b in row]
+        self.assertEqual([self.ready_result()['html_ref'], 'https://www.twitch.tv/videos/123456789'], urls)
+        self.assertEqual((10, 20), (options['chat_id'], options['message_id']))
+        self.context.bot.send_message.assert_not_awaited()
+        self.metadata.assert_not_awaited()
+        self.runner.assert_not_awaited()
+        self.assertNotIn('vod_pending', self.context.user_data)
+
+    async def test_legacy_missing_and_regen_never_restore_format(self):
+        message = self.message()
+        await chat.legacy_open_callback(self.update('ui:result:open:123456789', message), self.context)
+        self.assertIn('недоступен', message.edit_text.await_args.args[0])
+        self.assertNotIn('reply_markup', message.edit_text.await_args.kwargs)
+        self.ready.reset_mock()
+        await chat.legacy_open_callback(self.update('ui:result:regen:123456789:0123456789abcdef', message), self.context)
+        self.ready.assert_not_called()
+        self.metadata.assert_not_awaited()
+        self.runner.assert_not_awaited()
+
+    async def test_list_open_edits_current_card_without_new_message(self):
+        self.browser = VodListBrowser()
+        self.app.bot_data[channel._STORE_KEY] = self.browser
+        view = await self.browser.open(self.http, 7, 'channel', 10, 20)
+        self.ready.return_value = self.ready_result()
+        message = self.message()
+        await channel.channel_vods_callback(self.update(callback(view, 'select', 0), message), self.context)
+        data = message.edit_text.await_args.kwargs['reply_markup'].inline_keyboard[0][0].callback_data
+        await chat.chat_callback(self.update(data, message), self.context)
+        self.context.bot.edit_message_text.assert_awaited_once()
+        self.assertEqual(20, self.context.bot.edit_message_text.await_args.kwargs['message_id'])
+        message.reply_text.assert_not_awaited()
+        self.context.bot.send_message.assert_not_awaited()
+
+    async def test_ready_disappeared_does_not_start_processing(self):
+        self.ready.return_value = self.ready_result()
+        message = self.message()
+        await chat.prepare_chat(message, self.context, 7, '123456789', edit=True)
+        data = message.edit_text.await_args.kwargs['reply_markup'].inline_keyboard[0][0].callback_data
+        self.ready.return_value = None
+        await chat.chat_callback(self.update(data, message), self.context)
+        self.assertIn('недоступен', message.edit_text.await_args.args[0])
+        self.runner.assert_not_awaited()
+        self.context.bot.send_message.assert_not_awaited()
+
+    async def test_edit_rejected_falls_back_but_unchanged_message_does_not(self):
+        self.ready.return_value = self.ready_result()
+        self.context.bot.edit_message_text.side_effect = BadRequest('Message is not modified')
+        await chat.legacy_open_callback(self.update('ui:result:open:123456789'), self.context)
+        self.context.bot.send_message.assert_not_awaited()
+        self.context.bot.edit_message_text.side_effect = BadRequest('Message cannot be edited')
+        await chat.legacy_open_callback(self.update('ui:result:open:123456789'), self.context)
+        self.context.bot.send_message.assert_awaited_once()
+
+    async def test_local_reference_is_not_exposed_as_telegram_url(self):
+        self.ready.return_value = self.ready_result() | {'html_ref': 'file:///private/chat.html'}
+        with patch.object(chat.vod, 'HTML_PUBLISH_MODE', 'local'):
+            await chat.legacy_open_callback(self.update('ui:result:open:123456789'), self.context)
+        buttons = self.context.bot.edit_message_text.await_args.kwargs['reply_markup'].inline_keyboard[0]
+        self.assertEqual(['https://www.twitch.tv/videos/123456789'], [b.url for b in buttons])
 
     async def test_channel_without_html_starts_in_existing_message(self):
         self.browser = VodListBrowser()
