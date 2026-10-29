@@ -1,0 +1,12 @@
+[Unit]
+Description=TDB daily backup at 15:00 UTC+5 (10:00 UTC)
+
+[Timer]
+OnCalendar=*-*-* 10:00:00 UTC
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=true
+Unit=tdb-daily-backup.service
+
+[Install]
+WantedBy=timers.target

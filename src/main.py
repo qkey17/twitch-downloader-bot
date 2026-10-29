@@ -23,6 +23,7 @@ from .handlers.handlers_input import (
     text_input, vod_command, channel_command, input_menu_callback, INPUT_CALLBACK_PATTERN,
 )
 from .html_cleanup import start_cleanup, stop_cleanup
+from .maintenance import start_maintenance, stop_maintenance
 from src.handlers.handlers import (
     start_command,
     help_command,
@@ -83,16 +84,23 @@ async def post_init(app: Application):
     if config.HISTORY_ENABLED:
         commands.append(BotCommand("history", "История"))
     await app.bot.set_my_commands(commands)
+    await start_maintenance(app)
 
 
 async def post_stop(app: Application):
-    await stop_cleanup(app)
+    try:
+        await stop_maintenance(app)
+    finally:
+        await stop_cleanup(app)
 
 
 async def post_shutdown(app: Application):
     # Also covers a failed startup, when PTB does not invoke post_stop.
     try:
-        await stop_cleanup(app)
+        try:
+            await stop_maintenance(app)
+        finally:
+            await stop_cleanup(app)
     finally:
         session: aiohttp.ClientSession | None = app.bot_data.get("aiohttp")
         if session:

@@ -1,0 +1,29 @@
+[Unit]
+Description=TDB coordinated daily snapshot and encrypted offsite backup
+Wants=network-online.target
+After=network-online.target tdb-backup-recover.service
+OnFailure=tdb-backup-recover.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/tdb-admin
+Environment=HOME=/home/ubuntu
+Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin
+UMask=0077
+ExecStart=/usr/bin/python3 -I -S -B /home/ubuntu/tdb-admin/daily_backup.py --config /home/ubuntu/tdb-admin/daily-backup.json run
+ExecStopPost=/usr/bin/python3 -I -S -B /home/ubuntu/tdb-admin/daily_backup.py --config /home/ubuntu/tdb-admin/daily-backup.json recover
+Restart=no
+TimeoutStartSec=5h
+TimeoutStopSec=30min
+KillMode=control-group
+KillSignal=SIGTERM
+SendSIGKILL=yes
+Nice=10
+CPUQuota=50%
+MemoryHigh=256M
+MemoryMax=384M
+OOMPolicy=stop
+StandardOutput=journal
+StandardError=journal
