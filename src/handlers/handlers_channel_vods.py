@@ -4,6 +4,9 @@ from telegram.error import BadRequest
 from telegram.ext import CallbackQueryHandler
 
 from src.channel_browser import CALLBACK_PREFIX, ChannelBrowser, VodSelection
+from src.vod_list import VodListBrowser, ListView, PREFIX, build_list, callback
+from .handlers_chat import prepare_chat
+from .handlers_state import is_busy
 from src.ui.ui_channel_vods import build_channel_vod_card
 from .handlers_vod import prepare_vod_choice
 
@@ -13,12 +16,12 @@ _STORE_KEY = 'channel_vod_browser'
 
 def get_channel_browser(application):
     if _STORE_KEY not in application.bot_data:
-        application.bot_data[_STORE_KEY] = ChannelBrowser()
+        application.bot_data[_STORE_KEY] = VodListBrowser()
     return application.bot_data[_STORE_KEY]
 
 
 async def _edit(message, view):
-    text, keyboard = build_channel_vod_card(view)
+    text, keyboard = build_list(view) if isinstance(view, ListView) else build_channel_vod_card(view)
     try:
         await message.edit_text(text, parse_mode='HTML', reply_markup=keyboard)
     except BadRequest as exc:
@@ -64,11 +67,26 @@ async def channel_vods_callback(update, context):
     if query.message is None:
         return None
     browser = get_channel_browser(context.application)
+    if isinstance(browser, VodListBrowser) and is_busy(context):
+        return None
     result = await browser.handle_callback(
         context.application.bot_data['aiohttp'], update.effective_user.id, query.data,
         query.message.chat_id, query.message.message_id,
     )
     view = result.view if isinstance(result, VodSelection) else result
+    if isinstance(browser, VodListBrowser):
+        if isinstance(result, VodSelection):
+            def current():
+                return browser.is_current(view)
+            def retire():
+                browser.retire(view)
+            await prepare_chat(query.message, context, update.effective_user.id, result.vod_id,
+                               is_current=current, edit=True, back=callback(view, 'back'), on_start=retire)
+        elif isinstance(view, ListView) and browser.is_current(view):
+            context.user_data.pop('chat_choice', None)
+            await _edit(query.message, view)
+        return result
+    # Legacy one-card adapter, retained for old internal callers.
     prepared = False
     if isinstance(result, VodSelection):
         def selection_is_current():
@@ -94,4 +112,4 @@ async def channel_vods_callback(update, context):
 
 def build_channel_vods_handler():
     """Keep metadata/Helix waits outside the sequential PTB update path."""
-    return CallbackQueryHandler(channel_vods_callback, pattern='^'+CALLBACK_PREFIX, block=False)
+    return CallbackQueryHandler(channel_vods_callback, pattern='^(?:'+CALLBACK_PREFIX+'|'+PREFIX+')', block=False)

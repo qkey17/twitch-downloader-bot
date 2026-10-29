@@ -239,8 +239,8 @@ async def vod_link_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await prepare_vod_choice(update.message, context, update.effective_user.id, vod_id)
 
 
-async def prepare_vod_choice(message, context, user_id, vod_id, *, is_current=None):
-    """Shared preparation only; format/regeneration confirmation starts the job.
+async def prepare_vod_choice(message, context, user_id, vod_id, *, is_current=None, immediate=False, back=None, on_start=None):
+    """Shared validation; active HTML-only callers opt into immediate processing.
 
     A guarded entry supplies an owner/session or input validity guard. Such inputs
     preserve an existing format dialog and decline uncached work while the
@@ -259,6 +259,10 @@ async def prepare_vod_choice(message, context, user_id, vod_id, *, is_current=No
     ready = results.get_ready_result(vod_id)
     if ready:
         clear_pending(context)
+        if immediate:
+            from .handlers_chat import offer_chat
+            await offer_chat(message, context, user_id, ready, current, back, on_start)
+            return 'ready'
         if config.HISTORY_ENABLED and ready['cache_id'] is not None:
             db.add_user_history(user_id,ready['cache_id'])
         await _offer_ready(message,context,ready)
@@ -296,6 +300,12 @@ async def prepare_vod_choice(message, context, user_id, vod_id, *, is_current=No
                 await message.reply_text('VOD не найден или недоступен.')
             return 'missing'
 
+        if immediate:
+            from types import SimpleNamespace
+            started = await _start_download(SimpleNamespace(callback_query=SimpleNamespace(message=message),
+                                                 effective_user=SimpleNamespace(id=user_id)), context, vod_id, modern=True)
+            return 'started' if started else 'busy'
+        # Legacy format chooser retained for old internal callers only.
         prompt = await message.reply_text(
             _FORMAT_PROMPT_TEXT,
             reply_markup=build_format_keyboard()
@@ -392,14 +402,14 @@ async def vod_format_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _start_download(update,context,vod_id)
 
 
-async def _start_download(update,context,vod_id,regenerate=False):
+async def _start_download(update,context,vod_id,regenerate=False, *, modern=False):
     q = update.callback_query
     vod_url = f"https://www.twitch.tv/videos/{vod_id}"
     fmt = "html_online"
     operation_id = begin_download(context)
     if operation_id is None:
         await q.message.reply_text("Сейчас обрабатывается чат VOD. Повторите попытку позже.")
-        return
+        return False
     if regenerate:
         context.user_data.pop("vod_result_choice",None)
     try:
@@ -411,7 +421,7 @@ async def _start_download(update,context,vod_id,regenerate=False):
         )
     except BaseException:
         try:
-            await _restore_start_prompt(q.message,context,vod_id,regenerate)
+            await _restore_start_prompt(q.message,context,vod_id,regenerate, modern=modern)
         finally:
             finish_download(context, operation_id)
         raise
@@ -431,7 +441,7 @@ async def _start_download(update,context,vod_id,regenerate=False):
     except BaseException:
         runner_coro.close()
         try:
-            await _restore_start_prompt(q.message,context,vod_id,regenerate)
+            await _restore_start_prompt(q.message,context,vod_id,regenerate, modern=modern)
         finally:
             finish_download(context, operation_id)
         raise
@@ -443,9 +453,13 @@ async def _start_download(update,context,vod_id,regenerate=False):
 
     task.add_done_callback(release_finished_task)
     clear_pending(context)
+    return True
 
 
-async def _restore_start_prompt(message,context,vod_id,regenerate):
+async def _restore_start_prompt(message,context,vod_id,regenerate, *, modern=False):
+    if modern:
+        await message.edit_text('Не удалось начать обработку. Выберите VOD заново.')
+        return
     if regenerate:
         try:
             ready = results.get_ready_result(vod_id)

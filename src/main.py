@@ -18,6 +18,7 @@ from .html_publisher import cleanup_stale_html_temp_files
 from .chat_spool import cleanup_orphaned_chat_spools
 from .database.db_results import recover_results, protected_temp_files
 from .handlers.handlers_vod import vod_result_callback
+from .handlers.handlers_chat import chat_callback
 from .handlers.handlers_channel_vods import build_channel_vods_handler
 from .handlers.handlers_input import (
     text_input, vod_command, channel_command, input_menu_callback, INPUT_CALLBACK_PATTERN,
@@ -146,8 +147,10 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_input, block=False), group=0)
 
     # callbacks
-    app.add_handler(CallbackQueryHandler(vod_format_chosen, pattern=r"^vodfmt:html_online$"))
-    app.add_handler(CallbackQueryHandler(vod_result_callback, pattern=r"^ui:result:"))
+    # Legacy format/result functions are kept, but old keyboards cannot revive
+    # the retired confirmation flow after an upgrade.
+    app.add_handler(CallbackQueryHandler(input_menu_callback, pattern=r"^(?:vodfmt:|ui:result:)"))
+    app.add_handler(CallbackQueryHandler(chat_callback, pattern=r"^ui:chat:", block=False))
     app.add_handler(build_channel_vods_handler())
     app.add_handler(CallbackQueryHandler(input_menu_callback, pattern=INPUT_CALLBACK_PATTERN))
 

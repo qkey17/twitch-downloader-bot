@@ -6,7 +6,7 @@ from telegram import LinkPreviewOptions
 from src.config import PENDING_TTL_SECONDS
 from src.input_classifier import InputClassificationError, classify_input
 from .handlers_channel_vods import show_channel_vods
-from .handlers_vod import prepare_vod_choice
+from .handlers_chat import prepare_chat as prepare_vod_choice
 
 
 # Old messages can retain these buttons after an application restart.
@@ -55,6 +55,8 @@ async def _dispatch(message, context, owner_id, value):
     # Claim before awaiting: a second non-blocking PTB update cannot replace it.
     record = {'chat_id': message.chat_id, 'created_at': time.monotonic()}
     context.user_data[_ROUTE] = record
+    context.user_data.pop('chat_choice', None)
+    context.user_data.pop('chat_request', None)
 
     def current():
         return context.user_data.get(_ROUTE) is record and _alive(record)
