@@ -94,7 +94,7 @@ class VodListBrowser(ChannelBrowser):
             session.position = max(0, min(pages-1, page))*5
             session.grid = False
         elif action == 'pages':
-            session.grid, session.group = True, checked.page//12
+            session.grid, session.group = pages > 1, checked.page//12
         elif action == 'group':
             session.grid, session.group = True, value
         elif action == 'back':
@@ -113,6 +113,7 @@ def build_list(view):
     button = lambda label, action, n=None: InlineKeyboardButton(label, callback_data=callback(view, action, n))
     rows = []
     if view.grid:
+        text += '\nВыберите страницу'
         numbers = range(view.group*12, min(view.page_count, (view.group+1)*12))
         choices = [button(str(n+1), 'page', n) for n in numbers]
         rows.extend(choices[i:i+4] for i in range(0, len(choices), 4))
@@ -130,8 +131,10 @@ def build_list(view):
         nav = []
         if view.page:
             nav.append(button('⬅️', 'prev'))
-        nav.append(button(str(view.page+1), 'pages'))
+        if view.page_count > 1:
+            nav.append(button(f'📄 Стр. {view.page+1}/{view.page_count} ▾', 'pages'))
         if view.page+1 < view.page_count:
             nav.append(button('➡️', 'next'))
-        rows.append(nav)
+        if nav:
+            rows.append(nav)
     return text, InlineKeyboardMarkup(rows)

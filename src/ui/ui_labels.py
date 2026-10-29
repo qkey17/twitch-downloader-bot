@@ -10,7 +10,7 @@ from typing import Optional
 CHAT_HTML_LINK = "🌐 HTML"
 CHAT_GENERIC = "📖 Открыть чат"           # общий вариант, если нужно
 FILES = "📁 Получить файлы"
-VOD_LINK = "🔗 Открыть VOD"
+VOD_LINK = "🔗 Ссылка на VOD"
 CANCEL = "❌ Отмена"
 
 # Алиасы / переиспользуемые форматы (возможно позже сократить)

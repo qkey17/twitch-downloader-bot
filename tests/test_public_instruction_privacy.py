@@ -130,7 +130,7 @@ class PublicInstructionPrivacyTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn('📚 VODs канала: 2+', text)
                 self.assertEqual('Выбрать VOD', keyboard.inline_keyboard[0][0].text)
                 self.assertEqual('ui:cv:'+'a'*16+':4:select:2', keyboard.inline_keyboard[0][0].callback_data)
-                self.assertEqual('🔗 Открыть VOD', keyboard.inline_keyboard[0][1].text)
+                self.assertEqual('🔗 Ссылка на VOD', keyboard.inline_keyboard[0][1].text)
                 self.assertEqual('https://www.twitch.tv/videos/2', keyboard.inline_keyboard[0][1].url)
                 self.assertEqual(['⬅️', '2/2+', '➡️'], [b.text for b in keyboard.inline_keyboard[1]])
 
@@ -162,7 +162,7 @@ class PublicInstructionPrivacyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([['🌐 HTML'], ['❌ Отмена']], [[b.text for b in row] for row in keyboard])
         self.assertEqual([['vodfmt:html_online'], ['ui:format_cancel']],
                          [[b.callback_data for b in row] for row in keyboard])
-        self.assertEqual(('📖 Открыть чат', '📁 Получить файлы', '🔗 Открыть VOD'),
+        self.assertEqual(('📖 Открыть чат', '📁 Получить файлы', '🔗 Ссылка на VOD'),
                          (CHAT_GENERIC, FILES, VOD_LINK))
 
 
