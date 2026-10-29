@@ -132,7 +132,7 @@ def build_list(view):
         if view.page:
             nav.append(button('⬅️', 'prev'))
         if view.page_count > 1:
-            nav.append(button(f'📄 Стр. {view.page+1}/{view.page_count} ▾', 'pages'))
+            nav.append(button(f'Стр. {view.page+1}/{view.page_count}', 'pages'))
         if view.page+1 < view.page_count:
             nav.append(button('➡️', 'next'))
         if nav:

@@ -50,7 +50,7 @@ Telegram/Twitch end-to-end interaction still requires a separate smoke test.
 ## Navigation labels and deferred busy notifications
 
 A single UI page has only VOD buttons. Multi-page lists show
-`📄 Стр. current/total ▾`; the picker adds `Выберите страницу` and preserves
+`Стр. current/total`; the picker adds `Выберите страницу` and preserves
 the existing groups of twelve numbers. The shared Twitch-link label is now
 `🔗 Ссылка на VOD`; URLs and history behavior are unchanged.
 
