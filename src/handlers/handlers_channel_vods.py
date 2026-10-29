@@ -5,7 +5,7 @@ from telegram.error import BadRequest
 from telegram.ext import CallbackQueryHandler
 
 from src.channel_browser import CALLBACK_PREFIX, ChannelBrowser, VodSelection
-from src.vod_list import VodListBrowser, ListView, PREFIX, build_list, callback
+from src.vod_list import VodListBrowser, ListView, VodInformation, PREFIX, build_list, callback
 from .handlers_chat import prepare_chat
 from .handlers_state import is_busy
 from src.ui.ui_channel_vods import build_channel_vod_card
@@ -48,6 +48,9 @@ async def _render_list(message, view, session):
 
 async def _expire_message(browser, old):
     record = getattr(old, 'list_render', None)
+    from .handlers_vod_info import close_info
+    if not browser._live(old):
+        await close_info(old)
     if browser._live(old) or old.status not in ('ready', 'empty') or record is None:
         return
     old.list_render = None  # At most one attempt, including failure/cancellation.
@@ -116,11 +119,15 @@ async def _list_callback(update, context, browser):
             return
         result = await browser.handle_callback(context.application.bot_data['aiohttp'], update.effective_user.id,
                                                query.data, message.chat_id, message.message_id)
-        if not isinstance(result, (ListView, VodSelection)):
+        if not isinstance(result, (ListView, VodSelection, VodInformation)):
             await query.answer(STALE_BUTTON)
             return
         await query.answer()
-        view = result.view if isinstance(result, VodSelection) else result
+        view = result.view if isinstance(result, (VodSelection, VodInformation)) else result
+        if isinstance(result, VodInformation):
+            from .handlers_vod_info import show_info
+            await show_info(browser, session, message, result)
+            return result
         if isinstance(result, VodSelection):
             # Fence the message BEFORE metadata or any HTML/progress edit.
             session.list_render = None
@@ -170,7 +177,7 @@ async def channel_vods_callback(update, context):
         context.application.bot_data['aiohttp'], update.effective_user.id, query.data,
         query.message.chat_id, query.message.message_id,
     )
-    view = result.view if isinstance(result, VodSelection) else result
+    view = result.view if isinstance(result, (VodSelection, VodInformation)) else result
     # Legacy one-card adapter, retained for old internal callers.
     prepared = False
     if isinstance(result, VodSelection):

@@ -20,6 +20,7 @@ from .database.db_results import recover_results, protected_temp_files
 from .handlers.handlers_vod import vod_result_callback
 from .handlers.handlers_chat import chat_callback, legacy_open_callback
 from .handlers.handlers_channel_vods import build_channel_vods_handler
+from .handlers.handlers_vod_info import info_callback
 from .handlers.handlers_input import (
     text_input, vod_command, channel_command, input_menu_callback, INPUT_CALLBACK_PATTERN,
 )
@@ -152,6 +153,7 @@ def main():
     app.add_handler(CallbackQueryHandler(legacy_open_callback, pattern=r"^ui:result:open:[1-9][0-9]{0,19}$"))
     app.add_handler(CallbackQueryHandler(input_menu_callback, pattern=r"^(?:vodfmt:|ui:result:)"))
     app.add_handler(CallbackQueryHandler(chat_callback, pattern=r"^ui:chat:", block=False))
+    app.add_handler(CallbackQueryHandler(info_callback, pattern=r"^ui:vi:", block=False))
     app.add_handler(build_channel_vods_handler())
     app.add_handler(CallbackQueryHandler(input_menu_callback, pattern=INPUT_CALLBACK_PATTERN))
 
