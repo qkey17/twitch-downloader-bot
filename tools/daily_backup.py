@@ -208,7 +208,8 @@ class Commands(offsite.External):
     def check(self,extra=0):
         # Recovery must still run when the disk reserve has been exhausted.
         if self.cancel.is_set() or time.monotonic()>=self.deadline:
-            raise DailyError('command_interrupted_or_timed_out')
+            # External.process's watchdog catches OffsiteError, not DailyError.
+            raise offsite.OffsiteError('command_interrupted_or_timed_out')
 
 
 class Runtime:
@@ -232,7 +233,12 @@ class Runtime:
         self.commands.deadline = time.monotonic()+timeout
         # Holding an inherited lease also protects against a killed parent while a child drains.
         self.commands.lock_fd = self.lock_fds[-1] if self.lock_fds else None
-        return self.commands.run(argv)
+        try:
+            return self.commands.run(argv)
+        except offsite.OffsiteError:
+            code = ('command_interrupted_or_timed_out' if self.cancel.is_set()
+                    or time.monotonic()>=self.commands.deadline else 'external_command_failed')
+            raise DailyError(code) from None
 
     def service(self):
         raw = self.command(['/usr/bin/systemctl','show',self.config.service,'--no-pager',

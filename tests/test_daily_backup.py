@@ -238,6 +238,36 @@ class CostlyRecoveryRuntime(FakeRuntime):
 
 
 class DailyBackupTests(unittest.TestCase):
+    def test_real_command_timeout_and_cancel_after_stop_still_recover(self):
+        import threading
+        for cancel in (False, True):
+            with self.subTest(cancel=cancel):
+                self.runtime = FakeRuntime()
+                external = daily.Runtime(self.config)
+                def snapshot(_):
+                    self.assertEqual('inactive', self.runtime.properties['ActiveState'])
+                    self.assertIsNotNone(self.controller().store.read('owner'))
+                    timer = threading.Timer(.2, external.cancel.set)
+                    if cancel:
+                        timer.start()
+                    try:
+                        external.command([sys.executable, '-I', '-S', '-c',
+                                          'import time;time.sleep(4)'], timeout=5 if cancel else .2)
+                    finally:
+                        if cancel:
+                            timer.cancel(); timer.join(timeout=2)
+                # New day state for the second synthetic cycle; owner is never reset.
+                self.controller().store.write('day', None)
+                with patch.object(self.runtime, 'snapshot', side_effect=snapshot):
+                    with self.assertRaises(daily.DailyError) as caught:
+                        self.controller().run()
+                self.assertEqual('command_interrupted_or_timed_out', caught.exception.code)
+                self.assertEqual('active', self.runtime.properties['ActiveState'])
+                self.assertIsNone(self.controller().store.read('owner'))
+                self.assertEqual('daily_backup_failed', self.controller().store.read('status')['code'])
+                self.assertNotIn('offsite', self.runtime.events)
+                self.assert_originals_unchanged()
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix='tdb-daily-', dir=Path(__file__).parent)
         self.addCleanup(temporary.cleanup)
