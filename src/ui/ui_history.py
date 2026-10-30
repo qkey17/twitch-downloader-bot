@@ -106,10 +106,12 @@ def build_history_page(items: list[dict], page: int, per_page: int, total_items:
             fmt_text = "📄 Локальный HTML"
         elif fmt == "html_online" and HTML_PUBLISH_MODE == "local":
             fmt_text = "📄 Локальный HTML недоступен"
+        elif fmt == 'html_online':
+            fmt_text = ''  # The action belongs to the URL button, not the body.
         else:
             fmt_text = label_for_fmt(fmt)
 
-        text = format_vod_summary(it) + '\n' + fmt_text
+        text = format_vod_summary(it) + ('\n' + fmt_text if fmt_text else '')
         if local_html_path:
             text += f"\nHTML сохранён локально: <code>{html.escape(local_html_path)}</code>"
 

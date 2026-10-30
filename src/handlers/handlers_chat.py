@@ -13,7 +13,7 @@ from src.ui.ui_history import ready_offer_text
 from src.ui.result_preview import render_card, resolve_preview, caption_fits, cleanup_card, CardMessage
 
 
-async def prepare_chat(message, context, user_id, vod_id, *, is_current=None, edit=False, back=None, on_start=None, ui_lock=None, thumbnail_url=None, ready_only=False, on_bind=None):
+async def prepare_chat(message, context, user_id, vod_id, *, is_current=None, edit=False, back=None, on_start=None, ui_lock=None, thumbnail_url=None, ready_only=False, on_bind=None, download_origin=None, on_download=None):
     source_current = is_current or (lambda: True)
     if not source_current():
         return 'stale'
@@ -31,13 +31,13 @@ async def prepare_chat(message, context, user_id, vod_id, *, is_current=None, ed
         return await message.edit_text(text, **kwargs)
     proxy = SimpleNamespace(chat_id=message.chat_id, message_id=message.message_id,
                             edit_text=message.edit_text, reply_text=respond, ui_lock=ui_lock, thumbnail_url=thumbnail_url,
-                            on_bind=on_bind)
+                            on_bind=on_bind, download_origin=download_origin, on_download=on_download)
     try:
         outcome = await vod.prepare_vod_choice(proxy, context, user_id, vod_id,
                                               is_current=current, immediate=True, back=back, on_start=on_start,
                                               ready_only=ready_only)
-        if outcome == 'started' and on_start:
-            on_start()
+        if outcome == 'started' and on_download is None and on_start:
+            on_start()  # Compatibility for callers without cancellable list context.
         return outcome
     finally:
         preparing = False
@@ -49,7 +49,9 @@ async def offer_chat(message, context, owner, ready, current, back, on_start=Non
                   chat=message.chat_id, message=message.message_id, current=current, on_start=on_start,
                   ui_lock=getattr(message, 'ui_lock', None) or asyncio.Lock(),
                   thumbnail_url=getattr(message, 'thumbnail_url', None),
-                  on_bind=getattr(message, 'on_bind', None), photo=False)
+                  on_bind=getattr(message, 'on_bind', None), photo=False,
+                  download_origin=getattr(message, 'download_origin', None),
+                  on_download=getattr(message, 'on_download', None), meta=ready['meta'])
     rows = [[InlineKeyboardButton(GET_READY_CHAT, callback_data=f'ui:chat:open:{token}')],
             [InlineKeyboardButton(RECREATE_CHAT, callback_data=f'ui:chat:regen:{token}')]]
     if back:
@@ -140,24 +142,32 @@ async def chat_callback(update, context):
             if not valid():
                 return
             message = q.message
-            if choice.get('photo') and not vod.is_globally_busy(context):
-                replaced = await render_card(context.bot, choice['chat'], choice['text'], choice['keyboard'],
-                                             message_id=choice['message'], photo=True, current=valid)
-                if replaced is None:
-                    return
-                _bind_choice(choice, replaced)
-                message = replaced.message
             async def edit_start(*args, **kwargs):
+                nonlocal replaced, message
+                if choice.get('photo'):
+                    if kwargs.get('reply_markup') is None:
+                        return  # Failed first delivery: keep the original photo/actions.
+                    replaced = await render_card(context.bot, choice['chat'], kwargs['text'], kwargs['reply_markup'],
+                                                 message_id=choice['message'], photo=True,
+                                                 current=lambda: context.user_data.get('chat_choice') is choice and choice['current']())
+                    if replaced is None:
+                        raise RuntimeError('progress_delivery_failed')
+                    _bind_choice(choice, replaced)
+                    message = replaced.message
+                    start_message.message_id = message.message_id
+                    return message
                 async with asyncio.timeout(5):
                     return await message.edit_text(*args, **kwargs)
             async def reply_start(*args, **kwargs):
                 async with asyncio.timeout(5):
                     return await message.reply_text(*args, **kwargs)
             start_message = SimpleNamespace(chat_id=message.chat_id, message_id=message.message_id,
-                                            edit_text=edit_start, reply_text=reply_start)
+                                            edit_text=edit_start, reply_text=reply_start,
+                                            download_origin=choice.get('download_origin'), on_download=choice.get('on_download'))
             request = SimpleNamespace(callback_query=SimpleNamespace(message=start_message), effective_user=update.effective_user)
             try:
-                started = await vod._start_download(request, context, choice['vod_id'], regenerate=True, modern=True)
+                started = await vod._start_download(request, context, choice['vod_id'], regenerate=True, modern=True,
+                                                    initial_meta=choice['meta'])
             except BaseException:
                 # The existing starter owns slot/telemetry cleanup. Restore only
                 # this still-owned action screen; never reserve/start a second time.
@@ -170,7 +180,7 @@ async def chat_callback(update, context):
                         _diagnostic('offer_restore_failed')
                 raise
             if started:
-                if choice.get('on_start'):
+                if choice.get('on_download') is None and choice.get('on_start'):
                     choice['on_start']()
                 if context.user_data.get('chat_choice') is choice:
                     context.user_data.pop('chat_choice', None)

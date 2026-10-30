@@ -159,7 +159,7 @@ def main():
     app.add_handler(CallbackQueryHandler(input_menu_callback, pattern=INPUT_CALLBACK_PATTERN))
 
     app.add_handler(CallbackQueryHandler(format_cancel_callback, pattern=r"^ui:format_cancel$"))
-    app.add_handler(CallbackQueryHandler(pending_cancel_callback, pattern=r"^ui:pending_cancel$"))
+    app.add_handler(CallbackQueryHandler(pending_cancel_callback, pattern=r"^ui:pending_cancel(?::[0-9a-f]{32})?$"))
 
     app.add_handler(CallbackQueryHandler(ui_buttons, pattern=r"^ui:(history)$", block=False))
     app.add_handler(CallbackQueryHandler(history_page_callback, pattern=r"^ui:histpage:\d+$", block=False))

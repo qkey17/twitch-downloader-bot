@@ -255,9 +255,9 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
         self.runner.assert_awaited_once()
         new_id = self.runner.await_args.kwargs['progress_message_id']
         self.assertNotEqual(20, new_id)
-        self.assertEqual('Загрузка чата…', self.by_id[new_id].text)
-        self.assertEqual('ui:pending_cancel', self.by_id[new_id].keyboard.inline_keyboard[0][0].callback_data)
-        self.assertNotIn(view.session_id, self.browser._sessions)
+        self.assertIn('<b>Загрузка чата…</b>', self.by_id[new_id].text)
+        self.assertTrue(self.by_id[new_id].keyboard.inline_keyboard[0][0].callback_data.startswith('ui:pending_cancel:'))
+        self.assertFalse(self.browser.is_current(view))
         self.assertFalse(self.context.user_data['vod_busy'])
 
     async def test_failed_or_cancelled_starter_restores_buttons_and_releases_slot(self):
@@ -407,8 +407,10 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
                     await asyncio.wait_for(asyncio.gather(selecting, acting), 1)
                     if action == 'back':
                         self.assertNotEqual(20, self.browser._sessions[view.session_id].message_id)
-                    else:
+                    elif action == 'open':
                         self.assertNotIn(view.session_id, self.browser._sessions)
+                    else:
+                        self.assertFalse(self.browser.is_current(selected))
                 finally:
                     release.set(); await asyncio.wait_for(selecting, 1)
                 await asyncio.gather(*self.tasks)
@@ -416,18 +418,8 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_progress_edit_timeout_restores_offer_without_start_or_busy_leak(self):
         message, view, choice = await self.offer()
-        send = self.context.bot.send_message.side_effect
-        async def rejecting(**kw):
-            msg = await send(**kw)
-            edit = msg.edit_text.side_effect
-            async def update(text=None, **options):
-                if text == 'Загрузка чата…':
-                    raise TimeoutError()
-                return await edit(text, **options)
-            msg.edit_text.side_effect = update
-            return msg
-        self.context.bot.send_message.side_effect = rejecting
-        with self.assertRaises(TimeoutError): await self.act(choice, 'regen', message)
+        self.context.bot.send_message.side_effect = TimeoutError()
+        with self.assertRaises(RuntimeError): await self.act(choice, 'regen', message)
         self.assertFalse(self.context.user_data['vod_busy'])
         self.assertNotIn('vod_global_operation', self.app.bot_data)
         self.app.create_task.assert_not_called(); self.runner.assert_not_awaited()
@@ -447,7 +439,7 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(entered.wait(), 1)
             operation = self.context.user_data['vod_active_operation']
             self.assertTrue(self.context.user_data['vod_busy'])
-            await vod.pending_cancel_callback(self.update('ui:pending_cancel', self.by_id[choice['message']]), self.context)
+            await vod.pending_cancel_callback(self.update('ui:pending_cancel:'+operation, self.by_id[choice['message']]), self.context)
             self.assertTrue(is_cancelled(self.context, operation))
             self.assertEqual(operation, self.app.bot_data['vod_global_operation'])
         finally:
