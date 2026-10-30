@@ -7,6 +7,8 @@ from src.ui.ui_labels import CHAT_GENERIC, READY_UNAVAILABLE
 from src.config import HTML_PUBLISH_MODE
 from src.html_publisher import is_local_html_reference, local_published_html_status
 from src.ui.result_preview import send_card
+from src.ui.callbacks import CallbackReply
+from src.ui.ui_labels import STALE_ACTION_NOTICE
 from src.history.history_callbacks import (
     _answer_if_history_disabled, _history_id_from_callback, _reply_history_not_found,
 )
@@ -37,13 +39,13 @@ async def history_files_callback(update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     if await _answer_if_history_disabled(q):
         return
-    await q.answer()
+    reply = CallbackReply(q)
     data = q.data or ""
     if not data.startswith("ui:histfiles:"):
         return
 
     history_id = _history_id_from_callback(data, "ui:histfiles:")
-    if history_id is None:
+    if history_id is None or q.message is None:
         await _reply_history_not_found(update, context)
         return
 
@@ -55,6 +57,7 @@ async def history_files_callback(update, context: ContextTypes.DEFAULT_TYPE):
     vod_id = hist["vod_id"]
     from .history_view import _current_message
     if not _current_message(context, q.message, update.effective_user.id, history_id):
+        await reply.send(STALE_ACTION_NOTICE)
         return
     fmt = hist["fmt"]
     cached = db.get_cache(vod_id, fmt)
@@ -87,7 +90,7 @@ async def history_files_callback(update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             ready = None
         if not ready:
-            await q.message.reply_text(READY_UNAVAILABLE)
+            await reply.send(READY_UNAVAILABLE)
             return
         item["html_url"] = ready["html_ref"]
         for key in ('thumbnail_preview_url', 'thumbnail_url'):
@@ -96,10 +99,10 @@ async def history_files_callback(update, context: ContextTypes.DEFAULT_TYPE):
         html_url = item.get("html_url")
         is_local = is_local_html_reference(html_url)
         if is_local and local_published_html_status(html_url) is not True:
-            await q.message.reply_text(READY_UNAVAILABLE)
+            await reply.send(READY_UNAVAILABLE)
             return
         if not is_local and (not html_url or HTML_PUBLISH_MODE != "public"):
-            await q.message.reply_text("Ссылка на чат недоступна.")
+            await reply.send("Ссылка на чат недоступна.")
             return
 
         cards, _ = build_history_page([item], page=0, per_page=1)
@@ -112,15 +115,23 @@ async def history_files_callback(update, context: ContextTypes.DEFAULT_TYPE):
             merged = (kb.inline_keyboard if kb else []) + extra_rows
             kb_final = InlineKeyboardMarkup(merged)
 
+        if not await reply.send():
+            return
+        if not _current_message(context, q.message, update.effective_user.id, history_id):
+            return
         await _send_file_card(context, q.message.chat_id, text, kb_final, item, update.effective_user.id)
         return
 
     # Остальные форматы — нужны файлы
     if not cached or not cached.get("files"):
-        await q.message.reply_text("Файлы не найдены.")
+        await reply.send("Файлы не найдены.")
         return
 
     # Сначала отправляем файлы
+    if not await reply.send():
+        return
+    if not _current_message(context, q.message, update.effective_user.id, history_id):
+        return
     await send_cached_files(context, q.message.chat_id, cached["files"])
 
     # Потом карточку

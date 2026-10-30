@@ -1,3 +1,4 @@
+from callback_assertions import assert_stale
 import asyncio
 import unittest
 from types import SimpleNamespace
@@ -166,7 +167,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         await info.info_callback(query, self.context)
         stale = self.update(query.callback_query.data, self.card)
         await info.info_callback(stale, self.context)
-        stale.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+        assert_stale(self, stale)
         await asyncio.gather(*self.tasks)
         self.runner.assert_awaited_once()
         self.assertEqual(source.message_id, self.runner.await_args.kwargs['progress_message_id'])
@@ -176,14 +177,14 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         source.reply_text.assert_not_awaited()
         self.assertEqual([], self.messages)
 
-    async def test_left_selection_consumes_info_before_answer_and_uses_standard_flow(self):
+    async def test_left_selection_acknowledges_then_consumes_info_and_uses_standard_flow(self):
         source, view = await self.setup_list()
         await self.show(source, view)
         record = self.record(view)
         query = self.update(callback(view, 'select', 0), source)
         async def answer():
-            self.assertEqual('', record.nonce)
-            self.assertIsNone(self.browser._sessions[view.session_id].list_render)
+            self.assertTrue(record.nonce)
+            self.assertIsNotNone(self.browser._sessions[view.session_id].list_render)
         query.callback_query.answer.side_effect = answer
         await lists.channel_vods_callback(query, self.context)
         await asyncio.gather(*self.tasks)
@@ -219,7 +220,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(source.message_id, self.context.bot.edit_message_text.await_args.kwargs['message_id'])
         back = self.update(rows[2][0].callback_data, source)
         await lists.channel_vods_callback(back, self.context)
-        back.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+        assert_stale(self, back)
         self.context.bot.send_message.assert_not_awaited()
         source.reply_text.assert_not_awaited()
 
@@ -251,7 +252,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
                 else:
                     await info.info_callback(self.process_update(view), self.context)
                 await info.info_callback(stale, self.context)
-                stale.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+                assert_stale(self, stale)
                 self.assertEqual(ready_offer_text(self.ready_result()), source.edit_text.await_args.args[0])
                 self.assertIsNone(self.record(view))
                 source.reply_text.assert_not_awaited()
@@ -278,7 +279,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
                 try:
                     await asyncio.wait_for(entered.wait(), 1)
                     await info.info_callback(stale, self.context)
-                    stale.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+                    assert_stale(self, stale)
                     rows = source.edit_text.await_args.kwargs['reply_markup'].inline_keyboard
                     await asyncio.wait_for(lists.channel_vods_callback(self.update(rows[2][0].callback_data, source), self.context), 1)
                     session = self.browser._sessions[view.session_id]
@@ -333,7 +334,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
                     other = info.info_callback(photo, self.context) if left_first else lists.channel_vods_callback(left, self.context)
                     await asyncio.wait_for(other, 1)
                     rejected = photo if left_first else left
-                    rejected.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+                    assert_stale(self, rejected)
                     release.set()
                     await asyncio.wait_for(selecting, 1)
                     await asyncio.gather(*self.tasks)
@@ -407,7 +408,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(selecting, 1)
         self.assertTrue(cancelled.is_set())
         await info.info_callback(stale, self.context)
-        stale.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+        assert_stale(self, stale)
         self.assertEqual(ready_offer_text(self.ready_result()), source.edit_text.await_args.args[0])
         self.assertIsNone(self.record(view))
 
@@ -423,11 +424,17 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
                     query.callback_query.answer.side_effect = BadRequest('cannot answer')
                 else:
                     source.edit_text.side_effect = BadRequest('cannot edit')
+                if failure == 'answer':
+                    await info.info_callback(query, self.context)
+                    self.card.delete.assert_not_awaited()
+                    self.assertTrue(self.record(view).nonce)
+                    self.runner.assert_not_awaited()
+                    continue
                 with self.assertRaises(BadRequest):
                     await info.info_callback(query, self.context)
                 self.card.delete.assert_awaited_once()
                 await info.info_callback(stale, self.context)
-                stale.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+                assert_stale(self, stale)
                 self.assertIsNone(self.record(view))
                 source.reply_text.assert_not_awaited()
 
@@ -438,7 +445,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         data = f'ui:vi:{view.session_id}:{record.nonce}:process'
         query = self.update(data, self.card, owner=8)
         await info.info_callback(query, self.context)
-        query.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+        assert_stale(self, query)
         self.now += 301
         await info.info_callback(self.update(data, self.card), self.context)
         await self.open(21)
@@ -453,11 +460,11 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         await lists.channel_vods_callback(self.update(callback(view, 'pages'), source), self.context)
         query = self.update(data, self.card)
         await info.info_callback(query, self.context)
-        query.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+        assert_stale(self, query)
         source.reply_photo.assert_awaited_once()
         self.runner.assert_not_awaited()
 
-    async def test_all_navigation_actions_consume_info_before_answer_and_delete_after_render(self):
+    async def test_all_navigation_actions_acknowledge_then_consume_info_and_delete_after_render(self):
         cases = [('next', None, None), ('prev', None, 'next'), ('pages', None, None),
                  ('page', 1, 'pages'), ('group', 1, 'pages'), ('back', None, 'pages')]
         for action, number, before in cases:
@@ -471,8 +478,8 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
                 query = self.update(callback(view, action, number), source)
                 session = self.browser._sessions[view.session_id]
                 async def answer():
-                    self.assertEqual('', record.nonce)
-                    self.assertIsNone(session.info_card)
+                    self.assertEqual(old_nonce, record.nonce)
+                    self.assertIs(session.info_card, record)
                     self.card.delete.assert_not_awaited()
                 async def deleted():
                     current = self.browser._view(session)
@@ -488,7 +495,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
                 for old_action in ('process', 'back'):
                     stale = self.update(f'ui:vi:{view.session_id}:{old_nonce}:{old_action}', self.card)
                     await info.info_callback(stale, self.context)
-                    stale.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+                    assert_stale(self, stale)
                 source.reply_text.assert_not_awaited()
         self.runner.assert_not_awaited()
         self.metadata.assert_not_awaited()
@@ -511,7 +518,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         stale = self.process_update(view)
         view = await lists.channel_vods_callback(self.update(callback(view, 'next'), source), self.context)
         await info.info_callback(stale, self.context)
-        stale.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+        assert_stale(self, stale)
         self.assertEqual(1, view.page)
         self.assertIsNone(self.record(view))
         self.ready.return_value = self.ready_result()
@@ -539,7 +546,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(build_list(latest)[0], source.edit_text.await_args.args[0])
             repeated = self.update(data, source)
             await asyncio.wait_for(lists.channel_vods_callback(repeated, self.context), 1)
-            repeated.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+            assert_stale(self, repeated)
             self.card = self.message(199)
             self.card.edit_media, self.card.edit_reply_markup = AsyncMock(), AsyncMock()
             source.reply_photo.return_value = self.card
@@ -629,7 +636,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         session = self.browser._sessions[view.session_id]
         self.assertFalse(lists._ui_lock(session).locked())
         await info.info_callback(stale, self.context)
-        stale.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+        assert_stale(self, stale)
         source.edit_text.side_effect = None
         await lists.channel_vods_callback(self.update(callback(self.browser._view(session), 'prev'), source), self.context)
         self.assertEqual(0, self.browser._view(session).page)
@@ -642,7 +649,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         for data, owner in [(callback(view, 'page', 999), 7), (callback(view, 'next'), 8)]:
             query = self.update(data, source, owner=owner)
             await lists.channel_vods_callback(query, self.context)
-            query.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+            assert_stale(self, query)
         self.assertIs(record, self.record(view))
         self.assertTrue(record.nonce)
         self.card.delete.assert_not_awaited()
@@ -691,7 +698,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         self.now += 601
         query = self.update(callback(view, 'info', 0), source)
         await lists.channel_vods_callback(query, self.context)
-        query.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+        assert_stale(self, query)
 
     def test_preview_allowlist_rejects_unsafe_urls(self):
         self.assertIn('480x270', info.preview_url(URL))

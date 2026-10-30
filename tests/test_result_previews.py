@@ -1,3 +1,4 @@
+from callback_assertions import assert_stale
 """Synthetic Telegram/Helix delivery and UI ownership; no image downloads."""
 import asyncio
 from types import SimpleNamespace
@@ -513,7 +514,7 @@ class ChannelResultPreviewTests(unittest.IsolatedAsyncioTestCase):
         before=source.edit_text.await_count
         back=self.update(rows[2][0].callback_data,source)
         await lists.channel_vods_callback(back,self.context)
-        back.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+        assert_stale(self, back)
         await chat.chat_callback(self.update(rows[1][0].callback_data,source),self.context)
         await chat.chat_callback(self.update(rows[0][0].callback_data,source),self.context)
         self.assertEqual(before,source.edit_text.await_count)
@@ -565,5 +566,5 @@ class ChannelResultPreviewTests(unittest.IsolatedAsyncioTestCase):
         self.context.bot.edit_message_media.assert_not_awaited()
         old=self.update(rows[2][0].callback_data,source)
         await lists.channel_vods_callback(old,self.context)
-        old.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+        assert_stale(self, old)
         self.runner.assert_not_awaited()

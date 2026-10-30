@@ -1,3 +1,4 @@
+from callback_assertions import assert_stale
 import asyncio
 import html
 import unittest
@@ -91,13 +92,13 @@ class ReadyOfferTests(unittest.IsolatedAsyncioTestCase):
         data=build_list(view)[1].inline_keyboard[0][0].callback_data
         for q in (self.update(data,source,owner=8),self.update(data,self.message(21))):
             await lists.channel_vods_callback(q,self.context)
-            q.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+            assert_stale(self, q)
         self.ready.assert_not_called()
         await self.pick(source,view)
         before=source.edit_text.await_count
         repeated=self.update(data,source)
         await lists.channel_vods_callback(repeated,self.context)
-        repeated.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+        assert_stale(self, repeated)
         self.assertEqual(before,source.edit_text.await_count)
 
     async def test_disappearing_ready_after_date_never_starts_generation(self):

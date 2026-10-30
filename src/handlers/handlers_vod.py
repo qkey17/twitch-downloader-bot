@@ -41,6 +41,8 @@ from .handlers_state import (
     pending_matches_message,
 )
 from src.ui.ui_history import build_history_page, ready_offer_text
+from src.ui.callbacks import CallbackReply
+from src.ui.ui_labels import STALE_ACTION_NOTICE
 from src.ui.ui_labels import CHAT_GENERIC, VOD_LINK, CANCEL, GET_READY_CHAT, RECREATE_CHAT, READY_UNAVAILABLE
 from src.ui.ui_constants import CB_PENDING_CANCEL
 
@@ -345,30 +347,43 @@ async def prepare_vod_choice(message, context, user_id, vod_id, *, is_current=No
 # ------ Cancel pending download (кнопка отмены в прогрессе) ------
 async def pending_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    await q.answer()
+    reply = CallbackReply(q)
 
     record = context.user_data.get('download_ui')
+    operation = context.user_data.get('vod_active_operation')
     if record:
         if (q.data != CB_PENDING_CANCEL + ':' + record['operation'] or not q.message
                 or record['owner'] != update.effective_user.id
                 or (record['chat'], record['message']) != (q.message.chat_id, q.message.message_id)
                 or context.user_data.get('vod_active_operation') != record['operation']):
+            await reply.send(STALE_ACTION_NOTICE)
             return
     if is_busy(context):
-        set_cancel(context, True)
+        if await reply.send():
+            if (context.user_data.get('vod_active_operation') == operation
+                    and (record is None or context.user_data.get('download_ui') is record)
+                    and is_busy(context)):
+                set_cancel(context, True)
     else:
-        await q.message.reply_text("Нечего отменять.")
+        await reply.send(STALE_ACTION_NOTICE)
 
 
 # ------ Cancel format selection (удалить pending) ------
 async def format_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    await q.answer()
+    reply = CallbackReply(q)
 
     pending = get_pending(context)
-    if ((pending and not pending_matches_message(pending, q.message))
+    if (q.message is None or (pending and (pending_expired(pending) or not pending_matches_message(pending, q.message)))
             or (pending is None and context.user_data.get('vod_link_lookup'))):
-        await q.message.reply_text('Действие устарело. Выберите VOD заново.')
+        await reply.send(STALE_ACTION_NOTICE)
+        return
+    if not pending:
+        await reply.send(STALE_ACTION_NOTICE)
+        return
+    if not await reply.send():
+        return
+    if get_pending(context) is not pending or pending_expired(pending):
         return
     clear_pending(context)
 

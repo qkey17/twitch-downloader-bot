@@ -1,5 +1,8 @@
 # Channel VOD selection
 
+Current stale-button notifications and acknowledgement ordering:
+[callback-notices.md](callback-notices.md). Future work: [roadmap.md](roadmap.md).
+
 The active channel browser loads every Helix archive page, retaining API order
 (`type=archive`, `sort=time`) and public VODs only, deduplicated by ID. A count is
 shown only after an absent continuation cursor confirms completion. This is a
