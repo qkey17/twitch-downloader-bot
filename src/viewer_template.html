@@ -407,6 +407,16 @@ button, .vod-card{
   pointer-events:auto;
 }
 
+/* Only the VOD overlay: let the rendered image determine the action width. */
+.vod-preview-panel .snapshot-preview{
+  max-width:min(calc(100vw - 40px), 1200px);
+}
+.vod-preview-panel .snapshot-actions{
+  width:0;
+  min-width:100%;
+  max-width:none;
+}
+
 .snapshot-toggle{
   height: var(--control-h);
   border-radius: var(--control-radius);
@@ -615,8 +625,8 @@ button, .vod-card{
 
   .panel-stats{
     display: grid;
-    grid-template-columns: 1fr auto;
-    grid-template-rows: auto auto;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
     row-gap: 4px;
   }
 
@@ -626,8 +636,14 @@ button, .vod-card{
   }
 
   #stat{
-    grid-column: 2 / 3;
-    justify-self: end;
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+  .panel-stats .pill{
+    white-space:normal;
+    overflow:visible;
+    text-overflow:clip;
+    overflow-wrap:anywhere;
   }
   /* messages column */
   #list{
@@ -1118,7 +1134,7 @@ function openVodOverlay(){
   vodOverlay = overlay;
 
   const panel = document.createElement("div");
-  panel.className = "snapshot-panel";
+  panel.className = "snapshot-panel vod-preview-panel";
 
   // ПРЕВЬЮ
   const preview = document.createElement("img");
@@ -1138,18 +1154,7 @@ function openVodOverlay(){
   const linkBtn = document.createElement("button");
   linkBtn.className = "snapshot-toggle is-active";
 
-  // ИКОНКА
-  const icon = document.createElement("img");
-  icon.src = "https://cdn.7tv.app/emote/01H1P0YF7G0008W9SSAM2XE7GF/2x.webp";
-  icon.style.height = "1em";
-  icon.style.verticalAlign = "middle";
-  icon.style.marginRight = "6px";
-
-  const text = document.createElement("span");
-  text.textContent = "Twitch VOD";
-
-  linkBtn.appendChild(icon);
-  linkBtn.appendChild(text);
+  linkBtn.textContent = "🔗 Ссылка на VOD";
 
   linkBtn.addEventListener("click", (e)=>{
     e.stopPropagation();

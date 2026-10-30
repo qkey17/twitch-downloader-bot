@@ -1,6 +1,9 @@
 """Template structure/style safeguards; these do not replace browser layout tests."""
 import re
 import unittest
+import shutil
+import subprocess
+from pathlib import Path
 from html.parser import HTMLParser
 
 from src.html_renderer import render_viewer_html
@@ -53,6 +56,67 @@ class ViewerPreviewLayoutTests(unittest.TestCase):
             if selector in selectors:
                 properties.update(declarations)
         return properties
+
+    def responsive_properties(self, selector, width):
+        # Resolve exact-selector overrides inside the template's width queries.
+        # Browser QA separately checks actual layout and computed styles.
+        css = re.sub(r'/\*.*?\*/', '', ''.join(self.page.styles), flags=re.S)
+        properties = {}
+
+        def visit(source):
+            cursor = 0
+            while cursor < len(source):
+                opening = source.find('{', cursor)
+                if opening < 0:
+                    break
+                prelude = source[cursor:opening].strip()
+                depth, end = 1, opening + 1
+                while depth:
+                    depth += (source[end] == '{') - (source[end] == '}')
+                    end += 1
+                body = source[opening + 1:end - 1]
+                if prelude.startswith('@media'):
+                    bounds = re.findall(r'(min|max)-width:\s*(\d+)px', prelude)
+                    if all(width >= int(n) if kind == 'min' else width <= int(n)
+                           for kind, n in bounds):
+                        visit(body)
+                elif selector in [s.strip() for s in prelude.split(',')]:
+                    for declaration in body.split(';'):
+                        name, sep, value = declaration.partition(':')
+                        if sep:
+                            properties[name.strip()] = value.strip()
+                cursor = end
+        visit(css)
+        return properties
+
+    def test_desktop_metadata_has_full_width_left_aligned_rows(self):
+        for width in (901, 1024, 1280):
+            self.assertEqual('minmax(0, 1fr)', self.responsive_properties('.panel-stats', width)['grid-template-columns'])
+            stat = self.responsive_properties('#stat', width)
+            self.assertEqual('1 / -1', stat['grid-column'])
+            self.assertEqual('start', stat['justify-self'])
+            pill = self.responsive_properties('.panel-stats .pill', width)
+            self.assertEqual(('normal', 'visible', 'clip'),
+                             (pill['white-space'], pill['overflow'], pill['text-overflow']))
+
+    def test_mobile_metadata_retains_horizontal_layout_and_original_overflow(self):
+        for width in (320, 390, 900):
+            self.assertEqual('flex', self.responsive_properties('.panel-stats', width)['display'])
+            self.assertNotIn('grid-column', self.responsive_properties('#stat', width))
+            pill = self.responsive_properties('.panel-stats .pill', width)
+            self.assertEqual(('nowrap', 'hidden', 'ellipsis'),
+                             (pill['white-space'], pill['overflow'], pill['text-overflow']))
+
+    def test_vod_action_width_override_is_scoped_away_from_png_snapshots(self):
+        self.assertEqual('var(--controls-w)', self.properties('.snapshot-actions')['max-width'])
+        action = self.properties('.vod-preview-panel .snapshot-actions')
+        self.assertEqual(('0', '100%', 'none'), (action['width'], action['min-width'], action['max-width']))
+
+    @unittest.skipUnless(shutil.which('node'), 'Node.js required for overlay behavior tests')
+    def test_vod_overlay_javascript(self):
+        result = subprocess.run([shutil.which('node'), '--test', str(Path(__file__).with_name('test_vod_preview.js'))],
+                                capture_output=True, text=True, encoding='utf-8', timeout=30)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
     def test_grid_does_not_clip_preview_effects_or_stretch_card_to_title(self):
         panel = self.properties('.panel-top')
