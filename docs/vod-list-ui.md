@@ -12,11 +12,12 @@ timeout in addition to existing HTTP timeouts. Repeated cursors, limits, errors
 and rate limiting fail the whole display; partial totals are never shown as
 exact. There is no automatic retry loop. A 429 applies the existing shared
 cooldown before another channel request. No per-VOD detail requests are made.
-The temporary list retains ID, channel ID, visibility and `created_at`; unused
-titles, URLs, thumbnails and other strings are discarded. No persistent cache
+The temporary list retains bounded title, duration and thumbnail metadata
+for on-demand info cards; see [vod-info.md](vod-info.md). Other unused strings
+are discarded. No persistent cache
 or schema changes are introduced.
 
-Each UI page contains five date buttons. Dates are Helix `created_at` (creation
+Each UI page contains five date/info button rows. Dates are Helix `created_at` (creation
 of the VOD), displayed in UTC, not a promise of the stream's exact start time.
 The central page number opens a grid of up to 12 numbers, four per row; larger
 grids have group arrows. Navigation and selection edit the same bot message.

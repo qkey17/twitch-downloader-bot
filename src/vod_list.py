@@ -3,6 +3,7 @@ import asyncio
 from dataclasses import dataclass, replace
 import html
 import re
+from datetime import datetime, timezone
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from src.channel_browser import BrowseView, ChannelBrowser, VodSelection
@@ -10,7 +11,7 @@ from src.ui.ui_formatters import _fmt_dt_utc
 
 
 PREFIX = 'ui:vl:'
-_CALLBACK = re.compile(r'ui:vl:([0-9a-f]{16}):([0-9]{1,9}):(prev|next|pages|group|page|select|back)(?::([0-9]{1,6}))?')
+_CALLBACK = re.compile(r'ui:vl:([0-9a-f]{16}):([0-9]{1,9}):(prev|next|pages|group|page|select|info|back)(?::([0-9]{1,6}))?')
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,20 @@ class ListView(BrowseView):
     page_count: int = 0
     grid: bool = False
     group: int = 0
+
+
+@dataclass(frozen=True)
+class VodInformation:
+    owner_id: int
+    index: int
+    view: ListView
+
+
+def compact_date(value):
+    try:
+        return datetime.fromisoformat(value.replace('Z', '+00:00')).astimezone(timezone.utc).strftime('%d.%m.%y %H:%M')
+    except (ValueError, TypeError):
+        return '—'
 
 
 def callback(view, action, number=None):
@@ -49,10 +64,10 @@ class VodListBrowser(ChannelBrowser):
 
     def _append_page(self, session, page, cursor, wanted):
         super()._append_page(session, page, cursor, wanted)
-        # Selection needs only ID and creation date. Validate full API records
-        # first, then discard titles/URLs/thumbnails from this temporary cache.
-        session.vods[:] = [replace(v, title='', url='', thumbnail_url='', duration='',
-                                  published_at='', user_login='', user_name='')
+        # Keep bounded Helix metadata for on-demand information, never images.
+        session.vods[:] = [replace(v, title=v.title[:240], duration=v.duration[:32],
+                                  thumbnail_url=v.thumbnail_url[:1024], created_at=v.created_at[:64],
+                                  url='', published_at='', user_login='', user_name='')
                            for v in session.vods if v.viewable == 'public']
         session.ids = {v.id for v in session.vods}
 
@@ -68,7 +83,7 @@ class VodListBrowser(ChannelBrowser):
         if not match:
             return BrowseView('invalid')
         token, revision, action, number = match.groups()
-        if (action in ('group', 'page', 'select')) != (number is not None):
+        if (action in ('group', 'page', 'select', 'info')) != (number is not None):
             return BrowseView('invalid')
         checked = await super().handle_callback(http, owner, f'ui:cv:{token}:{revision}:noop', chat, message)
         if not isinstance(checked, ListView) or not checked.complete:
@@ -78,10 +93,12 @@ class VodListBrowser(ChannelBrowser):
             return BrowseView('stale')
         pages = checked.page_count
         value = int(number or 0)
-        if ((action == 'select' and not (checked.page*5 <= value < min(checked.page*5+5, len(session.vods))))
+        if ((action in ('select', 'info') and not (checked.page*5 <= value < min(checked.page*5+5, len(session.vods))))
                 or (action == 'page' and value >= pages)
                 or (action == 'group' and value >= (pages+11)//12)):
             return BrowseView('invalid')
+        if action == 'info':
+            return VodInformation(owner, value, self._view(session))
         session.revision += 1
         session.status = 'ready'
         if action == 'select':
@@ -107,7 +124,7 @@ def build_list(view):
         texts = {'not_found': 'Канал не найден. Проверьте имя или ссылку.',
                  'empty': 'У канала нет опубликованных VODs.'}
         return texts.get(view.status, 'Не удалось загрузить полный список VODs. Повторите попытку позже.'), None
-    text = f'🟣 {html.escape(view.channel.display_name)}\nVODs канала: {view.loaded}'
+    text = f'🟣 {html.escape(view.channel.display_name)}\nVODs канала: {view.loaded}\nДаты VOD — UTC'
     if not view.items:
         return text+'\nУ канала нет опубликованных VODs.', None
     button = lambda label, action, n=None: InlineKeyboardButton(label, callback_data=callback(view, action, n))
@@ -127,7 +144,7 @@ def build_list(view):
         rows.append([button('Вернуться к списку', 'back')])
     else:
         for n in range(view.page*5, min(len(view.items), (view.page+1)*5)):
-            rows.append([button(_fmt_dt_utc(view.items[n].created_at), 'select', n)])
+            rows.append([button(compact_date(view.items[n].created_at), 'select', n), button('ℹ️', 'info', n)])
         nav = []
         if view.page:
             nav.append(button('⬅️', 'prev'))
