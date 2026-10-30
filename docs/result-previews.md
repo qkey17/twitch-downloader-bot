@@ -37,6 +37,14 @@ This may decline a preview sooner than Telegram's limit after entity parsing;
 it never truncates existing title/statistics/local-path text. Longer cards stay
 text and skip optional lookups. A photo error preserves/falls back to text.
 
+When the exact text and keyboard are already shown, callers use the renderer's
+`keep_text` contract for the optional image upgrade. A media error returns that
+same text message ID: no second edit_text, no new send_message, no deletion.
+This applies to standalone results/file cards, newly rendered history text and
+the final text result. It does not apply to changing an older photo to a new
+record's text. `send_card` also checks the returned ID/current request and binds
+any replacement before cleanup, rather than ignoring the renderer result.
+
 Photo → text requires a new text message; the bot does not call edit_text on
 a photo. It sends text first, binds the new ID, releases the UI lock, then
 best-effort deletes only the old captured message. A failed text send keeps the
@@ -70,6 +78,9 @@ an old Back button from editing the photograph as text. The visible ready-action
 screen before Open still offers Open/Regenerate/Back. On text fallback its
 existing compatible behavior remains. A new input can always select the VOD
 again for regeneration. This does not create a new HTML generation on photo error.
+If the initial required result text itself had to move to a replacement message,
+the source list/actions are retired before deleting the old source, too. The
+replacement already contains HTML/VOD URL buttons and needs no callback transfer.
 
 ## Diagnostics and verification
 

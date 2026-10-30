@@ -67,15 +67,22 @@ async def send_card(context, chat_id, text, keyboard, item, *, current=lambda: T
         return
     url = await resolve_preview(context, item)
     if url:
-        await render_card(context.bot, chat_id, text, keyboard, url, message_id=shown.message_id, current=current)
+        updated = await render_card(context.bot, chat_id, text, keyboard, url,
+                                    message_id=shown.message_id, current=current, keep_text=True)
+        if updated is not None and current():
+            if updated.message_id != shown.message_id and on_sent:
+                on_sent(updated.message_id)
+            await cleanup_card(context.bot, chat_id, updated)
 
 
 async def render_card(bot, chat_id, text, keyboard, url=None, *, message_id=None, photo=False,
-                      current=lambda: True):
+                      current=lambda: True, keep_text=False):
     """Caller serializes Telegram application; metadata must be fetched outside.
 
     Replacing photo with text sends first; caller binds the new ID, unlocks,
     then calls cleanup_card. Failed deletion leaves old callbacks inert.
+    keep_text means this exact text/keyboard was already rendered by this
+    request: optional media failure must not create another text card.
     """
     if not current():
         return None
@@ -106,6 +113,9 @@ async def render_card(bot, chat_id, text, keyboard, url=None, *, message_id=None
             _diagnostic('photo_edit_failed' if message_id is not None else 'photo_send_failed')
         if not current():
             return None
+    if keep_text and message_id is not None and not photo:
+        _diagnostic('text_fallback')
+        return CardMessage(message_id, False) if current() else None
     if message_id is not None and not photo:
         try:
             async with asyncio.timeout(5):

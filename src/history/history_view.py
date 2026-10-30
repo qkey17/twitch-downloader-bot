@@ -28,19 +28,23 @@ async def _show_history(context, state, items, page, total_items, request):
                                          list(nav.inline_keyboard if nav else ()))
     else:
         text, keyboard = 'История пуста.', None
+    text_shown = False
 
     def current():
         return context.user_data.get('history_view') is state and state['request'] is request
 
     async def apply(url=None):
+        nonlocal text_shown
         async with state['lock']:
             if not current():
                 return
             shown = await render_card(context.bot, state['chat'], text, keyboard, url,
-                                      message_id=state['message_id'], photo=state['photo'], current=current)
+                                      message_id=state['message_id'], photo=state['photo'], current=current,
+                                      keep_text=text_shown and not state['photo'])
             if shown is not None and current():
                 state.update(message_id=shown.message_id, photo=shown.photo,
                              history_id=item.get('history_id'))
+                text_shown = not shown.photo
         await cleanup_card(context.bot, state['chat'], shown)
 
     if not state['photo']:

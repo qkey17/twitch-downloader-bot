@@ -130,6 +130,8 @@ async def _edit_progress_message_with_card(context, chat_id: int, message_id: in
     if not photo:
         async with ui_lock or nullcontext():
             shown = await render_card(context.bot, chat_id, text, final_kb, message_id=message_id, current=current)
+            if shown and shown.message_id != message_id and on_photo:
+                on_photo()  # Replacement is terminal too: retire callbacks on the old source.
         await cleanup_card(context.bot, chat_id, shown)
         if shown is None or shown.message_id != message_id:
             return  # Preserve the existing safe fallback, no second card.
@@ -138,8 +140,8 @@ async def _edit_progress_message_with_card(context, chat_id: int, message_id: in
         return
     async with ui_lock or nullcontext():
         shown = await render_card(context.bot, chat_id, text, final_kb, url, message_id=message_id,
-                                  photo=photo, current=current)
-        if shown and shown.photo and on_photo:
+                                  photo=photo, current=current, keep_text=not photo)
+        if shown and (shown.photo or shown.message_id != message_id) and on_photo:
             on_photo()  # Terminal result: old list/back actions cannot edit a photo as text.
     await cleanup_card(context.bot, chat_id, shown)
 

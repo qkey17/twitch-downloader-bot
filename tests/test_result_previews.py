@@ -117,7 +117,7 @@ class PreviewTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(vod.results,'get_ready_result',return_value=self.ready),patch.object(vod.db,'add_user_history'),patch.object(vod,'_start_download',AsyncMock()) as start:
             await chat.show_ready(SimpleNamespace(chat_id=10,message_id=20,photo=[]),self.context,7,'1')
         start.assert_not_awaited()
-        self.assertEqual(2,self.context.bot.edit_message_text.await_count)
+        self.context.bot.edit_message_text.assert_awaited_once()
         self.context.bot.send_message.assert_not_awaited()
         self.assertEqual(HTML,self.context.bot.edit_message_text.await_args.kwargs['reply_markup'].inline_keyboard[0][0].url)
 
@@ -280,8 +280,8 @@ class PreviewTests(unittest.IsolatedAsyncioTestCase):
         state=await self.open_history()
         self.assertFalse(state['photo'])
         self.context.bot.send_message.assert_awaited_once()
-        self.context.bot.edit_message_text.assert_awaited_once()
-        self.assertIn('1/3',str(self.context.bot.edit_message_text.await_args.kwargs['reply_markup']))
+        self.context.bot.edit_message_text.assert_not_awaited()
+        self.assertIn('1/3',str(self.context.bot.send_message.await_args.kwargs['reply_markup']))
 
     async def test_history_receives_full_list_uses_matching_page_metadata(self):
         await history._send_history_cards(10,self.context,self.rows,2,owner_id=7)
@@ -343,6 +343,113 @@ class PreviewTests(unittest.IsolatedAsyncioTestCase):
         record.assert_called_once_with(7,42)
         self.context.bot.edit_message_media.assert_awaited_once()
         self.lookup.assert_not_awaited()
+
+
+    async def test_standalone_double_failure_keeps_original_text_and_both_links(self):
+        item=vod._make_item(self.ready['meta'],{},'https://www.twitch.tv/videos/1','html_online')
+        self.context.bot.edit_message_media.side_effect=BadRequest('photo rejected')
+        self.context.bot.edit_message_text.side_effect=BadRequest('text rejected')
+        await vod._send_card_with_buttons(self.context,10,item,HTML)
+        self.context.bot.send_message.assert_awaited_once()
+        self.context.bot.edit_message_media.assert_awaited_once()
+        self.context.bot.edit_message_text.assert_not_awaited()
+        self.context.bot.delete_message.assert_not_awaited()
+        rows=self.context.bot.send_message.await_args.kwargs['reply_markup'].inline_keyboard
+        self.assertEqual([HTML,'https://www.twitch.tv/videos/1'],[b.url for b in rows[0]])
+
+    async def test_file_card_double_failure_preserves_bound_id_and_rejects_old_card(self):
+        from src.history.history_files import _send_file_card
+        await self.open_history()
+        item=self.rows[0] | {'thumbnail_preview_url':URL}
+        await _send_file_card(self.context,10,'first',None,item,7)
+        old=self.context.user_data['history_file_card']['message_id']
+        self.context.bot.send_message.reset_mock()
+        self.context.bot.edit_message_media.side_effect=BadRequest('photo rejected')
+        self.context.bot.edit_message_text.side_effect=BadRequest('text rejected')
+        await _send_file_card(self.context,10,'second',None,item,7)
+        record=self.context.user_data['history_file_card']
+        self.assertNotEqual(old,record['message_id'])
+        self.context.bot.send_message.assert_awaited_once()  # Only the intended new card.
+        self.context.bot.edit_message_text.assert_not_awaited()
+        self.context.bot.delete_message.assert_not_awaited()
+        self.assertTrue(history._current_message(self.context,SimpleNamespace(chat_id=10,message_id=record['message_id']),7,1))
+        self.assertFalse(history._current_message(self.context,SimpleNamespace(chat_id=10,message_id=old),7,1))
+
+    async def test_delayed_failed_standalone_media_does_not_rebind_new_file_card(self):
+        from src.history.history_files import _send_file_card
+        entered,release=asyncio.Event(),asyncio.Event()
+        async def slow(**kwargs):
+            entered.set();await release.wait();raise BadRequest('photo rejected')
+        self.context.bot.edit_message_media.side_effect=slow
+        item=self.rows[0] | {'thumbnail_preview_url':URL}
+        task=asyncio.create_task(_send_file_card(self.context,10,'old',None,item,7))
+        try:
+            await asyncio.wait_for(entered.wait(),1)
+            await _send_file_card(self.context,10,'new',None,self.rows[1] | {'thumbnail_preview_url':''},7)
+            newer=self.context.user_data['history_file_card'].copy()
+            release.set();await asyncio.wait_for(task,1)
+            self.assertEqual(newer,self.context.user_data['history_file_card'])
+            self.assertEqual(2,self.context.bot.send_message.await_count)
+            self.context.bot.edit_message_text.assert_not_awaited()
+            self.context.bot.delete_message.assert_not_awaited()
+        finally:
+            release.set();await asyncio.wait_for(task,1)
+
+    async def test_new_history_while_old_file_media_fails_does_not_restore_old_binding(self):
+        from src.history.history_files import _send_file_card
+        entered,release=asyncio.Event(),asyncio.Event()
+        async def slow(**kwargs):
+            entered.set();await release.wait();raise BadRequest('photo rejected')
+        self.context.bot.edit_message_media.side_effect=slow
+        task=asyncio.create_task(_send_file_card(self.context,10,'old',None,self.rows[0] | {'thumbnail_preview_url':URL},7))
+        try:
+            await asyncio.wait_for(entered.wait(),1)
+            self.lookup.return_value=''
+            state=await self.open_history()
+            newer=state['message_id']
+            release.set();await asyncio.wait_for(task,1)
+            self.assertNotIn('history_file_card',self.context.user_data)
+            self.assertEqual(newer,state['message_id'])
+            self.context.bot.edit_message_text.assert_not_awaited()
+        finally:
+            release.set();await asyncio.wait_for(task,1)
+
+    async def test_history_optional_media_double_failure_keeps_primary_page(self):
+        self.context.bot.edit_message_media.side_effect=BadRequest('photo rejected')
+        self.context.bot.edit_message_text.side_effect=BadRequest('text rejected')
+        state=await self.open_history()
+        self.assertEqual(100,state['message_id']);self.assertFalse(state['photo'])
+        self.context.bot.send_message.assert_awaited_once()
+        self.context.bot.edit_message_text.assert_not_awaited()
+        self.context.bot.delete_message.assert_not_awaited()
+        self.assertEqual(1,state['history_id'])
+
+    async def test_cancelled_optional_media_keeps_standalone_binding(self):
+        from src.history.history_files import _send_file_card
+        entered=asyncio.Event()
+        async def stuck(**kwargs):entered.set();await asyncio.Event().wait()
+        self.context.bot.edit_message_media.side_effect=stuck
+        task=asyncio.create_task(_send_file_card(self.context,10,'card',None,self.rows[0] | {'thumbnail_preview_url':URL},7))
+        await asyncio.wait_for(entered.wait(),1)
+        record=self.context.user_data['history_file_card'].copy()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):await asyncio.wait_for(task,1)
+        self.assertEqual(record,self.context.user_data['history_file_card'])
+        self.context.bot.send_message.assert_awaited_once()
+        self.context.bot.delete_message.assert_not_awaited()
+
+    async def test_history_deletion_timeout_keeps_replacement_binding(self):
+        state=await self.open_history();old=state['message_id']
+        self.lookup.return_value=''
+        async def stuck(**kwargs):await asyncio.Event().wait()
+        self.context.bot.delete_message.side_effect=stuck
+        real_timeout=asyncio.timeout
+        with patch.object(preview.asyncio,'timeout',side_effect=lambda n:real_timeout(min(n,0.02))):
+            await asyncio.wait_for(history_page_callback(self.query(1),self.context),1)
+        self.assertNotEqual(old,state['message_id'])
+        self.assertFalse(state['photo']);self.assertEqual(2,state['history_id'])
+        self.assertEqual(old,self.context.bot.delete_message.await_args.kwargs['message_id'])
+        self.assertFalse(state['lock'].locked())
 
 
 class HistoryPersistenceTests(unittest.IsolatedAsyncioTestCase):
@@ -438,3 +545,23 @@ class ChannelResultPreviewTests(unittest.IsolatedAsyncioTestCase):
             await chat.chat_callback(self.update(rows[0][0].callback_data,source),self.context)
         lookup.assert_not_awaited()
         self.assertIn('480x270',self.context.bot.edit_message_media.await_args.kwargs['media'].media)
+
+    async def test_primary_result_text_replacement_retires_callbacks_before_cleanup(self):
+        from src.handlers import handlers_channel_vods as lists
+        source,view,rows=await self.offer()
+        self.context.bot.edit_message_text.side_effect=BadRequest('edit rejected')
+        self.context.bot.send_message.return_value=SimpleNamespace(message_id=199)
+        self.context.bot.delete_message=AsyncMock()
+        async def deleted(**kwargs):
+            self.assertEqual(source.message_id,kwargs['message_id'])
+            self.assertNotIn(view.session_id,self.browser._sessions)
+            self.assertTrue(self.context.user_data['chat_choice']['media_final'])
+        self.context.bot.delete_message.side_effect=deleted
+        await chat.chat_callback(self.update(rows[0][0].callback_data,source),self.context)
+        self.context.bot.send_message.assert_awaited_once()
+        self.context.bot.delete_message.assert_awaited_once()
+        self.context.bot.edit_message_media.assert_not_awaited()
+        old=self.update(rows[2][0].callback_data,source)
+        await lists.channel_vods_callback(old,self.context)
+        old.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+        self.runner.assert_not_awaited()
