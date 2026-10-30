@@ -1,4 +1,4 @@
-from telegram import Update, InlineKeyboardMarkup
+from telegram import Update
 from telegram.ext import ContextTypes
 from src import config
 
@@ -50,6 +50,7 @@ async def ui_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             items=items,
             page=0,
             total_items=total_items,
+            owner_id=user_id,
         )
         return
 
@@ -84,6 +85,9 @@ async def history_vod_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     vod_url = item.get("vod_url")
+    from .history_view import _current_message
+    if not _current_message(context, q.message, update.effective_user.id, history_id):
+        return
     if not vod_url:
         try:
             await q.message.reply_text("Ссылка на VOD недоступна.")
@@ -110,40 +114,5 @@ async def history_page_callback(update: Update, context: ContextTypes.DEFAULT_TY
     except Exception:
         return
 
-    from src.database import database as db
-    # build_history_page может быть в ui — импорт локально
-    from src.ui.ui import build_history_page
-
-    total_items = db.get_history_count(update.effective_user.id)
-    if total_items:
-        last_page = total_items - 1
-        page = max(0, min(page, last_page))
-    items = db.get_history_for_user(update.effective_user.id, limit=1, offset=page)
-    cards, nav_kb = build_history_page(
-        items,
-        page=page,
-        per_page=1,
-        total_items=total_items,
-    )
-
-    if not cards:
-        try:
-            await q.message.edit_text("История пуста.")
-        except Exception:
-            await context.bot.send_message(chat_id=q.message.chat_id, text="История пуста.")
-        return
-
-    text, card_kb = cards[0]
-
-    # объединение клавиатур — аккуратно: обе могут быть InlineKeyboardMarkup или None
-    if card_kb is not None and nav_kb is not None:
-        combined_kb = InlineKeyboardMarkup(list(card_kb.inline_keyboard) + list(nav_kb.inline_keyboard))
-    elif card_kb is not None:
-        combined_kb = card_kb
-    else:
-        combined_kb = nav_kb
-
-    try:
-        await q.message.edit_text(text, parse_mode="HTML", reply_markup=combined_kb)
-    except Exception:
-        await context.bot.send_message(chat_id=q.message.chat_id, text=text, parse_mode="HTML", reply_markup=combined_kb)
+    from .history_view import show_history_page
+    await show_history_page(update, context, page)
