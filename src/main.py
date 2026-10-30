@@ -13,7 +13,8 @@ from telegram.ext import (
 
 from src.database import database as db
 from src import config
-from .config import ConfigurationError, get_telegram_bot_token, validate_credentials
+from .config import ConfigurationError, get_telegram_bot_token, get_telegram_api_mode, validate_credentials
+from .telegram_api import build_application, run_polling
 from .html_publisher import cleanup_stale_html_temp_files
 from .chat_spool import cleanup_orphaned_chat_spools
 from .database.db_results import recover_results, protected_temp_files
@@ -116,20 +117,21 @@ def main():
     log.info("Bot starting…")
 
     try:
+        api_mode = get_telegram_api_mode()
         token = get_telegram_bot_token()
         validate_credentials()
     except ConfigurationError as exc:
         log.error("Configuration error: %s", exc)
         raise
 
-    app = (
+    builder = (
         Application.builder()
         .token(token)
         .post_init(post_init)
         .post_stop(post_stop)
         .post_shutdown(post_shutdown)
-        .build()
     )
+    app = build_application(builder, api_mode, token)
 
     async def on_error(update, context: ContextTypes.DEFAULT_TYPE):
         logging.getLogger("tcd").error("Unhandled error", exc_info=context.error)
@@ -169,7 +171,7 @@ def main():
     from src.ui.callbacks import stale_callback, STALE_CALLBACK_PATTERN
     app.add_handler(CallbackQueryHandler(stale_callback, pattern=STALE_CALLBACK_PATTERN))
 
-    app.run_polling(drop_pending_updates=True)
+    run_polling(app, api_mode, token)
 
 
 if __name__ == "__main__":

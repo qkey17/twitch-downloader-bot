@@ -32,6 +32,14 @@ def get_telegram_bot_token() -> str:
     return _required_env(ENV_TOKEN)
 
 
+def get_telegram_api_mode() -> str:
+    mode = os.getenv('TCD_TELEGRAM_API_MODE', 'cloud')
+    if mode not in ('cloud', 'local'):
+        # Do not echo untrusted environment input; it may contain a secret.
+        raise ConfigurationError("TCD_TELEGRAM_API_MODE must be 'cloud' or 'local'")
+    return mode
+
+
 def get_twitch_client_id() -> str:
     """Return the application Client ID used for authenticated Helix requests."""
     return _required_env(ENV_TWITCH_CLIENT_ID)
