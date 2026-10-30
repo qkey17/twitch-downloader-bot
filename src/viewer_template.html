@@ -1313,12 +1313,19 @@ async function fetch7tvEmotes(channelId){
   }catch(e){ return new Map(); }
 }
 
+function catalogEmoteUrl(catalog, name){
+  // Message tokens can match Object.prototype names, even in an empty catalog.
+  if(!Object.prototype.hasOwnProperty.call(catalog, name)) return null;
+  const value = catalog[name];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
 function renderTextWithEmotes(el,text,emotes){
   const parts = String(text||"").split(/(\s+)/);
   for(const p of parts){
   const clean = p.replace(/[\u200B-\u200D\uFEFF]/g,'').replace(/[\r\n\t]/g,'');
-    if(LOCAL_EMOTES[clean] || CDN_EMOTES[clean]){
-      const src = LOCAL_EMOTES[clean] || CDN_EMOTES[clean];
+    const src = catalogEmoteUrl(LOCAL_EMOTES, clean) || catalogEmoteUrl(CDN_EMOTES, clean);
+    if(src){
       const img = document.createElement("img");
       img.src = src; img.crossOrigin="anonymous"; img.alt=p; img.title=p; img.className="emote"; el.appendChild(img);
     } else if(emotes.has(clean)){
@@ -1358,8 +1365,8 @@ function renderFragmentsWithEmotes(el, fragments, emotes){
       continue;
     }
 
-    if(cleanText && (LOCAL_EMOTES[cleanText] || CDN_EMOTES[cleanText])){
-      const src = LOCAL_EMOTES[cleanText] || CDN_EMOTES[cleanText];
+    const src = cleanText && (catalogEmoteUrl(LOCAL_EMOTES, cleanText) || catalogEmoteUrl(CDN_EMOTES, cleanText));
+    if(src){
       const img = document.createElement("img");
       img.src = src; img.crossOrigin="anonymous"; img.alt=rawText; img.title=rawText; img.className="emote"; el.appendChild(img);
       renderedAny = true;
