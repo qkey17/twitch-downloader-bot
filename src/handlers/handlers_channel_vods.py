@@ -67,6 +67,16 @@ def _consume_selection(session):
 
 async def _prepare_selection(query, message, context, browser, session, result, card, *, ready_only=False):
     view = result.view
+    origin = dict(token=session.token, revision=view.revision, index=view.position)
+    def started():
+        nonlocal view
+        if browser.is_current(view):
+            if session.revision == 999999999:
+                browser.retire(view)
+                return
+            session.revision += 1  # Old Back/selection actions remain invalid after slot release.
+            view = replace(view, revision=session.revision)
+            origin['revision'] = session.revision
     def bind(shown):
         nonlocal view
         if browser.is_current(view):
@@ -78,13 +88,71 @@ async def _prepare_selection(query, message, context, browser, session, result, 
                            is_current=lambda: browser.is_current(view), edit=True,
                            back=callback(view, 'back'), on_start=lambda: browser.retire(view),
                            ui_lock=_ui_lock(session), thumbnail_url=result.view.vod.thumbnail_url,
-                           ready_only=ready_only, on_bind=bind)
+                           ready_only=ready_only, on_bind=bind, download_origin=origin, on_download=started)
     finally:
         # Show the normal text screen first. Cleanup touches only the captured
         # info message, never the list/result or a newly opened info card.
         if card is not None:
             from .handlers_vod_info import close_info
             await close_info(session, card)
+
+
+async def restore_cancelled_selection(context, record):
+    """Use only a still-live bounded session; never recreate an expired token."""
+    from types import SimpleNamespace
+    from .handlers_state import is_busy
+    from .handlers_vod_info import show_info
+    origin = record.get('origin')
+    browser = context.application.bot_data.get(_STORE_KEY)
+    session = browser._sessions.get(origin['token']) if isinstance(browser, VodListBrowser) and origin else None
+    def current():
+        return (context.user_data.get('download_ui') is record and not is_busy(context)
+                and context.user_data.get('chat_request') is record['request']
+                and session is not None and browser._live(session, origin['revision'])
+                and session.owner_id == record['owner'] and session.status == 'selected'
+                and (session.chat_id, session.message_id) == (record['chat'], record['message']))
+    if not current():
+        return False
+    bot, chat, mid = context.bot, record['chat'], record['message']
+    async def edit_text(text, **kwargs):
+        return await bot.edit_message_text(chat_id=chat, message_id=mid, text=text, **kwargs)
+    async def reply_text(text, **kwargs):
+        return await bot.send_message(chat_id=chat, text=text, **kwargs)
+    async def reply_photo(photo, **kwargs):
+        return await bot.send_photo(chat_id=chat, photo=photo, **kwargs)
+    message = SimpleNamespace(chat_id=chat, message_id=mid,
+                              edit_text=edit_text, reply_text=reply_text, reply_photo=reply_photo)
+    async with _ui_lock(session):
+        if not current():
+            return False
+        session.revision += 1
+        view = browser._view(session)
+        ready = results.get_ready_result(record['vod_id']) if record['regenerate'] else None
+        if ready is None:
+            session.status = 'ready'
+            view = browser._view(session)
+            async with asyncio.timeout(5):
+                await _render_list(message, view, session)
+            await show_info(browser, session, message, VodInformation(record['owner'], origin['index'], view))
+            return True
+        result = VodSelection(record['owner'], record['vod_id'], f'https://www.twitch.tv/videos/{record["vod_id"]}',
+                              session.channel.login, view)
+    async def answered():
+        pass
+    # Reuse all normal ready-only, binding, nonce and preview fencing.
+    await _prepare_selection(SimpleNamespace(answer=answered), message, context, browser, session, result, None, ready_only=True)
+    return True
+
+
+def retire_download_selection(context, record):
+    origin = record.get('origin') if record else None
+    browser = context.application.bot_data.get(_STORE_KEY)
+    if not origin or not isinstance(browser, VodListBrowser):
+        return
+    session = browser._sessions.get(origin['token'])
+    if (session and browser._live(session, origin['revision']) and session.owner_id == record['owner']
+            and (session.chat_id, session.message_id) == (record['chat'], record['message'])):
+        browser.retire(browser._view(session))
 
 
 async def _expire_message(browser, old):

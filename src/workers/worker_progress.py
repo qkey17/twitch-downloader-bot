@@ -1,5 +1,6 @@
 import time
 import asyncio
+import html
 
 from telegram.error import BadRequest, RetryAfter, TimedOut, NetworkError
 from src.config import PROGRESS_INTERVAL
@@ -10,10 +11,18 @@ from src.ui.ui_constants import CB_PENDING_CANCEL
 from src.ui.ui_labels import CANCEL
 
 
+def cancel_keyboard(context):
+    record = context.user_data.get('download_ui')
+    data = CB_PENDING_CANCEL + ':' + record['operation'] if record else CB_PENDING_CANCEL
+    return InlineKeyboardMarkup([[InlineKeyboardButton(CANCEL, callback_data=data)]])
+
+
 async def safe_edit_html(context, chat_id: int, message_id: int, text: str):
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(CANCEL, callback_data=CB_PENDING_CANCEL)]
-    ])
+    record = context.user_data.get('download_ui')
+    owned = record and (record['chat'], record['message']) == (chat_id, message_id)
+    if owned and record.get('last_text') == text:
+        return
+    keyboard = cancel_keyboard(context)
 
     try:
         await context.bot.edit_message_text(
@@ -23,6 +32,8 @@ async def safe_edit_html(context, chat_id: int, message_id: int, text: str):
             parse_mode="HTML",
             reply_markup=keyboard,
         )
+        if owned and context.user_data.get('download_ui') is record:
+            record['last_text'] = text
     except RetryAfter as e:
         await asyncio.sleep(float(e.retry_after))
     except BadRequest as e:
@@ -44,8 +55,8 @@ def _fmt_date_ru(dt: str) -> str:
 
 
 def _build_progress_card(meta, vod_url, messages, users_len, done):
-    channel = meta.get("channel") or "—"
-    title = meta.get("title") or "Без названия"
+    channel = html.escape((meta.get("channel") or "—")[:120])
+    title = html.escape((meta.get("title") or "Без названия")[:240])
     duration = _fmt_len(meta.get("length_seconds"))
     dt = _fmt_date_ru(_fmt_dt_utc(meta.get("created_at")))
 

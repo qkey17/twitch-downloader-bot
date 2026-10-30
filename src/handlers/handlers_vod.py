@@ -36,6 +36,7 @@ from .handlers_state import (
     clear_pending,
     pending_expired,
     set_cancel,
+    CANCELLED_MESSAGE,
     bind_pending_message,
     pending_matches_message,
 )
@@ -314,7 +315,8 @@ async def prepare_vod_choice(message, context, user_id, vod_id, *, is_current=No
         if immediate:
             from types import SimpleNamespace
             started = await _start_download(SimpleNamespace(callback_query=SimpleNamespace(message=message),
-                                                 effective_user=SimpleNamespace(id=user_id)), context, vod_id, modern=True)
+                                                 effective_user=SimpleNamespace(id=user_id)), context, vod_id, modern=True,
+                                            initial_meta=vars(meta))
             return 'started' if started else 'busy'
         # Legacy format chooser retained for old internal callers only.
         prompt = await message.reply_text(
@@ -345,6 +347,13 @@ async def pending_cancel_callback(update: Update, context: ContextTypes.DEFAULT_
     q = update.callback_query
     await q.answer()
 
+    record = context.user_data.get('download_ui')
+    if record:
+        if (q.data != CB_PENDING_CANCEL + ':' + record['operation'] or not q.message
+                or record['owner'] != update.effective_user.id
+                or (record['chat'], record['message']) != (q.message.chat_id, q.message.message_id)
+                or context.user_data.get('vod_active_operation') != record['operation']):
+            return
     if is_busy(context):
         set_cancel(context, True)
     else:
@@ -413,7 +422,7 @@ async def vod_format_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _start_download(update,context,vod_id)
 
 
-async def _start_download(update,context,vod_id,regenerate=False, *, modern=False):
+async def _start_download(update,context,vod_id,regenerate=False, *, modern=False, initial_meta=None):
     context.user_data['ready_preview_request'] = object()
     q = update.callback_query
     vod_url = f"https://www.twitch.tv/videos/{vod_id}"
@@ -424,15 +433,19 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
         return False
     telemetry = OperationTelemetry(operation_id)
     telemetry.begin()
+    ui = dict(operation=operation_id, chat=q.message.chat_id, message=q.message.message_id,
+              owner=update.effective_user.id, vod_id=vod_id, regenerate=regenerate,
+              origin=getattr(q.message, 'download_origin', None), request=context.user_data.get('chat_request'))
+    context.user_data['download_ui'] = ui
+    from src.workers.worker_progress import _build_progress_card, cancel_keyboard
     if regenerate:
         context.user_data.pop("vod_result_choice",None)
     try:
+        initial_text = _build_progress_card(initial_meta or {}, vod_url, 0, 0, False)
         await q.message.edit_text(
-            text="Загрузка чата…",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(CANCEL, callback_data=CB_PENDING_CANCEL)]
-            ])
+            text=initial_text, parse_mode='HTML', reply_markup=cancel_keyboard(context)
         )
+        ui.update(message=q.message.message_id, last_text=initial_text)
     except BaseException as exc:
         telemetry.fail(exc)
         try:
@@ -440,6 +453,8 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
         finally:
             finish_download(context, operation_id)
             telemetry.finish()
+            if context.user_data.get('download_ui') is ui:
+                context.user_data.pop('download_ui', None)
         raise
 
     runner_coro = _runner(
@@ -463,6 +478,8 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
         finally:
             finish_download(context, operation_id)
             telemetry.finish()
+            if context.user_data.get('download_ui') is ui:
+                context.user_data.pop('download_ui', None)
         raise
 
     def release_finished_task(_task):
@@ -475,8 +492,17 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
             elif _task.exception() is not None:
                 telemetry.fail(_task.exception())
             telemetry.finish()
+        if context.user_data.get('download_ui') is ui:
+            context.user_data.pop('download_ui', None)
 
     task.add_done_callback(release_finished_task)
+    on_download = getattr(q.message, 'on_download', None)
+    if on_download:
+        try:
+            on_download()
+        except Exception:
+            ui['origin'] = None
+            logging.getLogger(__name__).warning('Download navigation context unavailable')
     clear_pending(context)
     return True
 
@@ -510,6 +536,10 @@ async def _runner(
     operation_id: str | None = None,
 ):
     publication = None
+    cancelled = False
+    ui = getattr(context, 'user_data', {}).get('download_ui')
+    if ui and ui['operation'] != operation_id:
+        ui = None
     try:
         publication = results.Publication(vod_id,fmt,mode=HTML_PUBLISH_MODE)
         with stage('result_reserve'):
@@ -560,20 +590,10 @@ async def _runner(
             except Exception:
                 pass
             return
-        if "Загрузка была отменена." in str(e):
-            try:
-                await context.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=progress_message_id,
-                    text="Обработка чата отменена.",
-                )
-            except Exception:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text="Обработка чата отменена.",
-                )
-            return
-        raise
+        if str(e) == CANCELLED_MESSAGE:
+            cancelled = True
+        else:
+            raise
 
     except Exception as e:
         record_failure(e)
@@ -603,10 +623,39 @@ async def _runner(
         raise
     finally:
         try:
-            if publication is not None:
-                await run_blocking(publication.close)
+            try:
+                if publication is not None:
+                    await run_blocking(publication.close)
+            finally:
+                released = finish_download(context, operation_id)
+            if not cancelled and ui is not None:
+                from .handlers_channel_vods import retire_download_selection
+                retire_download_selection(context, ui)
+            if cancelled and released:
+                await _show_cancelled(context, chat_id, progress_message_id, ui)
         finally:
-            finish_download(context, operation_id)
+            if ui is not None and context.user_data.get('download_ui') is ui:
+                context.user_data.pop('download_ui', None)
+
+
+async def _show_cancelled(context, chat_id, message_id, ui):
+    from .handlers_vod_info import _diagnostic
+    from src.ui.result_preview import render_card, cleanup_card
+    def current():
+        return ui is None or (context.user_data.get('download_ui') is ui
+                and not is_busy(context))
+    if not current():
+        return
+    try:
+        if ui and ui.get('origin'):
+            from .handlers_channel_vods import restore_cancelled_selection
+            if await restore_cancelled_selection(context, ui):
+                return
+        shown = await render_card(context.bot, chat_id, 'Обработка чата отменена пользователем', None,
+                                  message_id=message_id, current=current)
+        await cleanup_card(context.bot, chat_id, shown)
+    except Exception:
+        _diagnostic('cancel_restore_failed')
 
 
 async def _record_generation_failure(publication,error):

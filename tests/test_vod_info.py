@@ -170,7 +170,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.gather(*self.tasks)
         self.runner.assert_awaited_once()
         self.assertEqual(source.message_id, self.runner.await_args.kwargs['progress_message_id'])
-        self.assertEqual('Загрузка чата…', source.edit_text.await_args.kwargs['text'])
+        self.assertIn('<b>Загрузка чата…</b>', source.edit_text.await_args.kwargs['text'])
         self.card.delete.assert_awaited_once()
         self.card.edit_text.assert_not_awaited()
         source.reply_text.assert_not_awaited()
@@ -365,7 +365,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         await self.show(source, view)
         entered, release = asyncio.Event(), asyncio.Event()
         async def slow_delete():
-            self.assertEqual('Загрузка чата…', source.edit_text.await_args.kwargs['text'])
+            self.assertIn('<b>Загрузка чата…</b>', source.edit_text.await_args.kwargs['text'])
             entered.set()
             await release.wait()
         self.card.delete.side_effect = slow_delete
@@ -375,7 +375,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(selecting.done())
             self.runner.assert_awaited_once()
             self.assertEqual(source.message_id, self.runner.await_args.kwargs['progress_message_id'])
-            self.assertNotIn(view.session_id, self.browser._sessions)
+            self.assertFalse(self.browser.is_current(view))  # Kept with a new revision for confirmed cancellation.
             count = source.edit_text.await_count
             await asyncio.wait_for(self.open(21, 'second'), 1)
             release.set()
