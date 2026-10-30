@@ -188,7 +188,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         await inputs.text_input(SimpleNamespace(message=message, effective_user=SimpleNamespace(id=7)), self.context)
         prompt = self.messages[-1][0]
         kb = prompt.edit_text.await_args.kwargs['reply_markup']
-        self.assertEqual(['Открыть HTML', 'Сгенерировать заново'], [r[0].text for r in kb.inline_keyboard])
+        self.assertEqual(['Получить готовый чат', 'Создать чат заново'], [r[0].text for r in kb.inline_keyboard])
         open_data, regen = [r[0].callback_data for r in kb.inline_keyboard]
         await chat.chat_callback(self.update(regen, prompt, owner=8), self.context)
         self.runner.assert_not_awaited()
@@ -197,6 +197,12 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         self.context.bot.send_message.assert_not_awaited()
         await chat.chat_callback(self.update(open_data, prompt), self.context)
         self.context.bot.edit_message_text.assert_awaited_once()
+        await chat.chat_callback(self.update(regen, prompt), self.context)
+        await chat.chat_callback(self.update(regen, prompt), self.context)
+        self.runner.assert_not_awaited()  # Terminal text consumes the old actions too.
+        await inputs.text_input(SimpleNamespace(message=message, effective_user=SimpleNamespace(id=7)), self.context)
+        prompt = self.messages[-1][0]
+        regen = prompt.edit_text.await_args.kwargs['reply_markup'].inline_keyboard[1][0].callback_data
         await chat.chat_callback(self.update(regen, prompt), self.context)
         await chat.chat_callback(self.update(regen, prompt), self.context)
         await asyncio.gather(*self.tasks)

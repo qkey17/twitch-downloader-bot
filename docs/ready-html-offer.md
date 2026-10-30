@@ -1,46 +1,90 @@
-# Ready HTML action screen
+# Готовый чат: действия и превью
 
-The channel list still has one full UTC date button per VOD, five rows/page.
-After validated owner/message/revision selection, that date checks the existing
-`db_results.get_ready_result` registry. It does not trust a cache row by itself:
-the registry's current-generation, deletion, reference and local file rules
-apply for local/public output. No HTTP link probe, metadata or image request.
+Дата VOD с пригодным результатом открывает «Чат VOD уже готов»: канал,
+название, дата UTC, длительность, число сообщений и пользователей.
+Пригодность по-прежнему определяет `db_results.get_ready_result`, включая
+текущее поколение, состояние удаления и доступность файла local/public.
+Если результат исчез во время перехода, показывается «Готовый чат недоступен.
+Выберите VOD заново.», без автоматической генерации.
 
-For a usable result, consume the normal browser `select` and enter the existing
-`prepare_chat`/`offer_chat` screen in the original list TEXT message. No temporary
-info card or Process press is required. Without a ready result, the existing
-info/Process/Back behavior is unchanged. Older direct-select callbacks remain
-compatible. The ready-only date transition checks readiness again in the common
-preparation path: if the result disappeared while answering Telegram, it shows
-the existing unavailable message with Back and never starts a generation.
+Видимые названия централизованы в `src/ui/ui_labels.py`; callback data прежние:
 
-`offer_chat` now shows its existing heading followed by channel, title, duration,
-message/user counts and creation date, using the same summary formatter as the
-history/result cards. Other cards retain their existing output. The offer alone
-uses `—` for missing/invalid statistics; actual zero remains zero. Channel/title
-are HTML escaped and capped at 120/1200 characters to keep parsed text below
-Telegram's 4096 limit, including astral characters. Invalid/unbounded duration or
-count values show `—`. Missing other fields retain the existing neutral labels.
-No preview on this action screen. No preview API lookup, history entry or change
-to the result occurs merely from showing the offer.
+| Действие | Значение |
+|---|---|
+| Получить готовый чат | Конечная карточка с данными и ссылками; история по существующим правилам |
+| Открыть чат | Прямая URL-ссылка на опубликованный чат в браузере |
+| Создать чат | Первая обработка VOD без готового результата |
+| Создать чат заново | Явная повторная генерация готового результата |
+| Вернуться к списку | Вернуть исходную страницу списка |
 
-Open/Regenerate/Back names and actions are unchanged. Back uses the consumed
-selection's revision and restores list ownership, including its current page.
-A later selection has a different revision and action nonce. Session/message/
-owner/current-request checks reject old actions. Offer text application now uses
-the existing session UI lock with a current guard, so a delayed Telegram edit
-cannot overtake Back or channel replacement. No background task or cache added.
+Названия применяются также к инфокарточке, результату, истории и совместимым
+старым способам открытия. Local/public ограничения не меняются: локальная
+ссылка не становится публичной. Старые `ui:result:open:<id>` доступны, но не
+возвращают выбор формата или генерацию отсутствующего результата.
 
-Open still rechecks ready HTML, records history under the existing rules, shows
-text and HTML/VOD links first, then optionally upgrades to a final photo through
-PR #17's renderer. Photo failure keeps text; no regeneration occurs. Successful
-terminal media still retires the list session. Regenerate still uses the same
-single download slot and runner; the ready-only flag cannot bypass that limit.
-Direct VOD inputs share the enriched offer; history, terminal cards, HTML files,
-publication and SQLite formats remain unchanged.
+## Сначала действия, затем фотография
 
-Tests use synthetic Telegram/Twitch and temporary SQLite/files, including local
-and public available/missing/invalid output, disappearance during the transition,
-old/foreign/repeated actions, Back/other VOD, delayed offer edits, formatting,
-zero/unknown counts and terminal preview/regeneration. Real Telegram smoke tests
-remain required for text layout, rapid actions and final image delivery.
+Сначала редактируется исходное текстовое сообщение: информация и рабочие
+кнопки доступны до ожидания Twitch. Затем общий механизм PR #17 из
+`src/ui/result_preview.py` добавляет необязательное фото в **то же сообщение**.
+Готовый URL берётся из выбранного VOD или сохранённых метаданных. Только при
+отсутствии обоих thumbnail-полей используется существующий одиночный Helix
+lookup с тайм-аутом 3 с. Явно пустой URL не вызывает lookup. Получение результата
+во время этого lookup не запускает второй: ссылки показываются без ожидания
+изображения; позднее предложение не перезаписывает результат.
+
+Переиспользуются проверка HTTPS Twitch CDN, заглушек, `.jpg`/`.jpeg`/`.png`,
+размер 480×270 и консервативный caption-limit 1024 UTF-16 единицы с разметкой.
+Длинные карточки целиком остаются текстовыми и не запрашивают превью.
+Экранирование, `—` для неизвестных значений и настоящий ноль сохранены.
+Нет скачивания изображений приложением, файлов, SQLite-записей, image cache,
+фоновых задач или отдельного сообщения ради фотографии.
+
+Ошибка необязательного фото оставляет исходный текст и кнопки на месте.
+Если сетевой timeout/отмена могли произойти после применения фото на Telegram,
+состояние трактуется консервативно: следующий переход допускает фото → текст.
+Тайм-аут не доказывает, что Telegram не применил запрос.
+
+## Переходы и владение сообщением
+
+Получение готового чата повторно проверяет registry, записывает историю в
+прежний момент и показывает конечные HTML/VOD-ссылки. Фото → фото использует
+`edit_message_media`. При отказе отправляется текстовый результат со ссылками,
+затем ограниченно удаляется прежняя карточка. Успешная конечная карточка,
+включая текстовую, закрывает прежние действия выбора и сессию исходного списка.
+Повторное получение не создаёт историю и результат повторно.
+
+Возврат из текста редактирует то же сообщение. Для фото → список общий renderer
+сначала отправляет правильный текст и клавиатуру. Под существующим session UI
+lock обновляются `message_id`, состояние фото и подтверждённый render списка.
+Только затем, вне lock, удаляется захваченное старое сообщение (до 5 с).
+Новая клавиатура работает ещё во время удаления. Старые callbacks не проходят
+проверку message/revision; ошибка/отмена удаления не откатывает привязку.
+При отказе или отмене отправки нового списка старая кнопка Back остаётся
+пригодной, если её исходная сессия ещё актуальна.
+
+Повторная генерация из фото аналогично переносит предложение в текст,
+обновляет привязку и вызывает **один раз** существующий `_start_download`.
+Runner получает новый `progress_message_id`; слот, отмена и телеметрия прежние.
+Отказ единственного глобального слота не уничтожает предложение. Ошибка/отмена
+старта освобождает слот штатным starter-ом; обёртка восстанавливает кнопки на
+принадлежащем ей сообщении без повторного резервирования/запуска.
+
+Metadata awaits и удаление выполняются вне UI lock. Применение Telegram и
+передача привязки сериализованы. Проверяются owner, session, revision, nonce,
+текущий запрос и message ID; старый ответ не меняет новую карточку или список.
+Telegram-операции данного перехода ограничены 5 с. Невозможно гарантировать
+доставку exactly-once при неизвестном результате сетевого timeout; неизвестный
+ID не угадывается, новая карточка не удаляется.
+
+## Проверки
+
+Синтетические Telegram/Twitch-тесты охватывают текст/фото, длинный caption,
+сохранение ссылок/истории, ошибки/timeout/отмену, быстрые действия во время
+metadata и media awaits, передачу ID, живую клавиатуру во время удаления,
+позднюю очистку, сохранение одного слота и отмены. Прежние тесты PR #16–18,
+включая temporary SQLite и local/public registry, остаются обязательными.
+
+Перед внедрением нужен реальный Telegram smoke test: внешний вид caption,
+доставка CDN-фото, все три действия, возврат на ту же страницу и быстрые
+повторные нажатия. Локальные тесты не подтверждают реальную доставку Telegram.

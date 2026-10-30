@@ -489,15 +489,17 @@ class ChannelResultPreviewTests(unittest.IsolatedAsyncioTestCase):
     record=info_fixture.InfoTests.record
     process_update=info_fixture.InfoTests.process_update
 
-    async def offer(self):
+    async def offer(self, photo=True):
         from src.handlers import handlers_vod_info as info
         source,view=await self.setup_list()
         await self.show(source,view)
         self.ready.return_value=self.ready_result()
         self.ready.return_value['meta']['thumbnail_preview_url']=URL
-        self.context.bot.edit_message_media=AsyncMock()
+        self.context.bot.edit_message_media=AsyncMock(side_effect=None if photo else BadRequest('Synthetic text fallback'))
         await info.info_callback(self.process_update(view),self.context)
         rows=source.edit_text.await_args.kwargs['reply_markup'].inline_keyboard
+        self.assertEqual(photo, self.context.user_data['chat_choice']['photo'])
+        self.context.bot.edit_message_media.reset_mock(side_effect=True)
         return source,view,rows
 
     async def test_info_to_ready_photo_preserves_html_and_rejects_old_back_and_regen(self):
@@ -520,7 +522,7 @@ class ChannelResultPreviewTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_back_to_list_during_preview_metadata_prevents_late_media_edit(self):
         from src.handlers import handlers_channel_vods as lists
-        source,view,rows=await self.offer()
+        source,view,rows=await self.offer(photo=False)
         self.ready.return_value['meta'].pop('thumbnail_preview_url')
         self.context.user_data['chat_choice']['thumbnail_url']=None  # Legacy offer without cached Helix metadata.
         entered,release=asyncio.Event(),asyncio.Event()
@@ -548,7 +550,7 @@ class ChannelResultPreviewTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_primary_result_text_replacement_retires_callbacks_before_cleanup(self):
         from src.handlers import handlers_channel_vods as lists
-        source,view,rows=await self.offer()
+        source,view,rows=await self.offer(photo=False)
         self.context.bot.edit_message_text.side_effect=BadRequest('edit rejected')
         self.context.bot.send_message.return_value=SimpleNamespace(message_id=199)
         self.context.bot.delete_message=AsyncMock()

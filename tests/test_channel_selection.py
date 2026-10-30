@@ -3,6 +3,7 @@ import asyncio
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
+from telegram.error import BadRequest
 
 from src import config
 from src.channel_browser import ChannelBrowser, VodSelection, callback_data
@@ -39,6 +40,7 @@ class ChannelSelectionTests(unittest.IsolatedAsyncioTestCase):
             ('src.handlers.handlers_vod.get_client_id', Mock(return_value='mock-client')),
             ('src.handlers.handlers_vod.fetch_vod_meta', self.metadata),
             ('src.handlers.handlers_vod._runner', self.runner),
+            ('src.ui.result_preview.fetch_video_thumbnail', AsyncMock(return_value='')),
             ('src.handlers.handlers_vod._build_card', Mock(return_value=('Existing VOD card', None))),
             ('src.handlers.handlers_vod.HTML_PUBLISH_MODE', 'public'),
             ('src.config.HISTORY_ENABLED', False),
@@ -51,7 +53,8 @@ class ChannelSelectionTests(unittest.IsolatedAsyncioTestCase):
 
     def context_for_user(self):
         return SimpleNamespace(application=self.app, user_data={},
-                               bot=SimpleNamespace(edit_message_text=AsyncMock(), send_message=AsyncMock()))
+                               bot=SimpleNamespace(edit_message_text=AsyncMock(), send_message=AsyncMock(),
+                                   edit_message_media=AsyncMock(side_effect=BadRequest('Synthetic text fallback'))))
 
     def task(self, coroutine):
         task = asyncio.create_task(coroutine)
@@ -120,7 +123,7 @@ class ChannelSelectionTests(unittest.IsolatedAsyncioTestCase):
         await self.select(await self.view())
         prompt, _, kwargs = self.messages[-1]
         keyboard = kwargs['reply_markup']
-        self.assertEqual(['Показать результат', 'Создать заново'],
+        self.assertEqual(['Получить готовый чат', 'Создать чат заново'],
                          [row[0].text for row in keyboard.inline_keyboard])
         self.assertNotIn('vod_pending', self.context.user_data)
         self.metadata.assert_not_awaited()

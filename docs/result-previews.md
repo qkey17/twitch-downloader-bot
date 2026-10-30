@@ -3,7 +3,8 @@
 An optional 480x270 preview is added to the existing result/history card. The
 HTML/VOD labels, reference validation, history ownership, statistics and page
 navigation are unchanged. No new Telegram command or preview button is added.
-The VOD list UI from PR #16 is unchanged.
+Ready-action offers now share this renderer too; visible action names and
+photo/list/progress transitions are documented in [ready-html-offer.md](ready-html-offer.md).
 
 ## Sources and limits
 
@@ -29,8 +30,8 @@ Telegram fetches the CDN URL. No image files or SQLite preview migrations.
 Text results/initial history cards show their existing links first, before the
 optional lookup. Text → photo and photo → photo use `edit_message_media` with
 an `InputMediaPhoto`, HTML caption and the complete existing inline keyboard.
-No extra photo message is sent. Required preparation/progress/ready-action
-screens stay text until a terminal result is opened.
+No extra photo message is sent. Preparation/progress screens remain text;
+ready-action offers show working text/buttons first and may then become photos.
 
 Captions are limited conservatively to 1024 UTF-16 units INCLUDING HTML markup.
 This may decline a preview sooner than Telegram's limit after entity parsing;
@@ -72,11 +73,10 @@ do not change the single download slot or create unmanaged background work.
 
 Ready-result opens retain the existing history-recording rules. Repeated open
 presses are consumed; regeneration is blocked while optional delivery is pending.
-A successfully displayed photo is a terminal HTML/VOD card. Its old saved
+A successfully displayed result is a terminal HTML/VOD card. Its old saved
 regeneration callback is inert; a source VOD-list session is retired to prevent
 an old Back button from editing the photograph as text. The visible ready-action
-screen before Open still offers Open/Regenerate/Back. On text fallback its
-existing compatible behavior remains. A new input can always select the VOD
+screen before Open still offers Get/Recreate/Back. A new input can always select the VOD
 again for regeneration. This does not create a new HTML generation on photo error.
 If the initial required result text itself had to move to a replacement message,
 the source list/actions are retired before deleting the old source, too. The

@@ -7,6 +7,7 @@ import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from src.channel_browser import BrowseView, ChannelBrowser, VodSelection
 from src.ui.ui_formatters import _fmt_dt_utc
+from src.ui.ui_labels import BACK_TO_LIST
 
 
 PREFIX = 'ui:vl:'
@@ -133,7 +134,7 @@ def build_list(view):
             arrows.append(button('➡️', 'group', view.group+1))
         if arrows:
             rows.append(arrows)
-        rows.append([button('Вернуться к списку', 'back')])
+        rows.append([button(BACK_TO_LIST, 'back')])
     else:
         for n in range(view.page*5, min(len(view.items), (view.page+1)*5)):
             rows.append([button(_fmt_dt_utc(view.items[n].created_at), 'info', n)])

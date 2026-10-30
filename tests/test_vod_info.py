@@ -199,7 +199,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         await info.info_callback(self.process_update(view), self.context)
         self.assertEqual(ready_offer_text(self.ready_result()), source.edit_text.await_args.args[0])
         rows = source.edit_text.await_args.kwargs['reply_markup'].inline_keyboard
-        self.assertEqual(['Открыть HTML', 'Сгенерировать заново', 'Вернуться к списку'], [r[0].text for r in rows])
+        self.assertEqual(['Получить готовый чат', 'Создать чат заново', 'Вернуться к списку'], [r[0].text for r in rows])
         self.assertEqual(source.message_id, self.context.user_data['chat_choice']['message'])
         await lists.channel_vods_callback(self.update(rows[2][0].callback_data, source), self.context)
         self.assertIn('VODs канала: 2', source.edit_text.await_args.args[0])
@@ -208,7 +208,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         self.runner.assert_not_awaited()
         source.reply_text.assert_not_awaited()
 
-    async def test_photo_ready_open_edits_source_and_can_return_via_selected_back(self):
+    async def test_photo_ready_open_edits_source_and_consumes_old_selected_back(self):
         from src.handlers import handlers_chat as chat
         source, view = await self.setup_list()
         await self.show(source, view)
@@ -217,8 +217,9 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         rows = source.edit_text.await_args.kwargs['reply_markup'].inline_keyboard
         await chat.chat_callback(self.update(rows[0][0].callback_data, source), self.context)
         self.assertEqual(source.message_id, self.context.bot.edit_message_text.await_args.kwargs['message_id'])
-        await lists.channel_vods_callback(self.update(rows[2][0].callback_data, source), self.context)
-        self.assertIn('VODs канала: 2', source.edit_text.await_args.args[0])
+        back = self.update(rows[2][0].callback_data, source)
+        await lists.channel_vods_callback(back, self.context)
+        back.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
         self.context.bot.send_message.assert_not_awaited()
         source.reply_text.assert_not_awaited()
 
