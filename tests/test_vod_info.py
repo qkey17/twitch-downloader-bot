@@ -1,5 +1,6 @@
 import asyncio
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from telegram.error import BadRequest
 import test_stale_vod_lists as fixture
@@ -7,6 +8,7 @@ import test_channel_vods as cards
 from src.handlers import handlers_channel_vods as lists, handlers_vod_info as info
 from src.vod_list import callback, build_list
 from src.twitch_api import videos
+from src.ui.ui_history import ready_offer_text
 
 
 URL = 'https://static-cdn.jtvnw.net/cf_vods/example/thumb/thumb0-%{width}x%{height}.jpg'
@@ -14,7 +16,13 @@ URL = 'https://static-cdn.jtvnw.net/cf_vods/example/thumb/thumb0-%{width}x%{heig
 
 class InfoTests(unittest.IsolatedAsyncioTestCase):
     _setupAsyncioRunner = fixture.StaleListTests._setupAsyncioRunner
-    setUp = fixture.StaleListTests.setUp
+    def setUp(self):
+        fixture.StaleListTests.setUp(self)
+        # Keep these existing tests on the uncached information surface; the
+        # date-to-ready path has its own tests. Do not patch the shared registry.
+        p = patch.object(lists, 'results', SimpleNamespace(get_ready_result=lambda vod_id: None))
+        p.start()
+        self.addCleanup(p.stop)
     asyncTearDown = fixture.StaleListTests.asyncTearDown
     context_for_user = fixture.StaleListTests.context_for_user
     task = fixture.StaleListTests.task
@@ -189,7 +197,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         await self.show(source, view)
         self.ready.return_value = self.ready_result()
         await info.info_callback(self.process_update(view), self.context)
-        self.assertEqual('Готовый HTML доступен.', source.edit_text.await_args.args[0])
+        self.assertEqual(ready_offer_text(self.ready_result()), source.edit_text.await_args.args[0])
         rows = source.edit_text.await_args.kwargs['reply_markup'].inline_keyboard
         self.assertEqual(['Открыть HTML', 'Сгенерировать заново', 'Вернуться к списку'], [r[0].text for r in rows])
         self.assertEqual(source.message_id, self.context.user_data['chat_choice']['message'])
@@ -243,7 +251,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
                     await info.info_callback(self.process_update(view), self.context)
                 await info.info_callback(stale, self.context)
                 stale.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
-                self.assertEqual('Готовый HTML доступен.', source.edit_text.await_args.args[0])
+                self.assertEqual(ready_offer_text(self.ready_result()), source.edit_text.await_args.args[0])
                 self.assertIsNone(self.record(view))
                 source.reply_text.assert_not_awaited()
         self.runner.assert_not_awaited()
@@ -257,7 +265,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
                 old_card = self.card
                 entered, release = asyncio.Event(), asyncio.Event()
                 async def slow_delete():
-                    self.assertEqual('Готовый HTML доступен.', source.edit_text.await_args.args[0])
+                    self.assertEqual(ready_offer_text(self.ready_result()), source.edit_text.await_args.args[0])
                     entered.set()
                     await release.wait()
                 old_card.delete.side_effect = slow_delete
@@ -342,7 +350,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         await self.show(source, view)
         self.ready.return_value = self.ready_result()
         async def stuck():
-            self.assertEqual('Готовый HTML доступен.', source.edit_text.await_args.args[0])
+            self.assertEqual(ready_offer_text(self.ready_result()), source.edit_text.await_args.args[0])
             await asyncio.Event().wait()
         self.card.delete.side_effect = stuck
         real_timeout = asyncio.timeout
@@ -399,7 +407,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(cancelled.is_set())
         await info.info_callback(stale, self.context)
         stale.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
-        self.assertEqual('Готовый HTML доступен.', source.edit_text.await_args.args[0])
+        self.assertEqual(ready_offer_text(self.ready_result()), source.edit_text.await_args.args[0])
         self.assertIsNone(self.record(view))
 
     async def test_telegram_answer_or_screen_failure_still_cleans_consumed_info(self):
@@ -507,7 +515,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.record(view))
         self.ready.return_value = self.ready_result()
         await lists.channel_vods_callback(self.update(callback(view, 'select', 5), source), self.context)
-        self.assertEqual('Готовый HTML доступен.', source.edit_text.await_args.args[0])
+        self.assertEqual(ready_offer_text(self.ready_result()), source.edit_text.await_args.args[0])
         source.reply_text.assert_not_awaited()
 
     async def test_slow_navigation_cleanup_allows_new_info_and_never_clears_or_edits_it(self):
@@ -548,7 +556,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
             # The new info card can still select via the shared preparation path.
             self.ready.return_value = self.ready_result()
             await info.info_callback(self.process_update(latest), self.context)
-            self.assertEqual('Готовый HTML доступен.', source.edit_text.await_args.args[0])
+            self.assertEqual(ready_offer_text(self.ready_result()), source.edit_text.await_args.args[0])
             source.reply_text.assert_not_awaited()
         finally:
             release.set()

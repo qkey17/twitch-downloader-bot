@@ -2,6 +2,8 @@
 
 Each VOD row is one full-width `YYYY-MM-DD HH:MM UTC` button opening information.
 There is no separate info button or direct selection button in the list.
+If the existing result registry confirms ready HTML for that date, it opens the
+ready action screen directly instead; see [ready-html-offer.md](ready-html-offer.md).
 Dates remain Helix `created_at` (VOD creation, not a guarantee of stream start),
 formatted with the existing `_fmt_dt_utc`. Sorting/count/navigation are unchanged.
 

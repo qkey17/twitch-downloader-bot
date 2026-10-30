@@ -9,7 +9,7 @@ from src.vod_list import VodListBrowser, ListView, VodInformation, PREFIX, build
 from .handlers_chat import prepare_chat
 from .handlers_state import is_busy
 from src.ui.ui_channel_vods import build_channel_vod_card
-from .handlers_vod import prepare_vod_choice
+from .handlers_vod import prepare_vod_choice, results
 
 
 _STORE_KEY = 'channel_vod_browser'
@@ -53,13 +53,14 @@ def _consume_selection(session):
     return take_info(session)
 
 
-async def _prepare_selection(query, message, context, browser, session, result, card):
+async def _prepare_selection(query, message, context, browser, session, result, card, *, ready_only=False):
     try:
         await query.answer()
         await prepare_chat(message, context, result.owner_id, result.vod_id,
                            is_current=lambda: browser.is_current(result.view), edit=True,
                            back=callback(result.view, 'back'), on_start=lambda: browser.retire(result.view),
-                           ui_lock=_ui_lock(session), thumbnail_url=result.view.vod.thumbnail_url)
+                           ui_lock=_ui_lock(session), thumbnail_url=result.view.vod.thumbnail_url,
+                           ready_only=ready_only)
     finally:
         # Show the normal text screen first. Cleanup touches only the captured
         # info message, never the list/result or a newly opened info card.
@@ -133,6 +134,7 @@ async def _list_callback(update, context, browser):
         await query.answer(STALE_BUTTON)
         return
     navigation_card = None
+    ready_only = False
     try:
         async with _ui_lock(session):
             if not browser._live(session) or str(session.revision) != parts[3]:
@@ -148,10 +150,17 @@ async def _list_callback(update, context, browser):
                 return
             view = result.view if isinstance(result, (VodSelection, VodInformation)) else result
             if isinstance(result, VodInformation):
-                from .handlers_vod_info import show_info
-                await query.answer()
-                await show_info(browser, session, message, result)
-                return result
+                if results.get_ready_result(view.items[result.index].id) is None:
+                    from .handlers_vod_info import show_info
+                    await query.answer()
+                    await show_info(browser, session, message, result)
+                    return result
+                result = await browser.handle_callback(context.application.bot_data['aiohttp'], result.owner_id,
+                    callback(view, 'select', result.index), message.chat_id, message.message_id)
+                if not isinstance(result, VodSelection):
+                    await query.answer(STALE_BUTTON)
+                    return
+                view, ready_only = result.view, True
             if isinstance(result, VodSelection):
                 card = _consume_selection(session)
             else:
@@ -168,7 +177,7 @@ async def _list_callback(update, context, browser):
             from .handlers_vod_info import close_info
             await close_info(session, navigation_card)
     if isinstance(result, VodSelection):
-        await _prepare_selection(query, message, context, browser, session, result, card)
+        await _prepare_selection(query, message, context, browser, session, result, card, ready_only=ready_only)
     return result
 
 

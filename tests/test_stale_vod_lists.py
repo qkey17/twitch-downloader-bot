@@ -5,6 +5,7 @@ import unittest
 import test_channel_selection as fixture
 from src.handlers import handlers_channel_vods as h
 from src.vod_list import VodListBrowser, callback, build_list
+from src.ui.ui_history import ready_offer_text
 
 
 class StaleListTests(unittest.IsolatedAsyncioTestCase):
@@ -80,7 +81,7 @@ class StaleListTests(unittest.IsolatedAsyncioTestCase):
         calls = message.edit_text.await_count
         await self.open(21)
         self.assertEqual(calls, message.edit_text.await_count)
-        self.assertEqual('Готовый HTML доступен.', message.edit_text.await_args.args[0])
+        self.assertEqual(ready_offer_text(self.ready_result()), message.edit_text.await_args.args[0])
 
     async def test_started_processing_and_final_card_are_not_rewritten(self):
         message, a = await self.open(20)
@@ -166,7 +167,7 @@ class StaleListTests(unittest.IsolatedAsyncioTestCase):
         release.set()
         await asyncio.wait_for(opening, 1)
         self.assertEqual(before, latest.edit_text.await_count)
-        self.assertEqual('Готовый HTML доступен.', latest.edit_text.await_args.args[0])
+        self.assertEqual(ready_offer_text(self.ready_result()), latest.edit_text.await_args.args[0])
         self.assertTrue(old.edit_text.await_args.args[0].endswith(h.STALE_LIST))
         self.assertIsNone(old.edit_text.await_args.kwargs['reply_markup'])
 

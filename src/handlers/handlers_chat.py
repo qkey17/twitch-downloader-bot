@@ -10,7 +10,7 @@ from . import handlers_vod as vod
 from .handlers_state import is_busy, pending_expired
 
 
-async def prepare_chat(message, context, user_id, vod_id, *, is_current=None, edit=False, back=None, on_start=None, ui_lock=None, thumbnail_url=None):
+async def prepare_chat(message, context, user_id, vod_id, *, is_current=None, edit=False, back=None, on_start=None, ui_lock=None, thumbnail_url=None, ready_only=False):
     source_current = is_current or (lambda: True)
     if not source_current():
         return 'stale'
@@ -30,7 +30,8 @@ async def prepare_chat(message, context, user_id, vod_id, *, is_current=None, ed
                             edit_text=message.edit_text, reply_text=respond, ui_lock=ui_lock, thumbnail_url=thumbnail_url)
     try:
         outcome = await vod.prepare_vod_choice(proxy, context, user_id, vod_id,
-                                              is_current=current, immediate=True, back=back, on_start=on_start)
+                                              is_current=current, immediate=True, back=back, on_start=on_start,
+                                              ready_only=ready_only)
         if outcome == 'started' and on_start:
             on_start()
         return outcome
@@ -43,12 +44,16 @@ async def offer_chat(message, context, owner, ready, current, back, on_start=Non
     choice = dict(token=token, owner=owner, vod_id=ready['vod_id'], created_at=time.time(),
                   chat=message.chat_id, message=message.message_id, current=current, on_start=on_start,
                   ui_lock=getattr(message, 'ui_lock', None), thumbnail_url=getattr(message, 'thumbnail_url', None))
-    context.user_data['chat_choice'] = choice
     rows = [[InlineKeyboardButton('Открыть HTML', callback_data=f'ui:chat:open:{token}')],
             [InlineKeyboardButton('Сгенерировать заново', callback_data=f'ui:chat:regen:{token}')]]
     if back:
         rows.append([InlineKeyboardButton('Вернуться к списку', callback_data=back)])
-    await message.edit_text('Готовый HTML доступен.', reply_markup=InlineKeyboardMarkup(rows))
+    from src.ui.ui_history import ready_offer_text
+    async with choice['ui_lock'] or nullcontext():
+        if not current():
+            return
+        context.user_data['chat_choice'] = choice
+        await message.edit_text(ready_offer_text(ready), parse_mode='HTML', reply_markup=InlineKeyboardMarkup(rows))
 
 
 async def chat_callback(update, context):

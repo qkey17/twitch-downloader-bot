@@ -18,7 +18,8 @@ are discarded. No persistent cache
 or schema changes are introduced.
 
 Each UI page contains five full-width date buttons (`YYYY-MM-DD HH:MM UTC`),
-one per VOD, opening its temporary info card. There is no separate ℹ️ button
+one per VOD, opening its temporary info card or, for ready HTML, the shared action screen
+([details](ready-html-offer.md)). There is no separate ℹ️ button
 or direct select button. Dates are Helix `created_at` (creation
 of the VOD), displayed in UTC, not a promise of the stream's exact start time.
 The central page number opens a grid of up to 12 numbers, four per row; larger
