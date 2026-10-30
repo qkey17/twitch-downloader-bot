@@ -1,0 +1,59 @@
+name: Build Local Bot API
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/build-local-bot-api.yml
+      - deploy/local-bot-api/**
+      - deploy/systemd/tdb-local-bot-api.service
+      - docs/local-bot-api.md
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-bot-api-build-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install build tools on the disposable runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y clang cmake ninja-build gperf libssl-dev zlib1g-dev shellcheck file binutils
+      - name: Check shell syntax and build the pinned official source
+        shell: bash
+        run: |
+          bash -n deploy/local-bot-api/build.sh
+          shellcheck deploy/local-bot-api/build.sh
+          bash deploy/local-bot-api/build.sh "$RUNNER_TEMP/local-bot-api-build"
+      - name: Validate the proposed unit without installing or starting it
+        shell: bash
+        run: |
+          # Only the executable is staged on this disposable CI runner so verify
+          # can check ExecStart. No systemctl, credentials or service activation.
+          sudo install -D -m 0755 "$RUNNER_TEMP/local-bot-api-build/bundle/telegram-bot-api" /usr/local/libexec/tdb-local-bot-api/telegram-bot-api
+          systemd-analyze --man=no verify deploy/systemd/tdb-local-bot-api.service 2>&1 | tee "$RUNNER_TEMP/local-bot-api-build/bundle/unit-verify.txt"
+          cp deploy/systemd/tdb-local-bot-api.service docs/local-bot-api.md "$RUNNER_TEMP/local-bot-api-build/bundle/"
+      - name: Upload binary and verification records
+        id: artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: telegram-bot-api-10.3-ubuntu24.04-x86_64
+          path: ${{ runner.temp }}/local-bot-api-build/bundle/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Record artifact and checksum
+        env:
+          ARTIFACT_URL: ${{ steps.artifact.outputs.artifact-url }}
+        run: |
+          printf '### Prepared binary — no deployment\n\nArtifact: %s\n\n' "$ARTIFACT_URL" >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/local-bot-api-build/bundle/SHA256SUMS" >> "$GITHUB_STEP_SUMMARY"
