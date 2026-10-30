@@ -42,6 +42,41 @@ def _fmt_date_ru(dt: str) -> str:
         return dt
 
 
+def format_vod_summary(it: dict, *, unknown_stats=False):
+    channel = html.escape(it.get('channel') or '—')
+    title = html.escape(it.get('title') or 'Без названия')
+    date = _fmt_dt_utc(it.get('created_at')) if it.get('created_at') else '—'
+    date = _fmt_date_ru(date) if date != '—' else date
+    duration = _fmt_len(it.get('length_seconds')) if it.get('length_seconds') else '—'
+    def count(key):
+        value = it.get(key)
+        if not unknown_stats:
+            return value or 0  # Preserve existing history/result formatting.
+        if type(value) is not int or value < 0:
+            return '—'
+        try:
+            text = str(value)
+        except ValueError:
+            return '—'
+        return text if len(text) <= 64 else '—'
+    return (f'🟣 {channel}\n🎬 {title}\n'
+            f'⏱ {duration} • 💬 {count("messages")} • 👥 {count("unique_users")}\n🗓 {date}')
+
+
+def ready_offer_text(ready):
+    meta, stats = ready.get('meta') or {}, ready.get('stats') or {}
+    item = {key:meta.get(key) for key in ('created_at', 'length_seconds')}
+    if type(item['length_seconds']) is not int or not 0 <= item['length_seconds'] < 10**18:
+        item['length_seconds'] = None
+    # Bound only this action screen, leaving other cards unchanged. Account for
+    # astral characters conservatively; the parsed text stays below 4096 units.
+    for key, limit in (('channel', 120), ('title', 1200)):
+        value = meta.get(key)
+        item[key] = value[:limit] if isinstance(value, str) else None
+    item.update(messages=stats.get('messages'), unique_users=stats.get('unique_users'))
+    return 'Готовый HTML доступен.\n\n' + format_vod_summary(item, unknown_stats=True)
+
+
 def build_history_page(items: list[dict], page: int, per_page: int, total_items: int | None = None):
     total = len(items) if total_items is None else max(0, int(total_items))
     pages = max(1, (total + per_page - 1) // per_page)
@@ -59,18 +94,6 @@ def build_history_page(items: list[dict], page: int, per_page: int, total_items:
     for i, it in enumerate(page_items):
         idx = page * per_page + i
 
-        channel = html.escape(it.get("channel") or "—")
-        vod_title = html.escape(it.get("title") or "Без названия")
-
-        created_at = it.get("created_at")
-        dt_raw = _fmt_dt_utc(created_at) if created_at else "—"
-        dt = _fmt_date_ru(dt_raw) if dt_raw != "—" else "—"
-
-        length_seconds = it.get("length_seconds")
-        duration = _fmt_len(length_seconds) if length_seconds else "—"
-
-        msgs = it.get("messages") or 0
-        users = it.get("unique_users") or 0
         fmt = it.get("fmt") or "—"
 
         html_ref = it.get("html_url")
@@ -86,13 +109,7 @@ def build_history_page(items: list[dict], page: int, per_page: int, total_items:
         else:
             fmt_text = label_for_fmt(fmt)
 
-        text = (
-            f"🟣 {channel}\n"
-            f"🎬 {vod_title}\n"
-            f"⏱ {duration} • 💬 {msgs} • 👥 {users}\n"
-            f"🗓 {dt}\n"
-            f"{fmt_text}"
-        )
+        text = format_vod_summary(it) + '\n' + fmt_text
         if local_html_path:
             text += f"\nHTML сохранён локально: <code>{html.escape(local_html_path)}</code>"
 

@@ -246,7 +246,7 @@ async def vod_link_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await prepare_vod_choice(update.message, context, update.effective_user.id, vod_id)
 
 
-async def prepare_vod_choice(message, context, user_id, vod_id, *, is_current=None, immediate=False, back=None, on_start=None):
+async def prepare_vod_choice(message, context, user_id, vod_id, *, is_current=None, immediate=False, back=None, on_start=None, ready_only=False):
     """Shared validation; active HTML-only callers opt into immediate processing.
 
     A guarded entry supplies an owner/session or input validity guard. Such inputs
@@ -274,6 +274,9 @@ async def prepare_vod_choice(message, context, user_id, vod_id, *, is_current=No
             db.add_user_history(user_id,ready['cache_id'])
         await _offer_ready(message,context,ready)
         return 'ready'
+    if ready_only:
+        await message.reply_text('Готовый HTML недоступен. Выберите VOD заново.')
+        return 'missing'
     if pending_active:
         await message.reply_text('Выберите формат чата в предыдущем сообщении.')
         return 'pending'
