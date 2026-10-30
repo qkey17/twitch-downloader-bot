@@ -105,7 +105,7 @@ async def restore_cancelled_selection(context, record):
     """Use only a still-live bounded session; never recreate an expired token."""
     from types import SimpleNamespace
     from .handlers_state import is_busy
-    from .handlers_vod_info import show_info
+    from .handlers_vod_info import show_info, preview_info
     origin = record.get('origin')
     browser = context.application.bot_data.get(_STORE_KEY)
     session = browser._sessions.get(origin['token']) if isinstance(browser, VodListBrowser) and origin else None
@@ -135,12 +135,18 @@ async def restore_cancelled_selection(context, record):
         if ready is None:
             session.status = 'ready'
             view = browser._view(session)
-            async with asyncio.timeout(5):
-                await _render_list(message, view, session)
-            await show_info(browser, session, message, VodInformation(record['owner'], origin['index'], view))
-            return True
+            shown = await show_info(browser, session, message, VodInformation(record['owner'], origin['index'], view), bot=bot)
+            card = getattr(session, 'info_card', None)
+        else:
+            shown = card = None
         result = VodSelection(record['owner'], record['vod_id'], f'https://www.twitch.tv/videos/{record["vod_id"]}',
                               session.channel.login, view)
+    if ready is None:
+        from src.ui.result_preview import cleanup_card
+        await cleanup_card(bot, chat, shown)
+        if shown is not None and card is not None:
+            await preview_info(browser, session, card, bot)
+        return shown is not None
     async def answered():
         pass
     # Reuse all normal ready-only, binding, nonce and preview fencing.
@@ -250,6 +256,7 @@ async def _list_callback(update, context, browser):
     navigation_card = None
     replaced = None
     ready_only = False
+    info_preview = None
     try:
         async with _ui_lock(session):
             if not browser._live(session) or str(session.revision) != parts[3]:
@@ -270,8 +277,11 @@ async def _list_callback(update, context, browser):
                     from .handlers_vod_info import show_info
                     if not await reply.send():
                         return
-                    await show_info(browser, session, message, result)
-                    return result
+                    replaced = await show_info(browser, session, message, result, bot=context.bot)
+                    if replaced is not None:
+                        info_preview = session.info_card
+                        return replace(result, view=browser._view(session))
+                    return None
                 result = await browser.handle_callback(context.application.bot_data['aiohttp'], result.owner_id,
                     callback(view, 'select', result.index), message.chat_id, message.message_id)
                 if not isinstance(result, VodSelection):
@@ -282,7 +292,6 @@ async def _list_callback(update, context, browser):
                 card = _consume_selection(session)
             else:
                 from .handlers_vod_info import take_info
-                navigation_card = take_info(session)
                 if not await reply.send():
                     return
                 if browser.is_current(view):
@@ -290,13 +299,14 @@ async def _list_callback(update, context, browser):
                         replaced = await _render_list(message, view, session, bot=getattr(context, 'bot', None),
                                                       current=lambda: browser.is_current(view))
                     except BaseException:
-                        if getattr(session, 'photo', False) and browser.is_current(view):
+                        if browser.is_current(view):
                             session.revision, session.status = previous.revision, previous.status
                         raise
                     if getattr(session, 'photo', False):
                         # A failed photo->text delivery leaves the old Back usable.
                         session.revision, session.status = previous.revision, previous.status
                         return None
+                    navigation_card = take_info(session)
                     context.user_data.pop('chat_choice', None)
                     if replaced is not None:
                         result = browser._view(session)
@@ -309,6 +319,9 @@ async def _list_callback(update, context, browser):
         if navigation_card is not None:
             from .handlers_vod_info import close_info
             await close_info(session, navigation_card)
+        if info_preview is not None:
+            from .handlers_vod_info import preview_info
+            await preview_info(browser, session, info_preview, context.bot)
     if isinstance(result, VodSelection):
         await _prepare_selection(query, message, context, browser, session, result, card, ready_only=ready_only, reply=reply)
     return result
@@ -342,8 +355,9 @@ async def channel_vods_callback(update, context):
     browser = get_channel_browser(context.application)
     if isinstance(browser, VodListBrowser):
         return await _list_callback(update, context, browser)
-    await query.answer()
+    reply = CallbackReply(query)
     if query.message is None:
+        await reply.send(STALE_ACTION_NOTICE)
         return None
     browser = get_channel_browser(context.application)
     result = await browser.handle_callback(
@@ -351,6 +365,9 @@ async def channel_vods_callback(update, context):
         query.message.chat_id, query.message.message_id,
     )
     view = result.view if isinstance(result, (VodSelection, VodInformation)) else result
+    if view.status in ('invalid', 'expired', 'stale', 'forbidden'):
+        await reply.send(STALE_ACTION_NOTICE)
+        return None
     # Legacy one-card adapter, retained for old internal callers.
     prepared = False
     if isinstance(result, VodSelection):
@@ -360,13 +377,17 @@ async def channel_vods_callback(update, context):
                     and result.vod_url == f'https://www.twitch.tv/videos/{result.vod_id}')
 
         if not selection_is_current():
-            await query.message.reply_text('Кнопка устарела. Используйте текущую карточку VOD.')
+            await reply.send(STALE_ACTION_NOTICE)
+            return None
+        if not await reply.send():
             return None
         outcome = await prepare_vod_choice(query.message, context, update.effective_user.id,
                                            result.vod_id, is_current=selection_is_current)
         prepared = outcome in ('ready', 'format')
         if not prepared:
             view = replace(view, status='ready')
+    if not await reply.send():
+        return None
     if view.session_id is None:
         text, _ = build_channel_vod_card(view)
         await query.message.reply_text(text)

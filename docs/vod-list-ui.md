@@ -21,12 +21,14 @@ are discarded. No persistent cache
 or schema changes are introduced.
 
 Each UI page contains five full-width date buttons (`YYYY-MM-DD HH:MM UTC`),
-one per VOD, opening its temporary info card or, for ready HTML, the shared action screen
+one per VOD, replacing the list with its info card or, for ready HTML, the shared action screen
 ([details](ready-html-offer.md)). There is no separate ℹ️ button
 or direct select button. Dates are Helix `created_at` (creation
 of the VOD), displayed in UTC, not a promise of the stream's exact start time.
 The central page number opens a grid of up to 12 numbers, four per row; larger
-grids have group arrows. Navigation and selection edit the same bot message.
+grids have group arrows. Navigation and selection use one active interactive message. Text edits and
+text-to-photo reuse its ID; photo-to-text safely sends/binds a replacement before
+deleting the retired message. Both info and ready cards restore the same page.
 Session token, revision, owner, chat and message are checked before selection.
 
 Both active direct input and Process from the list's info card use `prepare_chat`, sharing the

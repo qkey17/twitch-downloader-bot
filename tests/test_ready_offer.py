@@ -65,7 +65,7 @@ class ReadyOfferTests(unittest.IsolatedAsyncioTestCase):
         source,view=await self.setup_offer()
         await self.pick(source,view)
         self.assertIsNotNone(self.browser._sessions[view.session_id].info_card)
-        info_message=source.reply_text.await_args.kwargs['reply_markup']
+        info_message=self.browser._sessions[view.session_id].info_card.keyboard
         self.assertEqual(['Создать чат','Вернуться к списку'],[r[0].text for r in info_message.inline_keyboard])
         self.assertNotIn('chat_choice',self.context.user_data)
         self.runner.assert_not_awaited();self.metadata.assert_not_awaited()
@@ -189,7 +189,10 @@ class RegistryReadyOfferTests(unittest.IsolatedAsyncioTestCase):
                     if state=='invalid':plan.path().write_text('broken',encoding='utf-8')
                     browser=VodListBrowser()
                     source=SimpleNamespace(chat_id=10,message_id=20,edit_text=AsyncMock(),reply_text=AsyncMock(return_value=SimpleNamespace(message_id=99)),reply_photo=AsyncMock())
-                    context=SimpleNamespace(application=SimpleNamespace(bot_data={'aiohttp':object(),lists._STORE_KEY:browser}),user_data={})
+                    async def edit_info(**kw):
+                        return await source.edit_text(kw.pop('text'),**{k:v for k,v in kw.items() if k not in ('chat_id','message_id')})
+                    context=SimpleNamespace(application=SimpleNamespace(bot_data={'aiohttp':object(),lists._STORE_KEY:browser}),user_data={},
+                        bot=SimpleNamespace(edit_message_text=AsyncMock(side_effect=edit_info)))
                     with patch.object(videos,'fetch_user_by_login',AsyncMock(return_value=videos.TwitchUser('123','channel','Channel'))),patch.object(videos,'fetch_archive_vods',AsyncMock(return_value=([cards.vod(123456789)],None))):
                         view=await lists._open_and_show(source,context,7,'channel')
                     query=SimpleNamespace(data=build_list(view)[1].inline_keyboard[0][0].callback_data,message=source,answer=AsyncMock())
@@ -199,4 +202,5 @@ class RegistryReadyOfferTests(unittest.IsolatedAsyncioTestCase):
                         source.reply_text.assert_not_awaited()
                     else:
                         self.assertNotIn('chat_choice',context.user_data)
-                        source.reply_text.assert_awaited_once()
+                        source.reply_text.assert_not_awaited()
+                        self.assertIn('Title',source.edit_text.await_args.args[0])

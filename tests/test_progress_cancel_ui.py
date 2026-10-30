@@ -88,7 +88,7 @@ class ProgressCancelTests(unittest.IsolatedAsyncioTestCase):
         card = self.browser._sessions[view.session_id].info_card
         await info.info_callback(self.update(f'ui:vi:{view.session_id}:{card.nonce}:process', card.message), self.context)
         await asyncio.wait_for(self.entered.wait(), 1)
-        return source, view
+        return self.by_id[self.context.user_data['download_ui']['message']], view
 
     async def regenerate(self, **kw):
         source, view, choice = await self.offer(**kw)
@@ -204,14 +204,14 @@ class ProgressCancelTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_new_channel_before_cleanup_is_never_overwritten(self):
         _, view = await self.first()
-        await self.cancel()
+        record = await self.cancel()
         new, latest = await self.open(30, 'other')
         before = new.edit_text.await_count
         await self.done()
         self.assertEqual(before, new.edit_text.await_count)
         self.assertTrue(self.browser.is_current(latest))
         self.assertNotIn(view.session_id, self.browser._sessions)
-        self.assertEqual('Обработка чата отменена пользователем', self.by_id[20].text)
+        self.assertEqual('Обработка чата отменена пользователем', self.by_id[record['message']].text)
 
     async def test_repeat_cancel_and_old_operation_token_cannot_cancel_new_download(self):
         _, view = await self.first()
@@ -265,7 +265,9 @@ class ProgressCancelTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(asyncio.gather(*self.tasks, return_exceptions=True), 2)
                 self.assertFalse(is_busy(self.context)); self.assertTrue(self.closed)
                 self.assertNotIn('download_ui', self.context.user_data)
-                self.context.bot.edit_message_text.side_effect = lambda **kw:self.by_id[kw['message_id']].edit_text(kw['text'],reply_markup=kw.get('reply_markup'))
+                async def edit(**kw):
+                    return await self.by_id[kw['message_id']].edit_text(kw['text'],reply_markup=kw.get('reply_markup'))
+                self.context.bot.edit_message_text.side_effect = edit
 
     async def test_cancel_telemetry_has_one_final_event_for_original_operation(self):
         with self.assertLogs('tcd.resources', level='INFO') as captured:
@@ -301,7 +303,7 @@ class ProgressCancelTests(unittest.IsolatedAsyncioTestCase):
     async def test_restored_info_image_failure_keeps_text_actions_and_original_page(self):
         _, view = await self.first()
         await self.cancel()
-        self.context.bot.send_photo.side_effect = BadRequest('synthetic')
+        self.context.bot.edit_message_media.side_effect = BadRequest('synthetic')
         await self.done()
         card = self.browser._sessions[view.session_id].info_card
         self.assertIsNotNone(card); self.assertFalse(card.photo)

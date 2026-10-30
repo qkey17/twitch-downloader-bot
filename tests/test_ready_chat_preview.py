@@ -31,6 +31,11 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
         fixture.StaleListTests.setUp(self)
         self.by_id, self.events = {}, []
         bot = self.context.bot
+        async def edit(**kwargs):
+            message = self.by_id[kwargs.pop('message_id')]
+            kwargs.pop('chat_id')
+            return await message.edit_text(**kwargs)
+        bot.edit_message_text.side_effect = edit
         async def media(**kw):
             msg = self.by_id[kw['message_id']]
             msg.photo = [object()]
@@ -456,8 +461,7 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
         session.vods[0] = replace(session.vods[0], thumbnail_url='')
         await self.pick(source, view)
         card = session.info_card
-        self.assertEqual(CREATE_CHAT, card.message.keyboard.inline_keyboard[0][0].text if card.message.keyboard else
-                         source.reply_text.await_args.kwargs['reply_markup'].inline_keyboard[0][0].text)
+        self.assertEqual(CREATE_CHAT, card.keyboard.inline_keyboard[0][0].text)
         from src.handlers.handlers_vod_info import info_callback
         await info_callback(self.update(f'ui:vi:{session.token}:{card.nonce}:process', card.message), self.context)
         await asyncio.gather(*self.tasks)
