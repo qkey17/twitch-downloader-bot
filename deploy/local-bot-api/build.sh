@@ -38,7 +38,10 @@ file telegram-bot-api | tee architecture.txt
 readelf -h telegram-bot-api >> architecture.txt
 grep -q 'ELF 64-bit.*x86-64' architecture.txt
 ldd ./telegram-bot-api | tee runtime-dependencies.txt
-! grep -q 'not found' runtime-dependencies.txt
+if grep -q 'not found' runtime-dependencies.txt; then
+    echo 'A runtime dependency is missing.' >&2
+    exit 1
+fi
 timeout 15 ./telegram-bot-api --help > help.txt 2>&1
 timeout 15 ./telegram-bot-api --version > version.txt 2>&1
 grep -Fq "$API_VERSION" version.txt
