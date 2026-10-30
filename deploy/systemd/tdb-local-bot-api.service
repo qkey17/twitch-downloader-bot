@@ -1,0 +1,61 @@
+# Preparation only. Do not install/enable/start until separately approved.
+[Unit]
+Description=TCD local Telegram Bot API (loopback only)
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=tdb-bot-api
+Group=tdb-bot-api
+EnvironmentFile=/etc/tdb-local-bot-api/api.env
+WorkingDirectory=/var/lib/tdb-bot-api
+StateDirectory=tdb-bot-api tdb-bot-api/files tdb-bot-api/tmp
+StateDirectoryMode=0700
+UMask=0077
+ExecStart=/usr/local/libexec/tdb-local-bot-api/telegram-bot-api --local --http-ip-address=127.0.0.1 --http-port=8081 --dir=/var/lib/tdb-bot-api --files-dir=/var/lib/tdb-bot-api/files --temp-dir=/var/lib/tdb-bot-api/tmp --verbosity=0 --memory-verbosity=0
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+KillMode=control-group
+TimeoutStopSec=120
+SendSIGKILL=no
+
+# Initial safety ceilings, not measured capacity or a 2000 MiB upload guarantee.
+MemoryHigh=128M
+MemoryMax=256M
+MemorySwapMax=64M
+CPUQuota=50%
+Nice=10
+TasksMax=128
+LimitNOFILE=4096
+LimitCORE=0
+
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/var/www/tdb/html
+InaccessiblePaths=/etc/tdb-local-bot-api
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+
+# Never journal raw API URLs/tokens, TDLib memory dumps or request bodies.
+# systemd still records unit lifecycle, exit status and resource statistics.
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=multi-user.target
