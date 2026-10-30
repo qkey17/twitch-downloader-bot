@@ -176,7 +176,7 @@ class ProgressCancelTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.context.user_data['chat_choice']['photo'])
         self.assertIsNotNone(source.keyboard)
 
-    async def test_direct_first_and_regen_cancel_have_exact_status_without_list(self):
+    async def test_direct_first_and_regen_cancel_restore_cards_without_list(self):
         for regenerate in (False, True):
             with self.subTest(regenerate=regenerate):
                 self.entered.clear(); self.release.clear(); self.closed = False
@@ -192,8 +192,9 @@ class ProgressCancelTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(self.entered.wait(), 1)
                 record = await self.cancel(); await self.done()
                 msg = self.by_id[record['message']]
-                self.assertEqual('Обработка чата отменена пользователем', msg.text)
-                self.assertIsNone(msg.keyboard)
+                self.assertNotIn('Обработка чата отменена пользователем', msg.text)
+                labels = [r[0].text for r in msg.keyboard.inline_keyboard]
+                self.assertEqual(['Получить готовый чат', 'Создать чат заново'] if regenerate else ['Создать чат'], labels)
                 self.assertFalse(self.browser._sessions)
 
     async def test_expired_session_does_not_revive_old_buttons(self):

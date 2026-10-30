@@ -95,6 +95,13 @@ async def close_info(session, card=None):
     return True
 
 
+def information_text(channel, title, duration, created_at):
+    """Shared Telegram information layout; caller supplies known values only."""
+    return (f'🟣 {html.escape(channel or "—")}\n'
+            f'🎬 {html.escape(title or "Без названия")}\n'
+            f'⏱ {duration}\n🗓 {_fmt_dt_utc(created_at)}')
+
+
 async def show_info(browser, session, source, request, *, bot):
     """Render text/actions under the caller's UI lock; preview is a second step."""
     from src.ui.result_preview import render_card
@@ -107,9 +114,7 @@ async def show_info(browser, session, source, request, *, bot):
     session.revision += 1  # Dates/Back from the source screen are now obsolete.
     view = browser._view(session)
     vod = view.items[request.index]
-    text = (f'🟣 {html.escape(view.channel.display_name[:80])}\n'
-            f'🎬 {html.escape(vod.title or "Без названия")}\n'
-            f'⏱ {_duration(vod.duration)}\n🗓 {_fmt_dt_utc(vod.created_at)}')
+    text = information_text(view.channel.display_name[:80], vod.title, _duration(vod.duration), vod.created_at)
     nonce = secrets.token_hex(8)
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(CREATE_CHAT, callback_data=f'ui:vi:{session.token}:{nonce}:process')],
