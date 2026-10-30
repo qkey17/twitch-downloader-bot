@@ -3,7 +3,6 @@ import asyncio
 from dataclasses import dataclass, replace
 import html
 import re
-from datetime import datetime, timezone
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from src.channel_browser import BrowseView, ChannelBrowser, VodSelection
@@ -28,13 +27,6 @@ class VodInformation:
     owner_id: int
     index: int
     view: ListView
-
-
-def compact_date(value):
-    try:
-        return datetime.fromisoformat(value.replace('Z', '+00:00')).astimezone(timezone.utc).strftime('%d.%m.%y %H:%M')
-    except (ValueError, TypeError):
-        return '—'
 
 
 def callback(view, action, number=None):
@@ -124,7 +116,7 @@ def build_list(view):
         texts = {'not_found': 'Канал не найден. Проверьте имя или ссылку.',
                  'empty': 'У канала нет опубликованных VODs.'}
         return texts.get(view.status, 'Не удалось загрузить полный список VODs. Повторите попытку позже.'), None
-    text = f'🟣 {html.escape(view.channel.display_name)}\nVODs канала: {view.loaded}\nДаты VOD — UTC'
+    text = f'🟣 {html.escape(view.channel.display_name)}\nVODs канала: {view.loaded}'
     if not view.items:
         return text+'\nУ канала нет опубликованных VODs.', None
     button = lambda label, action, n=None: InlineKeyboardButton(label, callback_data=callback(view, action, n))
@@ -144,7 +136,7 @@ def build_list(view):
         rows.append([button('Вернуться к списку', 'back')])
     else:
         for n in range(view.page*5, min(len(view.items), (view.page+1)*5)):
-            rows.append([button(compact_date(view.items[n].created_at), 'select', n), button('ℹ️', 'info', n)])
+            rows.append([button(_fmt_dt_utc(view.items[n].created_at), 'info', n)])
         nav = []
         if view.page:
             nav.append(button('⬅️', 'prev'))

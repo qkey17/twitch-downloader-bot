@@ -1,6 +1,7 @@
 """One on-demand temporary info message per bounded browser session."""
 import asyncio
 import html
+import logging
 import re
 import secrets
 from urllib.parse import urlsplit
@@ -16,6 +17,26 @@ from .handlers_state import is_busy
 
 TTL = 300
 _ACTION = re.compile(r'ui:vi:([0-9a-f]{16}):([0-9a-f]{16}):(process|back)')
+
+
+def _diagnostic(category):
+    # Fixed internal categories only; never URLs, IDs or exception contents.
+    try:
+        logging.getLogger(__name__).info('vod_preview category=%s', category)
+    except Exception:
+        pass
+
+
+def _placeholder(value):
+    if not isinstance(value, str):
+        return False
+    try:
+        url = urlsplit(value)
+    except ValueError:
+        return False
+    return (url.scheme == 'https' and url.netloc == 'vod-secure.twitch.tv'
+            and re.fullmatch(r'/_404/404_processing_(?:%\{width\}|\{width\}|[0-9]+)x(?:%\{height\}|\{height\}|[0-9]+)\.png', url.path) is not None
+            and not url.query and not url.fragment)
 
 
 @dataclass
@@ -40,7 +61,7 @@ def preview_url(value):
         return None
     if (url.scheme != 'https' or url.netloc != 'static-cdn.jtvnw.net' or url.query or url.fragment
             or not url.path.startswith('/cf_vods/') or '..' in url.path.split('/')
-            or not re.fullmatch(r'/[A-Za-z0-9_./-]+\.(?:jpg|png)', url.path)):
+            or not re.fullmatch(r'/[A-Za-z0-9_./-]+\.(?:jpe?g|png)', url.path)):
         return None
     return value
 
@@ -82,6 +103,7 @@ async def show_info(browser, session, source, request):
                 return
             session.info_card = old = None
         except (TelegramError, TimeoutError):
+            _diagnostic('reuse_failed')
             return
         else:
             return
@@ -94,6 +116,9 @@ async def show_info(browser, session, source, request):
         [InlineKeyboardButton('Обработать чат', callback_data=f'ui:vi:{session.token}:{nonce}:process')],
         [InlineKeyboardButton('Вернуться к списку', callback_data=f'ui:vi:{session.token}:{nonce}:back')]])
     url = preview_url(vod.thumbnail_url)
+    if not url:
+        _diagnostic('url_missing' if not vod.thumbnail_url else
+                    'placeholder' if _placeholder(vod.thumbnail_url) else 'url_rejected')
     message = None
     photo = bool(url)
     try:
@@ -106,6 +131,7 @@ async def show_info(browser, session, source, request):
                         await old.message.edit_text(text, parse_mode='HTML', reply_markup=keyboard)
                     message = old.message
                 except TelegramError:
+                    _diagnostic('photo_edit_failed' if url else 'text_edit_failed')
                     if not await close_info(session):
                         return
             elif old and not await close_info(session):
@@ -115,11 +141,15 @@ async def show_info(browser, session, source, request):
                     try:
                         message = await source.reply_photo(url, caption=text, parse_mode='HTML', reply_markup=keyboard)
                     except TelegramError:
+                        _diagnostic('photo_send_failed')
                         photo = False
                 if message is None:
                     message = await source.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
     except (TelegramError, TimeoutError):
+        _diagnostic('card_delivery_failed')
         return
+    if not photo:
+        _diagnostic('text_fallback')
     session.info_card = InfoCard(message, photo, nonce, request.view.revision, request.index,
                                  min(session.expires, browser.clock()+TTL))
     if not browser.is_current(request.view):

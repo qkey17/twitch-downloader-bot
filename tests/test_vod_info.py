@@ -43,14 +43,68 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
     def record(self, view):
         return self.browser._sessions[view.session_id].info_card
 
-    async def test_buttons_compact_date_and_no_image_on_navigation(self):
+    async def test_full_date_opens_info_only_and_no_image_on_navigation(self):
         source, view = await self.setup_list()
         text, kb = build_list(view)
-        self.assertIn('UTC', text)
-        self.assertEqual(['02.01.26 03:04', 'ℹ️'], [b.text for b in kb.inline_keyboard[0]])
+        self.assertNotIn('Даты VOD', text)
+        self.assertEqual(['2026-01-02 03:04 UTC'], [b.text for b in kb.inline_keyboard[0]])
         await lists.channel_vods_callback(self.update(callback(view, 'pages'), source), self.context)
         source.reply_photo.assert_not_awaited()
         self.metadata.assert_not_awaited()
+        # Use the actual rendered date callback, not an internal select action.
+        view = self.browser._view(self.browser._sessions[view.session_id])
+        data = build_list(view)[1].inline_keyboard[0][0].callback_data
+        await lists.channel_vods_callback(self.update(data, source), self.context)
+        source.reply_photo.assert_awaited_once()
+        self.metadata.assert_not_awaited()
+        self.runner.assert_not_awaited()
+
+    async def test_confirmed_custom_jpeg_preview_is_sent_at_480x270(self):
+        url = URL.replace('thumb0-', 'custom-ed2dc86a-5097-450f-8644-4635266055ed-').replace('.jpg', '.jpeg')
+        source, view = await self.setup_list(url)
+        await self.show(source, view)
+        self.assertEqual(url.replace('%{width}', '480').replace('%{height}', '270'), source.reply_photo.await_args.args[0])
+        source.reply_text.assert_not_awaited()
+
+    async def test_safe_diagnostic_categories_and_fallbacks(self):
+        cases = [('', False, ['url_missing', 'text_fallback']),
+                 ('https://example.invalid/SECRET.jpg', False, ['url_rejected', 'text_fallback']),
+                 ('https://vod-secure.twitch.tv/_404/404_processing_480x270.png', False, ['placeholder', 'text_fallback']),
+                 (URL, True, ['photo_send_failed', 'text_fallback'])]
+        for url, failed, expected in cases:
+            with self.subTest(expected=expected):
+                source, view = await self.setup_list(url)
+                if failed:
+                    source.reply_photo.side_effect = BadRequest('SECRET token user=123 https://private.invalid')
+                with self.assertLogs(info.__name__, level='INFO') as logs:
+                    await self.show(source, view)
+                self.assertEqual(expected, [r.args[0] for r in logs.records])
+                for record in logs.records:
+                    self.assertEqual('vod_preview category=%s', record.msg)
+                    self.assertIsNone(record.exc_info)
+                self.assertNotIn('SECRET', str(logs.output))
+                self.assertFalse(self.record(view).photo)
+                self.assertLessEqual(source.reply_photo.await_count, 1)
+
+    async def test_photo_edit_failure_has_bounded_send_and_text_fallback(self):
+        source, view = await self.setup_list()
+        await self.show(source, view)
+        self.card.edit_media.side_effect = BadRequest('SECRET')
+        source.reply_photo.side_effect = BadRequest('SECRET')
+        with self.assertLogs(info.__name__, level='INFO') as logs:
+            await self.show(source, view, 1)
+        self.assertEqual(['photo_edit_failed', 'photo_send_failed', 'text_fallback'], [r.args[0] for r in logs.records])
+        self.card.edit_media.assert_awaited_once()
+        self.card.delete.assert_awaited_once()
+        self.assertEqual(2, source.reply_photo.await_count)  # Initial + one fallback attempt.
+        self.assertFalse(self.record(view).photo)
+
+    async def test_logging_failure_does_not_break_text_information(self):
+        source, view = await self.setup_list('')
+        with patch.object(info.logging.Logger, 'info', side_effect=RuntimeError('broken logger')):
+            await self.show(source, view)
+        self.assertFalse(self.record(view).photo)
+        self.assertIn('Title', source.reply_text.await_args.args[0])
 
     async def test_info_uses_helix_title_duration_and_photo_without_processing(self):
         source, view = await self.setup_list()
@@ -638,3 +692,5 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
                     'https://static-cdn.jtvnw.net/cf_vods/a.jpg?redirect=https://evil',
                     'https://static-cdn.jtvnw.net/cf_vods/../a.jpg', 'file:///tmp/a.jpg'):
             self.assertIsNone(info.preview_url(url))
+        for path in ('../a.jpeg', '%2e%2e/a.jpeg', 'a.jpeg?next=secret', 'a.jpeg#fragment', 'a.gif', 'a.svg'):
+            self.assertIsNone(info.preview_url('https://static-cdn.jtvnw.net/cf_vods/'+path))

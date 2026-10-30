@@ -17,13 +17,15 @@ for on-demand info cards; see [vod-info.md](vod-info.md). Other unused strings
 are discarded. No persistent cache
 or schema changes are introduced.
 
-Each UI page contains five date/info button rows. Dates are Helix `created_at` (creation
+Each UI page contains five full-width date buttons (`YYYY-MM-DD HH:MM UTC`),
+one per VOD, opening its temporary info card. There is no separate ℹ️ button
+or direct select button. Dates are Helix `created_at` (creation
 of the VOD), displayed in UTC, not a promise of the stream's exact start time.
 The central page number opens a grid of up to 12 numbers, four per row; larger
 grids have group arrows. Navigation and selection edit the same bot message.
 Session token, revision, owner, chat and message are checked before selection.
 
-Both active direct input and list selection use `prepare_chat`, sharing the
+Both active direct input and Process from the list's info card use `prepare_chat`, sharing the
 existing metadata validation, publication/history and download/cancellation
 lifecycle. With no ready HTML, processing starts immediately. Ready HTML offers
 Open HTML / Regenerate; list selections additionally offer return to the same

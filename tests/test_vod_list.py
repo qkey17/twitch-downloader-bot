@@ -49,13 +49,13 @@ class ListTests(unittest.IsolatedAsyncioTestCase):
                     rows = kb.inline_keyboard
                     self.assertEqual(min(count, 5)+(count > 5), len(rows))
                     for row in rows[:-1] if count > 5 else rows:
-                        self.assertEqual(2, len(row))
-                        self.assertEqual('ℹ️', row[1].text)
-                        self.assertEqual('02.01.26 03:04', row[0].text)
+                        self.assertEqual(1, len(row))
+                        self.assertEqual('2026-01-02 03:04 UTC', row[0].text)
+                        self.assertIn(':info:', row[0].callback_data)
                     if count > 5:
                         self.assertEqual(f'Стр. 1/{view.page_count}', rows[-1][0].text)
                     else:
-                        self.assertTrue(all(':select:' in row[0].callback_data for row in rows))
+                        self.assertTrue(all(':info:' in row[0].callback_data for row in rows))
                 else:
                     self.assertIsNone(kb)
 
