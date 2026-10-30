@@ -94,8 +94,8 @@ async def _prepare_selection(query, message, context, browser, session, result, 
                            ui_lock=_ui_lock(session), thumbnail_url=result.view.vod.thumbnail_url,
                            ready_only=ready_only, on_bind=bind, download_origin=origin, on_download=started)
     finally:
-        # Show the normal text screen first. Cleanup touches only the captured
-        # info message, never the list/result or a newly opened info card.
+        # The consumed inline card may already be progress/the ready screen.
+        # close_info never edits a detached record or its reused message ID.
         if card is not None:
             from .handlers_vod_info import close_info
             await close_info(session, card)
@@ -314,8 +314,8 @@ async def _list_callback(update, context, browser):
         if replaced is not None:
             from src.ui.result_preview import cleanup_card
             await cleanup_card(context.bot, message.chat_id, replaced)
-        # Navigation renders first; only this captured card is deleted, outside
-        # the UI lock. Failures/cancellation cannot revive its consumed actions.
+        # A detached inline info record must not clear the newly rendered list.
+        # Physical replacements are cleaned up only by their captured retired ID.
         if navigation_card is not None:
             from .handlers_vod_info import close_info
             await close_info(session, navigation_card)
