@@ -3,7 +3,7 @@ from telegram.ext import ContextTypes
 from src.database import database as db
 import json
 from src.ui.ui_history import build_history_page
-from src.ui.ui_labels import CHAT_GENERIC
+from src.ui.ui_labels import CHAT_GENERIC, READY_UNAVAILABLE
 from src.config import HTML_PUBLISH_MODE
 from src.html_publisher import is_local_html_reference, local_published_html_status
 from src.ui.result_preview import send_card
@@ -87,7 +87,7 @@ async def history_files_callback(update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             ready = None
         if not ready:
-            await q.message.reply_text("Готовый чат недоступен. Создайте его заново.")
+            await q.message.reply_text(READY_UNAVAILABLE)
             return
         item["html_url"] = ready["html_ref"]
         for key in ('thumbnail_preview_url', 'thumbnail_url'):
@@ -96,7 +96,7 @@ async def history_files_callback(update, context: ContextTypes.DEFAULT_TYPE):
         html_url = item.get("html_url")
         is_local = is_local_html_reference(html_url)
         if is_local and local_published_html_status(html_url) is not True:
-            await q.message.reply_text("Локальный HTML-файл не найден.")
+            await q.message.reply_text(READY_UNAVAILABLE)
             return
         if not is_local and (not html_url or HTML_PUBLISH_MODE != "public"):
             await q.message.reply_text("Ссылка на чат недоступна.")

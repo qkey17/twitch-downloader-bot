@@ -7,8 +7,14 @@
 from typing import Optional
 
 # Кнопки / лейблы
-CHAT_HTML_LINK = "🌐 HTML"
-CHAT_GENERIC = "📖 Открыть чат"           # общий вариант, если нужно
+CHAT_HTML_LINK = "Открыть чат"
+CHAT_GENERIC = CHAT_HTML_LINK
+READY_CHAT = "Чат VOD уже готов"
+GET_READY_CHAT = "Получить готовый чат"
+CREATE_CHAT = "Создать чат"
+RECREATE_CHAT = "Создать чат заново"
+BACK_TO_LIST = "Вернуться к списку"
+READY_UNAVAILABLE = "Готовый чат недоступен. Выберите VOD заново."
 FILES = "📁 Получить файлы"
 VOD_LINK = "🔗 Ссылка на VOD"
 CANCEL = "❌ Отмена"

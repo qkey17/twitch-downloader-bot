@@ -41,6 +41,8 @@ class CardMessage:
     message_id: int
     photo: bool
     retired_id: int | None = None
+    message: object | None = None  # A replacement owner may need Message methods.
+    media_uncertain: bool = False
 
 
 async def _delete(bot, chat_id, message_id):
@@ -88,6 +90,7 @@ async def render_card(bot, chat_id, text, keyboard, url=None, *, message_id=None
         return None
     if not caption_fits(text):
         url = None
+    media_uncertain = False
     if url:
         try:
             async with asyncio.timeout(5):
@@ -110,12 +113,13 @@ async def render_card(bot, chat_id, text, keyboard, url=None, *, message_id=None
                 return CardMessage(message_id, True) if current() else None
             _diagnostic('photo_edit_failed' if message_id is not None else 'photo_send_failed')
         except Exception:
+            media_uncertain = True  # A network timeout may follow a remote edit.
             _diagnostic('photo_edit_failed' if message_id is not None else 'photo_send_failed')
         if not current():
             return None
     if keep_text and message_id is not None and not photo:
         _diagnostic('text_fallback')
-        return CardMessage(message_id, False) if current() else None
+        return CardMessage(message_id, False, media_uncertain=media_uncertain) if current() else None
     if message_id is not None and not photo:
         try:
             async with asyncio.timeout(5):
@@ -136,7 +140,7 @@ async def render_card(bot, chat_id, text, keyboard, url=None, *, message_id=None
     except Exception:
         _diagnostic('card_delivery_failed')
         return None
-    result = CardMessage(sent.message_id, False, message_id)
+    result = CardMessage(sent.message_id, False, message_id, sent)
     if not current():
         await _delete(bot, chat_id, result.message_id)
         return None

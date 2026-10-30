@@ -71,7 +71,7 @@ class ResultCallbacksTestCase(unittest.IsolatedAsyncioTestCase):
     async def choose(self,update,context):
         await handlers_vod.vod_link_entry(update,context)
         keyboard=update.message.reply_text.await_args.kwargs['reply_markup']
-        self.assertEqual(['Показать результат','Создать заново'],
+        self.assertEqual(['Получить готовый чат','Создать чат заново'],
                          [row[0].text for row in keyboard.inline_keyboard])
         return [row[0].callback_data for row in keyboard.inline_keyboard]
 

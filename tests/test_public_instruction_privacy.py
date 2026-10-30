@@ -159,10 +159,10 @@ class PublicInstructionPrivacyTests(unittest.IsolatedAsyncioTestCase):
             _FORMAT_PROMPT_TEXT)
         self.assertEqual('Загрузка была отменена.', CANCELLED_MESSAGE)
         keyboard = build_format_keyboard().inline_keyboard
-        self.assertEqual([['🌐 HTML'], ['❌ Отмена']], [[b.text for b in row] for row in keyboard])
+        self.assertEqual([['Создать чат'], ['❌ Отмена']], [[b.text for b in row] for row in keyboard])
         self.assertEqual([['vodfmt:html_online'], ['ui:format_cancel']],
                          [[b.callback_data for b in row] for row in keyboard])
-        self.assertEqual(('📖 Открыть чат', '📁 Получить файлы', '🔗 Ссылка на VOD'),
+        self.assertEqual(('Открыть чат', '📁 Получить файлы', '🔗 Ссылка на VOD'),
                          (CHAT_GENERIC, FILES, VOD_LINK))
 
 

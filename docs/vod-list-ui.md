@@ -29,7 +29,7 @@ Session token, revision, owner, chat and message are checked before selection.
 Both active direct input and Process from the list's info card use `prepare_chat`, sharing the
 existing metadata validation, publication/history and download/cancellation
 lifecycle. With no ready HTML, processing starts immediately. Ready HTML offers
-Open HTML / Regenerate; list selections additionally offer return to the same
+«Получить готовый чат» / «Создать чат заново»; list selections additionally offer return to the same
 page until processing starts. Actions expire and are bound to user/message and
 request generation. No private data is sent to other users' sessions.
 
@@ -43,7 +43,7 @@ tests assert exact counts without `+`.
 
 Old `ui:result:open:<id>` buttons still resolve the current ready HTML and record
 history for the requesting user. Missing results report unavailability without
-preparing a new download. Both compatible opening and the active Open HTML
+preparing a new download. Both compatible opening and the active Get ready chat
 action edit the existing card using the shared result renderer and its local/
 public URL restrictions. Repeated active opening is consumed before awaiting;
 Telegram's unchanged-message response does not create a duplicate fallback card.

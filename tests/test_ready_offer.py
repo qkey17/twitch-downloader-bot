@@ -25,7 +25,7 @@ class ReadyOfferTests(unittest.IsolatedAsyncioTestCase):
     open=fixture.StaleListTests.open
 
     async def setup_offer(self):
-        thumbnail='https://static-cdn.jtvnw.net/cf_vods/example/thumb/thumb0-%{width}x%{height}.jpg'
+        thumbnail=''  # This fixture exercises the unchanged text fallback.
         videos.fetch_archive_vods.return_value=([cards.vod(123456789,thumbnail_url=thumbnail),cards.vod(2,thumbnail_url=thumbnail)],None)
         source,view=await self.open(20)
         self.card=self.message(99)
@@ -52,7 +52,7 @@ class ReadyOfferTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(selected,VodSelection)
         self.assertEqual(ready_offer_text(ready),source.edit_text.await_args.args[0])
         rows=source.edit_text.await_args.kwargs['reply_markup'].inline_keyboard
-        self.assertEqual(['Открыть HTML','Сгенерировать заново','Вернуться к списку'],[r[0].text for r in rows])
+        self.assertEqual(['Получить готовый чат','Создать чат заново','Вернуться к списку'],[r[0].text for r in rows])
         self.assertEqual('HTML',source.edit_text.await_args.kwargs['parse_mode'])
         history.assert_not_called();self.metadata.assert_not_awaited();self.runner.assert_not_awaited()
         source.reply_photo.assert_not_awaited();source.reply_text.assert_not_awaited()
@@ -64,8 +64,8 @@ class ReadyOfferTests(unittest.IsolatedAsyncioTestCase):
         source,view=await self.setup_offer()
         await self.pick(source,view)
         self.assertIsNotNone(self.browser._sessions[view.session_id].info_card)
-        info_message=source.reply_photo.await_args.kwargs['reply_markup']
-        self.assertEqual(['Обработать чат','Вернуться к списку'],[r[0].text for r in info_message.inline_keyboard])
+        info_message=source.reply_text.await_args.kwargs['reply_markup']
+        self.assertEqual(['Создать чат','Вернуться к списку'],[r[0].text for r in info_message.inline_keyboard])
         self.assertNotIn('chat_choice',self.context.user_data)
         self.runner.assert_not_awaited();self.metadata.assert_not_awaited()
 
@@ -113,6 +113,7 @@ class ReadyOfferTests(unittest.IsolatedAsyncioTestCase):
         self.available['123456789']=self.ready_result()
         await self.pick(source,view)
         rows=source.edit_text.await_args.kwargs['reply_markup'].inline_keyboard
+        self.context.user_data['chat_choice']['thumbnail_url']='https://static-cdn.jtvnw.net/cf_vods/example/thumb/custom-480x270.jpeg'
         self.context.bot.edit_message_media.side_effect=lambda **kw:self.context.bot.edit_message_text.assert_awaited_once()
         with patch.object(chat.vod.config,'HISTORY_ENABLED',True),patch.object(chat.vod.db,'add_user_history') as history:
             await chat.chat_callback(self.update(rows[0][0].callback_data,source),self.context)
@@ -136,7 +137,7 @@ class ReadyOfferTests(unittest.IsolatedAsyncioTestCase):
         self.available['123456789']=self.ready_result()
         entered,release=asyncio.Event(),asyncio.Event()
         async def slow(text,**kwargs):
-            if text.startswith('Готовый HTML доступен.'):
+            if text.startswith('Чат VOD уже готов'):
                 entered.set();await release.wait()
         source.edit_text.side_effect=slow
         selecting=self.task(self.pick(source,view))
@@ -156,7 +157,7 @@ class ReadyFormattingTests(unittest.TestCase):
         ready={'meta':dict(channel='C<&>',title='T<&>',created_at='2026-01-02T03:04:00Z',length_seconds=3723),
                'stats':dict(messages=1234,unique_users=56)}
         text=ready_offer_text(ready)
-        self.assertEqual('Готовый HTML доступен.\n\n🟣 C&lt;&amp;&gt;\n🎬 T&lt;&amp;&gt;\n⏱ 01:02:03 • 💬 1234 • 👥 56\n🗓 02 Янв 2026 03:04 UTC',text)
+        self.assertEqual('Чат VOD уже готов\n\n🟣 C&lt;&amp;&gt;\n🎬 T&lt;&amp;&gt;\n⏱ 01:02:03 • 💬 1234 • 👥 56\n🗓 02 Янв 2026 03:04 UTC',text)
         item=ready['meta'] | ready['stats']
         self.assertIn(format_vod_summary(item),build_history_page([item],0,1)[0][0][0])
 
@@ -193,7 +194,7 @@ class RegistryReadyOfferTests(unittest.IsolatedAsyncioTestCase):
                     query=SimpleNamespace(data=build_list(view)[1].inline_keyboard[0][0].callback_data,message=source,answer=AsyncMock())
                     await lists.channel_vods_callback(SimpleNamespace(callback_query=query,effective_user=SimpleNamespace(id=7)),context)
                     if state=='available':
-                        self.assertTrue(source.edit_text.await_args.args[0].startswith('Готовый HTML доступен.'))
+                        self.assertTrue(source.edit_text.await_args.args[0].startswith('Чат VOD уже готов'))
                         source.reply_text.assert_not_awaited()
                     else:
                         self.assertNotIn('chat_choice',context.user_data)

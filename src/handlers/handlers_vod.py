@@ -39,8 +39,8 @@ from .handlers_state import (
     bind_pending_message,
     pending_matches_message,
 )
-from src.ui.ui_history import build_history_page
-from src.ui.ui_labels import CHAT_GENERIC, VOD_LINK, CANCEL
+from src.ui.ui_history import build_history_page, ready_offer_text
+from src.ui.ui_labels import CHAT_GENERIC, VOD_LINK, CANCEL, GET_READY_CHAT, RECREATE_CHAT, READY_UNAVAILABLE
 from src.ui.ui_constants import CB_PENDING_CANCEL
 
 
@@ -134,16 +134,17 @@ async def _edit_progress_message_with_card(context, chat_id: int, message_id: in
                 on_photo()  # Replacement is terminal too: retire callbacks on the old source.
         await cleanup_card(context.bot, chat_id, shown)
         if shown is None or shown.message_id != message_id:
-            return  # Preserve the existing safe fallback, no second card.
+            return shown is not None  # Preserve the safe fallback, no second card.
     url = await resolve_preview(context, item) if current() and caption_fits(text) else None
     if not url and not photo:
-        return
+        return True
     async with ui_lock or nullcontext():
         shown = await render_card(context.bot, chat_id, text, final_kb, url, message_id=message_id,
                                   photo=photo, current=current, keep_text=not photo)
         if shown and (shown.photo or shown.message_id != message_id) and on_photo:
             on_photo()  # Terminal result: old list/back actions cannot edit a photo as text.
     await cleanup_card(context.bot, chat_id, shown)
+    return shown is not None
 
 
 async def _send_card_with_buttons(context, chat_id, item, html_url=None):
@@ -170,10 +171,10 @@ async def _offer_ready(message,context,result,edit=False):
     vod_id = result["vod_id"]
     nonce = secrets.token_hex(8)
     context.user_data["vod_result_choice"] = {"vod_id":vod_id,"nonce":nonce,"created_at":time.time()}
-    text,_ = _build_card(_make_item(result['meta'],result['stats'],f"https://www.twitch.tv/videos/{vod_id}","html_online"))
+    text = ready_offer_text(result)
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Показать результат",callback_data=f"ui:result:open:{vod_id}")],
-        [InlineKeyboardButton("Создать заново",callback_data=f"ui:result:regen:{vod_id}:{nonce}")],
+        [InlineKeyboardButton(GET_READY_CHAT,callback_data=f"ui:result:open:{vod_id}")],
+        [InlineKeyboardButton(RECREATE_CHAT,callback_data=f"ui:result:regen:{vod_id}:{nonce}")],
     ])
     if edit:
         await context.bot.edit_message_text(chat_id=message.chat_id,message_id=message.message_id,
@@ -275,7 +276,7 @@ async def prepare_vod_choice(message, context, user_id, vod_id, *, is_current=No
         await _offer_ready(message,context,ready)
         return 'ready'
     if ready_only:
-        await message.reply_text('Готовый HTML недоступен. Выберите VOD заново.')
+        await message.reply_text(READY_UNAVAILABLE)
         return 'missing'
     if pending_active:
         await message.reply_text('Выберите формат чата в предыдущем сообщении.')

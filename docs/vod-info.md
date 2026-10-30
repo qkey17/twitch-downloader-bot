@@ -14,7 +14,7 @@ durations 32, thumbnail URLs 1024, dates 64; other unused strings remain removed
 This increases the bounded metadata cache, not image storage; production RAM
 impact has not been benchmarked. No images or new records go into SQLite/disk.
 
-Only info opening sends an image URL to Telegram. The application accepts HTTPS
+Info and ready-action opening may send an image URL to Telegram. The application accepts HTTPS
 on the exact `static-cdn.jtvnw.net` authority and `/cf_vods/` image paths, with no
 credentials, ports, query, fragment, encoded path or traversal segments.
 Accepted image extensions are `.jpg`, `.jpeg`, `.png`. Helix

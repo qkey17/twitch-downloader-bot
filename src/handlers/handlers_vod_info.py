@@ -13,6 +13,7 @@ from src.channel_browser import VodSelection
 from src.ui.ui_channel_vods import _duration
 from src.ui.ui_formatters import _fmt_dt_utc
 from .handlers_state import is_busy
+from src.ui.ui_labels import CREATE_CHAT, BACK_TO_LIST
 
 
 TTL = 300
@@ -96,8 +97,8 @@ async def show_info(browser, session, source, request):
         try:
             async with asyncio.timeout(5):
                 await old.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton('Обработать чат', callback_data=f'ui:vi:{session.token}:{old.nonce}:process')],
-                    [InlineKeyboardButton('Вернуться к списку', callback_data=f'ui:vi:{session.token}:{old.nonce}:back')]]))
+                    [InlineKeyboardButton(CREATE_CHAT, callback_data=f'ui:vi:{session.token}:{old.nonce}:process')],
+                    [InlineKeyboardButton(BACK_TO_LIST, callback_data=f'ui:vi:{session.token}:{old.nonce}:back')]]))
         except BadRequest as exc:
             if 'message to edit not found' not in str(exc).lower():
                 return
@@ -113,8 +114,8 @@ async def show_info(browser, session, source, request):
             f'⏱ {_duration(vod.duration)}\n🗓 {_fmt_dt_utc(vod.created_at)}')
     nonce = secrets.token_hex(8)
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton('Обработать чат', callback_data=f'ui:vi:{session.token}:{nonce}:process')],
-        [InlineKeyboardButton('Вернуться к списку', callback_data=f'ui:vi:{session.token}:{nonce}:back')]])
+        [InlineKeyboardButton(CREATE_CHAT, callback_data=f'ui:vi:{session.token}:{nonce}:process')],
+        [InlineKeyboardButton(BACK_TO_LIST, callback_data=f'ui:vi:{session.token}:{nonce}:back')]])
     url = preview_url(vod.thumbnail_url)
     if not url:
         _diagnostic('url_missing' if not vod.thumbnail_url else

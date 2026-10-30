@@ -1,7 +1,7 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from .ui_constants import *
 from .ui_labels import (
-    CHAT_HTML_LINK,
+    CREATE_CHAT,
     CANCEL
 )
 
@@ -9,7 +9,7 @@ from .ui_labels import (
 def build_format_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton(CHAT_HTML_LINK, callback_data=CB_FMT_HTML_ONLINE),
+            InlineKeyboardButton(CREATE_CHAT, callback_data=CB_FMT_HTML_ONLINE),
         ],
         [
             InlineKeyboardButton(CANCEL, callback_data=CB_FORMAT_CANCEL),
