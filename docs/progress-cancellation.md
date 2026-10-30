@@ -52,8 +52,10 @@ IDs, one-slot admission, cancellation flags and telemetry finalization remain.
 
 One transient `download_ui` record in the user's existing context holds the
 operation/owner/VOD/chat/message, request identity, regeneration flag and optional
-origin `{token, revision, index}`. No API result/browser copy, SQLite field or
-image cache. It is removed on completion, failure and task cancellation, including
+origin `{token, revision, index}`. Modern direct input additionally retains the
+starter metadata, direct-origin flag and existing UI lock. Known preview URLs
+are retained across retries. No browser session, SQLite field or image cache
+is created for a direct VOD. It is removed on completion, failure and task cancellation, including
 cancellation before the runner starts; an old done callback cannot clear a new run.
 
 The bounded list session remains selected during work, with a consumed revision
@@ -62,24 +64,37 @@ and navigation bounds are unchanged; success/failure retires that owned session.
 
 After confirmed cancellation:
 
-- First generation from a live list: restore the original list/page in the
-  progress text message, then reuse `show_info` to restore the VOD info card
-  with fresh nonce/revision and working Create/Back. This matches the original
-  two-message list/info screen; photo failure falls back to text.
+- First generation from a live list: reuse `show_info` in the progress message
+  with fresh nonce/revision and working Create/Back. PR #22's unified screen
+  restores the saved page on Back; there is no second permanent list/info card.
 - Regeneration from a live list: recheck the current result registry, then reuse
   the ready-only preparation/offer and its text-first optional preview. A fresh
   nonce/revision and current message binding protect Get/Recreate/Back. If the
   old result disappeared, restore the list/info/Create screen instead. Previous
   HTML generations are never removed or altered for UI restoration.
-- Direct VOD URL/ID: show exactly «Обработка чата отменена пользователем»,
-  no trailing period or invented list navigation.
-- Expired/replaced session or a newer input: do not resurrect old callbacks.
+- Modern direct VOD URL/ID: recheck ready-result availability after release.
+  With no usable HTML, show the shared information layout and «Создать чат».
+  With usable HTML, reuse the existing ready offer, statistics and Get/Recreate.
+  Both replace the progress screen, have fresh request/owner/message/nonce/TTL
+  binding, and have no list or Back. Create calls the normal prepare_chat path;
+  Recreate uses the existing starter. Each new operation receives its own ID.
+- Known starter metadata is reused without fetching it again for restoration.
+  Missing fields remain unknown; if the title is missing, include the known VOD
+  ID and URL. Optional thumbnail lookup uses the existing bounded three-second
+  helper only when thumbnail fields were absent; failure cannot remove actions.
+  Full metadata is validated normally only when the user explicitly starts again.
+- Expired/replaced list session or a newer input in that list flow: do not resurrect old callbacks.
   Update only the operation-owned old progress to the same cancellation status;
   preserve the newer list. Exact page restoration is limited to the still-live
   original session. Long operations do not extend its TTL.
 
-Restoration validates owner, original revision, message, operation record and
-request before installing actions. Metadata/preview resolution and old-message
+Restoration validates owner, message, operation record and request before
+installing actions; list origins also validate their original revision. A newer
+direct input/channel request invalidates direct restoration entirely, including
+late media. The captured choice fences late preview after Create/Open/Recreate;
+an old runner/done callback cannot clear a new operation. No slot is reserved
+while restoring the card or waiting for its preview. Direct cancellation during
+an in-flight publication close/error is not reported as successfully restored. Metadata/preview resolution and old-message
 cleanup remain outside the UI lock. Fresh binding precedes deletion; cancelled
 or delayed deletion cannot remove a newer card. UI restoration is best effort:
 Telegram failure/timeout may leave an obsolete visible card, but never an active
@@ -122,7 +137,7 @@ References: [Message](https://core.telegram.org/bots/api#message),
 
 `test_progress_cancel_ui.py` runs the real starter/runner and session protocol
 with a gated synthetic worker/publication and Telegram mocks. It covers cleanup
-ordering, one slot, exact direct cancellation text, Create/Back/Get after cancel,
+ordering, one slot, direct Create/Get/Recreate without Back, list Create/Back/Get after cancel,
 previous-result disappearance, expired/newer sessions, repeated/foreign/stale
 Cancel, startup failures, timeout/task cancellation, telemetry and API ordering.
 The existing temporary-registry cancelled-regeneration test validates that the
@@ -134,3 +149,17 @@ starts from text and photo, cancellation during metadata/chat/HTML stages, the
 restored original page and actions, direct-input cancellation, rapid/new-channel
 actions, image fallback, result/history labels and the edited badge on mobile.
 Do not claim real Telegram/CDN behavior from these synthetic tests.
+
+## Direct cancellation transport limits
+
+The shared renderer edits text first and adds an optional photograph to the
+same message. If text editing fails, it sends/binds a replacement before
+retiring the old ID. Photo-to-text on Create uses the same send/bind/cleanup
+sequence; a late cleanup only owns that retired ID. Failed deletion best-effort
+removes its old keyboard. Failed optional media leaves actions; long captions
+stay text. If both edit and replacement are unavailable, delivery cannot be
+guaranteed, but the old operation remains released and its Cancel is stale.
+Task cancellation or unknown network outcomes may leave an inert visible
+message; no automatic reprocessing, retries, recovery or HTML regeneration runs.
+Process restart loses transient choices: old callbacks receive the standard
+«Кнопка больше неактуальна» with show_alert=False, without restoring sessions.

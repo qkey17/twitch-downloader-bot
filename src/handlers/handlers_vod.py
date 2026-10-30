@@ -450,7 +450,11 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
     telemetry.begin()
     ui = dict(operation=operation_id, chat=q.message.chat_id, message=q.message.message_id,
               owner=update.effective_user.id, vod_id=vod_id, regenerate=regenerate,
-              origin=getattr(q.message, 'download_origin', None), request=context.user_data.get('chat_request'))
+              origin=getattr(q.message, 'download_origin', None), request=context.user_data.get('chat_request'),
+              direct=bool(getattr(q.message, 'direct_vod', False)), meta=dict(initial_meta or {}),
+              ui_lock=getattr(q.message, 'ui_lock', None))
+    if ui['direct'] and getattr(q.message, 'thumbnail_url', None) and not ui['meta'].get('thumbnail_preview_url'):
+        ui['meta']['thumbnail_preview_url'] = q.message.thumbnail_url
     context.user_data['download_ui'] = ui
     from src.workers.worker_progress import _build_progress_card, cancel_keyboard
     if regenerate:
@@ -662,6 +666,10 @@ async def _show_cancelled(context, chat_id, message_id, ui):
     if not current():
         return
     try:
+        if ui and ui.get('direct'):
+            from .handlers_chat import restore_direct_cancelled
+            await restore_direct_cancelled(context, ui)
+            return
         if ui and ui.get('origin'):
             from .handlers_channel_vods import restore_cancelled_selection
             if await restore_cancelled_selection(context, ui):
