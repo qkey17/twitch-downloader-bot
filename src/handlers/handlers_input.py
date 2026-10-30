@@ -1,5 +1,7 @@
 """Automatic text routing and explicit commands, without input-wait modes."""
 import time
+from src.ui.callbacks import CallbackReply
+from src.ui.ui_labels import STALE_ACTION_NOTICE
 
 from telegram import LinkPreviewOptions
 
@@ -37,7 +39,7 @@ async def input_menu_callback(update, context):
     """Reject every legacy mode button; it must never modify current state."""
     query = update.callback_query
     if query is not None:
-        await query.answer('Меню устарело. Подробнее — /help.', show_alert=True)
+        await CallbackReply(query).send(STALE_ACTION_NOTICE)
 
 
 def _active_route(context):

@@ -244,9 +244,10 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_legacy_missing_and_regen_never_restore_format(self):
         message = self.message()
-        await chat.legacy_open_callback(self.update('ui:result:open:123456789', message), self.context)
-        self.assertIn('недоступен', message.edit_text.await_args.args[0])
-        self.assertNotIn('reply_markup', message.edit_text.await_args.kwargs)
+        q = self.update('ui:result:open:123456789', message)
+        await chat.legacy_open_callback(q, self.context)
+        q.callback_query.answer.assert_awaited_once_with('Готовый чат недоступен. Выберите VOD заново.')
+        message.edit_text.assert_not_awaited()
         self.ready.reset_mock()
         await chat.legacy_open_callback(self.update('ui:result:regen:123456789:0123456789abcdef', message), self.context)
         self.ready.assert_not_called()
@@ -284,7 +285,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         await chat.legacy_open_callback(self.update('ui:result:open:123456789'), self.context)
         self.context.bot.send_message.assert_not_awaited()
         self.context.bot.edit_message_text.side_effect = BadRequest('Message cannot be edited')
-        await chat.legacy_open_callback(self.update('ui:result:open:123456789'), self.context)
+        await chat.legacy_open_callback(self.update('ui:result:open:123456789', self.message(21)), self.context)
         self.context.bot.send_message.assert_awaited_once()
 
     async def test_local_reference_is_not_exposed_as_telegram_url(self):

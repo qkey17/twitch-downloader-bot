@@ -5,7 +5,9 @@ from telegram.error import BadRequest
 from telegram.ext import CallbackQueryHandler
 
 from src.channel_browser import CALLBACK_PREFIX, ChannelBrowser, VodSelection
-from src.vod_list import VodListBrowser, ListView, VodInformation, PREFIX, build_list, callback
+from src.vod_list import VodListBrowser, ListView, VodInformation, PREFIX, build_list, callback, _CALLBACK
+from src.ui.callbacks import CallbackReply
+from src.ui.ui_labels import STALE_LIST_NOTICE, STALE_ACTION_NOTICE, PROCESSING_NOTICE
 from .handlers_chat import prepare_chat
 from .handlers_state import is_busy
 from src.ui.ui_channel_vods import build_channel_vod_card
@@ -31,7 +33,7 @@ async def _edit(message, view):
 
 
 STALE_LIST = '⚠️ Список устарел. Отправьте имя канала повторно.'
-STALE_BUTTON = '⚠️ Этот список устарел. Запросите канал повторно.'
+STALE_BUTTON = STALE_LIST_NOTICE
 
 
 def _ui_lock(session):
@@ -65,7 +67,8 @@ def _consume_selection(session):
     return take_info(session)
 
 
-async def _prepare_selection(query, message, context, browser, session, result, card, *, ready_only=False):
+async def _prepare_selection(query, message, context, browser, session, result, card, *, ready_only=False, reply=None):
+    reply = reply or CallbackReply(query)
     view = result.view
     origin = dict(token=session.token, revision=view.revision, index=view.position)
     def started():
@@ -83,7 +86,8 @@ async def _prepare_selection(query, message, context, browser, session, result, 
             session.message_id, session.photo = shown.message_id, shown.photo or shown.media_uncertain
             view = replace(view, message_id=shown.message_id)
     try:
-        await query.answer()
+        if not await reply.send():
+            return
         await prepare_chat(message, context, result.owner_id, result.vod_id,
                            is_current=lambda: browser.is_current(view), edit=True,
                            back=callback(view, 'back'), on_start=lambda: browser.retire(view),
@@ -210,6 +214,7 @@ async def _open_and_show(message, context, owner_id, login):
 
 async def _list_callback(update, context, browser):
     query = update.callback_query
+    reply = CallbackReply(query)
     message = query.message
     # Resolve only the token here. Full grammar/revision/action validation is
     # still performed by the browser, under the same lock as list rendering.
@@ -218,7 +223,29 @@ async def _list_callback(update, context, browser):
     session = browser._sessions.get(parts[2]) if len(parts) >= 4 else None
     if (session is None or session.owner_id != update.effective_user.id or message is None
             or (session.chat_id, session.message_id) != (message.chat_id, message.message_id)):
-        await query.answer(STALE_BUTTON)
+        await reply.send(STALE_ACTION_NOTICE if session is not None and session.owner_id != update.effective_user.id else STALE_BUTTON)
+        return
+    if str(session.revision) != parts[3]:
+        await reply.send(STALE_BUTTON)
+        return
+    match = _CALLBACK.fullmatch(query.data or '')
+    if match is None:
+        await reply.send(STALE_BUTTON)
+        return
+    action, number = match[3], match[4]
+    view = browser._view(session)
+    value = int(number or 0)
+    if ((action in ('group', 'page', 'select', 'info')) != (number is not None)
+            or (session.status == 'selected' and action != 'back')
+            or (action in ('select', 'info') and not view.page*5 <= value < min(view.page*5+5, len(session.vods)))
+            or (action == 'page' and value >= view.page_count)
+            or (action == 'group' and value >= (view.page_count+11)//12)):
+        await reply.send(STALE_BUTTON)
+        return
+    if is_busy(context):
+        await reply.send(PROCESSING_NOTICE)
+        return
+    if not await reply.send():
         return
     navigation_card = None
     replaced = None
@@ -226,28 +253,29 @@ async def _list_callback(update, context, browser):
     try:
         async with _ui_lock(session):
             if not browser._live(session) or str(session.revision) != parts[3]:
-                await query.answer(STALE_BUTTON)
+                await reply.send(STALE_BUTTON)
                 return
             if is_busy(context):
-                await query.answer()
+                await reply.send(PROCESSING_NOTICE)
                 return
             previous = browser._view(session)
             result = await browser.handle_callback(context.application.bot_data['aiohttp'], update.effective_user.id,
                                                    query.data, message.chat_id, message.message_id)
             if not isinstance(result, (ListView, VodSelection, VodInformation)):
-                await query.answer(STALE_BUTTON)
+                await reply.send(STALE_BUTTON)
                 return
             view = result.view if isinstance(result, (VodSelection, VodInformation)) else result
             if isinstance(result, VodInformation):
                 if results.get_ready_result(view.items[result.index].id) is None:
                     from .handlers_vod_info import show_info
-                    await query.answer()
+                    if not await reply.send():
+                        return
                     await show_info(browser, session, message, result)
                     return result
                 result = await browser.handle_callback(context.application.bot_data['aiohttp'], result.owner_id,
                     callback(view, 'select', result.index), message.chat_id, message.message_id)
                 if not isinstance(result, VodSelection):
-                    await query.answer(STALE_BUTTON)
+                    await reply.send(STALE_BUTTON)
                     return
                 view, ready_only = result.view, True
             if isinstance(result, VodSelection):
@@ -255,7 +283,8 @@ async def _list_callback(update, context, browser):
             else:
                 from .handlers_vod_info import take_info
                 navigation_card = take_info(session)
-                await query.answer()
+                if not await reply.send():
+                    return
                 if browser.is_current(view):
                     try:
                         replaced = await _render_list(message, view, session, bot=getattr(context, 'bot', None),
@@ -281,7 +310,7 @@ async def _list_callback(update, context, browser):
             from .handlers_vod_info import close_info
             await close_info(session, navigation_card)
     if isinstance(result, VodSelection):
-        await _prepare_selection(query, message, context, browser, session, result, card, ready_only=ready_only)
+        await _prepare_selection(query, message, context, browser, session, result, card, ready_only=ready_only, reply=reply)
     return result
 
 

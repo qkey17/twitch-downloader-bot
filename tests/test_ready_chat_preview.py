@@ -1,3 +1,4 @@
+from callback_assertions import assert_stale
 """Offer media transitions with real session/slot logic, synthetic Telegram only."""
 import asyncio
 from types import SimpleNamespace
@@ -171,7 +172,7 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
                 await self.act(choice, action, message)
             q = self.update(callback(self.browser._view(session), 'prev'), message)
             await lists.channel_vods_callback(q, self.context)
-            q.callback_query.answer.assert_awaited_once_with(lists.STALE_BUTTON)
+            assert_stale(self, q)
             current = await lists.channel_vods_callback(self.update(callback(self.browser._view(session), 'prev'), new), self.context)
             self.assertEqual(0, current.page)
             await self.pick(new, current, 0)

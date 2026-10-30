@@ -1,3 +1,4 @@
+from callback_assertions import assert_stale
 """List-only invalidation, no Telegram/Twitch or database access."""
 import asyncio
 from unittest.mock import AsyncMock, patch
@@ -49,12 +50,12 @@ class StaleListTests(unittest.IsolatedAsyncioTestCase):
         before = old.edit_text.await_count
         q = self.update(callback(a, 'pages'), old)
         await h.channel_vods_callback(q, self.context)
-        q.callback_query.answer.assert_awaited_once_with(h.STALE_BUTTON)
+        assert_stale(self, q)
         self.assertEqual(before, old.edit_text.await_count)
         self.app.bot_data[h._STORE_KEY] = VodListBrowser()
         q = self.update(callback(b, 'pages'), new)
         await h.channel_vods_callback(q, self.context)
-        q.callback_query.answer.assert_awaited_once_with(h.STALE_BUTTON)
+        assert_stale(self, q)
         new.reply_text.assert_not_awaited()
 
     async def test_rejected_request_does_not_expire_valid_list(self):
@@ -69,7 +70,7 @@ class StaleListTests(unittest.IsolatedAsyncioTestCase):
         message, a = await self.open(20)
         q = self.update(callback(a, 'select', 0), message, owner=8)
         await h.channel_vods_callback(q, self.context)
-        q.callback_query.answer.assert_awaited_once_with(h.STALE_BUTTON)
+        assert_stale(self, q)
         await self.open(21, owner=8)
         self.assertTrue(self.browser.is_current(a))
         self.assertEqual(1, message.edit_text.await_count)
@@ -155,12 +156,12 @@ class StaleListTests(unittest.IsolatedAsyncioTestCase):
         q.callback_query.answer.assert_awaited_once()
         stale_a = self.update(callback(a, 'select', 0), old)
         await h.channel_vods_callback(stale_a, self.context)
-        stale_a.callback_query.answer.assert_awaited_once_with(h.STALE_BUTTON)
+        assert_stale(self, stale_a)
         # A third request and its selected HTML card must not wait for A either.
         latest, c = await asyncio.wait_for(self.open(22, 'third'), 1)
         stale_b = self.update(callback(b, 'pages'), new)
         await h.channel_vods_callback(stale_b, self.context)
-        stale_b.callback_query.answer.assert_awaited_once_with(h.STALE_BUTTON)
+        assert_stale(self, stale_b)
         self.ready.return_value = self.ready_result()
         await h.channel_vods_callback(self.update(callback(c, 'select', 0), latest), self.context)
         before = latest.edit_text.await_count
@@ -234,7 +235,7 @@ class StaleListTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(entered.wait(), 1)
         q = self.update(callback(a, 'select', 0), message)
         await asyncio.wait_for(h.channel_vods_callback(q, self.context), 1)
-        q.callback_query.answer.assert_awaited_once_with(h.STALE_BUTTON)
+        assert_stale(self, q)
         release.set()
         await asyncio.wait_for(newer, 2)
         self.metadata.assert_not_awaited()

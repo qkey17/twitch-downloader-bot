@@ -166,6 +166,8 @@ def main():
     app.add_handler(CallbackQueryHandler(history_files_callback, pattern=r"^ui:histfiles:(?:h\d+|\d+)$"))
     app.add_handler(CallbackQueryHandler(history_vod_callback, pattern=r"^ui:histvod:(?:h\d+|\d+)$"))
     app.add_handler(CallbackQueryHandler(noop_callback, pattern=r"^noop$"))
+    from src.ui.callbacks import stale_callback, STALE_CALLBACK_PATTERN
+    app.add_handler(CallbackQueryHandler(stale_callback, pattern=STALE_CALLBACK_PATTERN))
 
     app.run_polling(drop_pending_updates=True)
 

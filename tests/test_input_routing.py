@@ -209,8 +209,8 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
                 update = self.callback('ui:input:'+'a'*16+':'+action, owner=owner)
                 for _ in range(2):
                     await inputs.input_menu_callback(update, self.context)
-                    self.assertTrue(update.callback_query.answer.await_args.kwargs['show_alert'])
-                    self.assertIn('устарело', update.callback_query.answer.await_args.args[0])
+                    self.assertFalse(update.callback_query.answer.await_args.kwargs.get('show_alert', False))
+                    self.assertEqual('Кнопка больше неактуальна.', update.callback_query.answer.await_args.args[0])
                     self.assertIs(pending, self.context.user_data['vod_pending'])
                     self.assert_no_input_mode()
         self.assertEqual({'vod_pending': pending}, self.context.user_data)

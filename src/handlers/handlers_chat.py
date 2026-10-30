@@ -8,6 +8,8 @@ from types import SimpleNamespace
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from . import handlers_vod as vod
 from .handlers_state import is_busy, pending_expired
+from src.ui.callbacks import CallbackReply
+from src.ui.ui_labels import STALE_ACTION_NOTICE, ACTION_DONE_NOTICE, PROCESSING_NOTICE, ACTION_PENDING_NOTICE
 from src.ui.ui_labels import GET_READY_CHAT, RECREATE_CHAT, BACK_TO_LIST, READY_UNAVAILABLE
 from src.ui.ui_history import ready_offer_text
 from src.ui.result_preview import render_card, resolve_preview, caption_fits, cleanup_card, CardMessage
@@ -100,7 +102,7 @@ def _bind_choice(choice, shown):
 
 async def chat_callback(update, context):
     q = update.callback_query
-    await q.answer()
+    reply = CallbackReply(q)
     choice = context.user_data.get('chat_choice')
     parts = (q.data or '').split(':')
     def valid():
@@ -109,13 +111,44 @@ async def chat_callback(update, context):
                 and parts[3] == choice['token'] and not pending_expired(choice)
                 and choice['owner'] == update.effective_user.id and q.message is not None
                 and (choice['chat'], choice['message']) == (q.message.chat_id, q.message.message_id)
-                and choice['current']() and not is_busy(context) and not context.user_data.get('vod_link_lookup'))
+                and choice['current']())
     if not valid():
+        await reply.send(STALE_ACTION_NOTICE)
+        return
+    if is_busy(context) or (parts[2] == 'regen' and vod.is_globally_busy(context)):
+        await reply.send(PROCESSING_NOTICE)
+        return
+    if context.user_data.get('vod_link_lookup'):
+        await reply.send(ACTION_PENDING_NOTICE)
+        return
+    if choice.get('media_final'):
+        await reply.send(ACTION_DONE_NOTICE)
+        return
+    if choice.get('action') or choice.get('preview_pending'):
+        await reply.send(ACTION_PENDING_NOTICE)
+        return
+    if parts[2] == 'open' and choice.get('opened'):
+        await reply.send(STALE_ACTION_NOTICE)
+        return
+    if not await reply.send():
         return
     async with choice.get('ui_lock') or nullcontext():
-        if not valid() or choice.get('action') or choice.get('preview_pending') or choice.get('media_final'):
+        if not valid():
+            await reply.send(STALE_ACTION_NOTICE)
+            return
+        if choice.get('media_final'):
+            await reply.send(ACTION_DONE_NOTICE)
+            return
+        if choice.get('action') or choice.get('preview_pending'):
+            await reply.send(ACTION_PENDING_NOTICE)
             return
         if parts[2] == 'open' and choice.get('opened'):
+            await reply.send(STALE_ACTION_NOTICE)
+            return
+        if is_busy(context):
+            await reply.send(PROCESSING_NOTICE)
+            return
+        if not await reply.send():
             return
         choice['action'] = parts[2]  # Fence the optional offer preview before any await.
     if parts[2] == 'open':
@@ -141,6 +174,8 @@ async def chat_callback(update, context):
         async with choice.get('ui_lock') or nullcontext():
             if not valid():
                 return
+            if is_busy(context) or vod.is_globally_busy(context) or context.user_data.get('vod_link_lookup'):
+                return  # Already acknowledged; never send a second answer on a race.
             message = q.message
             async def edit_start(*args, **kwargs):
                 nonlocal replaced, message
@@ -219,7 +254,32 @@ async def show_ready(message, context, user_id, vod_id, *, current=lambda: True,
 async def legacy_open_callback(update, context):
     """Compatibility only: never prepare a missing result or regenerate it."""
     q = update.callback_query
-    await q.answer()
+    reply = CallbackReply(q)
     match = re.fullmatch(r'ui:result:open:([1-9][0-9]{0,19})', q.data or '')
-    if match and q.message:
-        await show_ready(q.message, context, update.effective_user.id, match[1])
+    if not match or q.message is None:
+        await reply.send(STALE_ACTION_NOTICE)
+        return
+    key = (update.effective_user.id, q.message.chat_id, q.message.message_id, match[1])
+    active = context.user_data.get('download_ui')
+    if active and (active['chat'], active['message']) == key[1:3]:
+        await reply.send(STALE_ACTION_NOTICE)
+        return
+    old = context.user_data.get('legacy_open')
+    if old and old['key'] == key and not pending_expired(old):
+        await reply.send(ACTION_DONE_NOTICE if old['done'] else ACTION_PENDING_NOTICE if old.get('pending') else STALE_ACTION_NOTICE)
+        return
+    if not vod.results.get_ready_result(match[1]):
+        await reply.send(READY_UNAVAILABLE)
+        return
+    record = dict(key=key, created_at=time.time(), done=False, pending=True)
+    context.user_data['legacy_open'] = record
+    if not await reply.send():
+        if context.user_data.get('legacy_open') is record:
+            context.user_data.pop('legacy_open', None)
+        return
+    try:
+        shown = await show_ready(q.message, context, update.effective_user.id, match[1],
+                         current=lambda: context.user_data.get('legacy_open') is record)
+        record['done'] = bool(shown)
+    finally:
+        record['pending'] = False

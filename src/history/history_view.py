@@ -1,6 +1,8 @@
 """One active history message per user; optional metadata outside UI lock."""
 import asyncio
 from telegram import InlineKeyboardMarkup
+from src.ui.callbacks import CallbackReply
+from src.ui.ui_labels import STALE_ACTION_NOTICE
 from src.ui.result_preview import render_card, resolve_preview, caption_fits, cleanup_card
 
 
@@ -67,11 +69,18 @@ async def _send_history_cards(chat_id, context, items, page, total_items=None, *
 async def show_history_page(update, context, page):
     from src.database import database as db
     message = update.callback_query.message
+    reply = CallbackReply(update.callback_query)
     state = context.user_data.get('history_view')
-    if state is None or not _current_message(context, message, update.effective_user.id):
+    if state is None or message is None or not _current_message(context, message, update.effective_user.id):
+        await reply.send(STALE_ACTION_NOTICE)
+        return
+    if not await reply.send():
         return
     async with state['lock']:
         if not _current_message(context, message, update.effective_user.id):
+            await reply.send(STALE_ACTION_NOTICE)
+            return
+        if not await reply.send():
             return
         request = state['request'] = object()
     total = db.get_history_count(update.effective_user.id)

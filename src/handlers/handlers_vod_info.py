@@ -12,7 +12,9 @@ from src.vod_list import callback
 from src.channel_browser import VodSelection
 from src.ui.ui_channel_vods import _duration
 from src.ui.ui_formatters import _fmt_dt_utc
-from .handlers_state import is_busy
+from .handlers_state import is_busy, is_globally_busy
+from src.ui.callbacks import CallbackReply
+from src.ui.ui_labels import STALE_ACTION_NOTICE, PROCESSING_NOTICE
 from src.ui.ui_labels import CREATE_CHAT, BACK_TO_LIST
 
 
@@ -161,39 +163,47 @@ async def info_callback(update, context):
     from .handlers_channel_vods import (get_channel_browser, _ui_lock, STALE_BUTTON,
                                         _consume_selection, _prepare_selection)
     q = update.callback_query
+    reply = CallbackReply(q)
     match = _ACTION.fullmatch(q.data or '')
     browser = get_channel_browser(context.application)
     browser._prune()
     session = browser._sessions.get(match[1]) if match else None
     if session is None or session.owner_id != update.effective_user.id or q.message is None:
-        await q.answer(STALE_BUTTON)
+        await reply.send(STALE_ACTION_NOTICE)
+        return
+    def valid_card():
+        card = getattr(session, 'info_card', None)
+        return (browser._live(session) and card is not None and card.nonce == match[2]
+                and card.revision == session.revision and card.expires > browser.clock()
+                and session.status == 'ready' and getattr(session, 'list_render', None)
+                and (q.message.chat_id, q.message.message_id) == (session.chat_id, card.message.message_id))
+    if not valid_card():
+        await reply.send(STALE_ACTION_NOTICE)
+        return
+    if match[3] == 'process' and (is_busy(context) or is_globally_busy(context)):
+        await reply.send(PROCESSING_NOTICE)
+        return
+    if not await reply.send():
         return
     async with _ui_lock(session):
-        card = getattr(session, 'info_card', None)
-        if (not browser._live(session) or card is None or card.nonce != match[2]
-                or card.revision != session.revision
-                or session.status != 'ready' or not getattr(session, 'list_render', None)
-                or (q.message.chat_id, q.message.message_id) != (session.chat_id, card.message.message_id)):
-            await q.answer(STALE_BUTTON)
+        if not valid_card():
+            await reply.send(STALE_ACTION_NOTICE)
             return
-        if card.expires <= browser.clock():
-            card.nonce = ''
-            await q.answer(STALE_BUTTON)
-            await close_info(session)
-            return
+        card = session.info_card
         if match[3] == 'back':
-            await q.answer()
+            if not await reply.send():
+                return
             await close_info(session)
             return
-        if is_busy(context):
-            await q.answer()
+        if is_busy(context) or is_globally_busy(context):
+            await reply.send(PROCESSING_NOTICE)
             return
         source = session.list_render[0]
         result = await browser.handle_callback(context.application.bot_data['aiohttp'], session.owner_id,
                                                callback(browser._view(session), 'select', card.index),
                                                source.chat_id, source.message_id)
         if not isinstance(result, VodSelection):
-            await q.answer(STALE_BUTTON)
+            await reply.send(STALE_ACTION_NOTICE)
             return
         card = _consume_selection(session)
-    await _prepare_selection(q, source, context, browser, session, result, card)
+    await _prepare_selection(q, source, context, browser, session, result, card, reply=reply)
