@@ -95,9 +95,17 @@ class ViewerPreviewLayoutTests(unittest.TestCase):
             stat = self.responsive_properties('#stat', width)
             self.assertEqual('1 / -1', stat['grid-column'])
             self.assertEqual('start', stat['justify-self'])
-            pill = self.responsive_properties('.panel-stats .pill', width)
+            pill = self.responsive_properties('.panel-stats > .pill:not(.panel-stats-channel)', width)
             self.assertEqual(('normal', 'visible', 'clip'),
                              (pill['white-space'], pill['overflow'], pill['text-overflow']))
+
+    def test_desktop_channel_retains_original_clipping(self):
+        for width in (901, 1024, 1280):
+            pill = self.responsive_properties('.panel-stats .pill', width)
+            self.assertEqual(('nowrap', 'hidden', 'ellipsis'),
+                             (pill['white-space'], pill['overflow'], pill['text-overflow']))
+        for width in (320, 390, 900):
+            self.assertEqual({}, self.responsive_properties('.panel-stats > .pill:not(.panel-stats-channel)', width))
 
     def test_mobile_metadata_retains_horizontal_layout_and_original_overflow(self):
         for width in (320, 390, 900):
