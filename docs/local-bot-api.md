@@ -29,7 +29,8 @@ shell syntax/ShellCheck и `systemd-analyze verify`, но не активиру�
 `telegram-bot-api-10.3-ubuntu24.04-x86_64` через GitHub Actions UI или `gh run download`.
 Проверить репозиторий/run/head SHA и build-info.txt; после распаковки на
 совместимом Linux выполнить `sha256sum --check SHA256SUMS`, `file telegram-bot-api`,
-`ldd telegram-bot-api`, затем `./telegram-bot-api --help`. Сохранить SHA256/run ID
+`ldd telegram-bot-api`, затем `chmod u+x telegram-bot-api` и `./telegram-bot-api --help`
+(ZIP artifact не сохраняет executable bit). Сохранить SHA256/run ID
 в записи будущей установки: artifact хранится 30 дней. Checksums выявляют
 повреждение, но не заменяют доверие к проверенному workflow и происхождению.
 
