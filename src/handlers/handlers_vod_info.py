@@ -1,4 +1,4 @@
-"""One on-demand temporary info message per bounded browser session."""
+"""One active list or information card per bounded browser session."""
 import asyncio
 import html
 import logging
@@ -6,8 +6,7 @@ import re
 import secrets
 from urllib.parse import urlsplit
 from dataclasses import dataclass
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
-from telegram.error import TelegramError, BadRequest
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from src.vod_list import callback
 from src.channel_browser import VodSelection
 from src.ui.ui_channel_vods import _duration
@@ -50,6 +49,9 @@ class InfoCard:
     revision: int
     index: int
     expires: float
+    text: str
+    keyboard: object
+    preview: str | None
 
 
 def preview_url(value):
@@ -80,87 +82,86 @@ def take_info(session):
 
 async def close_info(session, card=None):
     card = card if card is not None else getattr(session, 'info_card', None)
-    if card is None:
+    # An inline card can already be the new list/progress at this exact ID.
+    # Only the still-owned info surface may have its obsolete keyboard cleared.
+    if card is None or getattr(session, 'info_card', None) is not card:
         return True
+    take_info(session)
     try:
         async with asyncio.timeout(5):
-            await card.message.delete()
+            await card.message.edit_reply_markup(reply_markup=None)
     except Exception:
         return False
-    if getattr(session, 'info_card', None) is card:
-        session.info_card = None
     return True
 
 
-async def show_info(browser, session, source, request):
-    # The caller owns the session UI lock for the complete Telegram transaction.
-    old = getattr(session, 'info_card', None)
-    if old and old.revision == request.view.revision and old.index == request.index and old.expires > browser.clock():
-        try:
-            async with asyncio.timeout(5):
-                await old.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton(CREATE_CHAT, callback_data=f'ui:vi:{session.token}:{old.nonce}:process')],
-                    [InlineKeyboardButton(BACK_TO_LIST, callback_data=f'ui:vi:{session.token}:{old.nonce}:back')]]))
-        except BadRequest as exc:
-            if 'message to edit not found' not in str(exc).lower():
-                return
-            session.info_card = old = None
-        except (TelegramError, TimeoutError):
-            _diagnostic('reuse_failed')
-            return
-        else:
-            return
-    vod = request.view.items[request.index]
-    text = (f'🟣 {html.escape(request.view.channel.display_name[:80])}\n'
+async def show_info(browser, session, source, request, *, bot):
+    """Render text/actions under the caller's UI lock; preview is a second step."""
+    from src.ui.result_preview import render_card
+    previous = browser._view(session)
+    if not browser.is_current(request.view):
+        return None
+    if session.revision == 999999999:
+        browser.retire(request.view)
+        return None
+    session.revision += 1  # Dates/Back from the source screen are now obsolete.
+    view = browser._view(session)
+    vod = view.items[request.index]
+    text = (f'🟣 {html.escape(view.channel.display_name[:80])}\n'
             f'🎬 {html.escape(vod.title or "Без названия")}\n'
             f'⏱ {_duration(vod.duration)}\n🗓 {_fmt_dt_utc(vod.created_at)}')
     nonce = secrets.token_hex(8)
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(CREATE_CHAT, callback_data=f'ui:vi:{session.token}:{nonce}:process')],
         [InlineKeyboardButton(BACK_TO_LIST, callback_data=f'ui:vi:{session.token}:{nonce}:back')]])
-    url = preview_url(vod.thumbnail_url)
-    if not url:
-        _diagnostic('url_missing' if not vod.thumbnail_url else
-                    'placeholder' if _placeholder(vod.thumbnail_url) else 'url_rejected')
-    message = None
-    photo = bool(url)
     try:
-        async with asyncio.timeout(10):
-            if old and (url or not old.photo):
-                try:
-                    if url:
-                        await old.message.edit_media(InputMediaPhoto(url, caption=text, parse_mode='HTML'), reply_markup=keyboard)
-                    else:
-                        await old.message.edit_text(text, parse_mode='HTML', reply_markup=keyboard)
-                    message = old.message
-                except TelegramError:
-                    _diagnostic('photo_edit_failed' if url else 'text_edit_failed')
-                    if not await close_info(session):
-                        return
-            elif old and not await close_info(session):
-                return  # Cannot safely replace a photo with text in place.
-            if message is None:
-                if url:
-                    try:
-                        message = await source.reply_photo(url, caption=text, parse_mode='HTML', reply_markup=keyboard)
-                    except TelegramError:
-                        _diagnostic('photo_send_failed')
-                        photo = False
-                if message is None:
-                    message = await source.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
-    except (TelegramError, TimeoutError):
-        _diagnostic('card_delivery_failed')
+        shown = await render_card(bot, source.chat_id, text, keyboard,
+                                  message_id=session.message_id, photo=getattr(session, 'photo', False),
+                                  current=lambda: browser.is_current(view))
+    except BaseException:
+        if browser.is_current(view):
+            session.revision = previous.revision
+        raise
+    if shown is None:
+        if browser.is_current(view):
+            session.revision = previous.revision
+        return None
+    take_info(session)
+    session.message_id, session.photo = shown.message_id, shown.photo
+    session.list_render = None
+    session.info_card = InfoCard(shown.message or source, shown.photo, nonce, view.revision, request.index,
+                                 min(session.expires, browser.clock()+TTL), text, keyboard, vod.thumbnail_url)
+    return shown
+
+
+async def preview_info(browser, session, card, bot):
+    """Optional media never creates another card or borrows a newer binding."""
+    from .handlers_channel_vods import _ui_lock
+    from src.ui.result_preview import render_card, caption_fits
+    def current():
+        return (browser._live(session) and session.info_card is card and bool(card.nonce)
+                and session.revision == card.revision and card.expires > browser.clock()
+                and session.message_id == card.message.message_id)
+    if not current() or not caption_fits(card.text):
         return
-    if not photo:
-        _diagnostic('text_fallback')
-    session.info_card = InfoCard(message, photo, nonce, request.view.revision, request.index,
-                                 min(session.expires, browser.clock()+TTL))
-    if not browser.is_current(request.view):
-        await close_info(session)
+    url = preview_url(card.preview)
+    if not url:
+        _diagnostic('url_missing' if not card.preview else
+                    'placeholder' if _placeholder(card.preview) else 'url_rejected')
+        return
+    async with _ui_lock(session):
+        if not current():
+            return
+        # Cancellation/timeouts can follow a successful remote edit.
+        session.photo = card.photo = True
+        shown = await render_card(bot, session.chat_id, card.text, card.keyboard, url,
+                                  message_id=session.message_id, current=current, keep_text=True)
+        if shown is not None and current():
+            session.photo = card.photo = shown.photo or shown.media_uncertain
 
 
 async def info_callback(update, context):
-    from .handlers_channel_vods import (get_channel_browser, _ui_lock, STALE_BUTTON,
+    from .handlers_channel_vods import (get_channel_browser, _ui_lock,
                                         _consume_selection, _prepare_selection)
     q = update.callback_query
     reply = CallbackReply(q)
@@ -175,8 +176,9 @@ async def info_callback(update, context):
         card = getattr(session, 'info_card', None)
         return (browser._live(session) and card is not None and card.nonce == match[2]
                 and card.revision == session.revision and card.expires > browser.clock()
-                and session.status == 'ready' and getattr(session, 'list_render', None)
-                and (q.message.chat_id, q.message.message_id) == (session.chat_id, card.message.message_id))
+                and session.status == 'ready'
+                and (q.message.chat_id, q.message.message_id) == (session.chat_id, session.message_id)
+                and session.message_id == card.message.message_id)
     if not valid_card():
         await reply.send(STALE_ACTION_NOTICE)
         return
@@ -185,25 +187,48 @@ async def info_callback(update, context):
         return
     if not await reply.send():
         return
-    async with _ui_lock(session):
-        if not valid_card():
-            await reply.send(STALE_ACTION_NOTICE)
-            return
-        card = session.info_card
-        if match[3] == 'back':
-            if not await reply.send():
+    from .handlers_channel_vods import _render_list
+    from src.ui.result_preview import render_card, cleanup_card
+    replaced = None
+    try:
+        async with _ui_lock(session):
+            if not valid_card():
                 return
-            await close_info(session)
-            return
-        if is_busy(context) or is_globally_busy(context):
-            await reply.send(PROCESSING_NOTICE)
-            return
-        source = session.list_render[0]
-        result = await browser.handle_callback(context.application.bot_data['aiohttp'], session.owner_id,
-                                               callback(browser._view(session), 'select', card.index),
-                                               source.chat_id, source.message_id)
-        if not isinstance(result, VodSelection):
-            await reply.send(STALE_ACTION_NOTICE)
-            return
-        card = _consume_selection(session)
-    await _prepare_selection(q, source, context, browser, session, result, card, reply=reply)
+            card = session.info_card
+            if match[3] == 'back':
+                previous = browser._view(session)
+                view = await browser.handle_callback(context.application.bot_data['aiohttp'], session.owner_id,
+                    callback(previous, 'back'), session.chat_id, session.message_id)
+                try:
+                    replaced = await _render_list(card.message, view, session, bot=context.bot,
+                                                  current=lambda: browser.is_current(view))
+                except BaseException:
+                    if browser.is_current(view):
+                        session.revision = previous.revision
+                    raise
+                if getattr(session, 'photo', False):
+                    session.revision = previous.revision
+                    return  # Failed replacement: the old Back remains usable.
+                take_info(session)
+                return
+            if is_busy(context) or is_globally_busy(context):
+                return
+            source = card.message
+            if getattr(session, 'photo', False):
+                # Send text first, transfer ownership, then retire the photo.
+                # The normal starter/offer can now reuse this text message.
+                replaced = await render_card(context.bot, session.chat_id, card.text, card.keyboard,
+                    message_id=session.message_id, photo=True, current=valid_card)
+                if replaced is None:
+                    return
+                session.message_id, session.photo = replaced.message_id, False
+                source = card.message = replaced.message
+                card.photo = False
+            result = await browser.handle_callback(context.application.bot_data['aiohttp'], session.owner_id,
+                callback(browser._view(session), 'select', card.index), session.chat_id, session.message_id)
+            if not isinstance(result, VodSelection):
+                return
+            card = _consume_selection(session)
+        await _prepare_selection(q, source, context, browser, session, result, card, reply=reply)
+    finally:
+        await cleanup_card(context.bot, session.chat_id, replaced)

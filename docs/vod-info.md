@@ -23,47 +23,41 @@ to text. There is no application-side image download or redirect following.
 Telegram performs the CDN fetch itself; its handling of CDN redirects cannot
 be controlled by this application. No explicit file_id cache is added.
 
-One info-card record lives on each bounded browser session. Validity is at most
-300 seconds and never beyond the source session's expiry. Checks/pruning are
-lazy: no background cleanup process/timer. Visible messages can remain after
-restart/expiry/deletion failure, but their actions are invalid. Channel
-replacement best-effort deletes the old info message; a failed deletion cannot
-break the new list. No claim of guaranteed Telegram deletion at a deadline.
+One information record lives on each bounded browser session, valid at most
+300 seconds and never beyond the 600-second session TTL. The active screen is
+either the list or the chosen VOD, independently of ready HTML. Opening info
+increments the revision, renders its full text/actions in the list message,
+and then optionally uses the common renderer's `edit_message_media` to add a
+photo to that same message. Old date buttons cannot choose a second VOD.
+No extra Helix requests, app-side image downloads or persistent records are added.
 
-Repeated info for the same VOD reuses its card. Changing VOD reuses text via
-edit_text or photo via edit_media (also the supported text-to-media transition).
-Photo-to-text requires deletion and sending a new text message; if deletion
-fails, no additional card is created. Photo send failures fall back to text.
-API transactions are bounded (show 10 seconds, close 5 seconds). Rendering uses
-the source session's existing UI lock. There is no detached task. A deleted
-card can be recreated when Telegram reports the old message is missing.
+Text/keyboard delivery precedes optional media. The conservative 1024 UTF-16
+caption bound includes markup: longer cards stay complete text with all buttons.
+A rejected image keeps the existing text. An ambiguous timeout/cancellation is
+conservatively treated as photo for subsequent transitions.
 
-The original list is not edited by info opening/back. Back deletes only the
-info message. Session token, revision, owner, source chat/message, card message,
-nonce, state and TTL fence actions. Navigation/replacement invalidate old
-actions; concurrent info presses serialize. Callback answer is sent once.
-Page arrows, page-picker opening, page/group selection and return from the grid
-synchronously detach/invalidate the current info card under the UI lock.
-Navigation renders the new list before bounded cleanup of the captured message
-outside the lock. A newer card/list cannot be changed by that late cleanup.
+Back restores the original page from the session without fetching Twitch again.
+Text-to-text edits in place. Photo-to-text sends a replacement first, transfers
+session message ownership under the UI lock, and then deletes only the captured
+old ID outside the lock. Deletion failure triggers one bounded attempt to clear
+that retired keyboard; callbacks are already inert by revision/nonce/message.
+Failed replacement keeps the last working photo/Back. No background task or
+periodic cleanup is created. Each Telegram call is bounded to five seconds.
 
-Only info Process exposes selection in the new list UI. The internal select
-action remains for this existing path and compatible older date buttons.
-Selection uses the same browser/UI lock. Before any callback answer or Telegram await, it fences
-list_render and invalidate/detach the info card. Both use the same prepare_chat
-path on the original TEXT list message: ready HTML offers Open/Regenerate/Back,
-and uncached VODs start the existing downloader/progress there. Back from the
-offer restores the list and its ownership. No extra preparation message or
-photo-to-text edit is needed. The single slot/cancellation rules are unchanged.
+Process first transfers a photo card to text by the same safe replacement,
+then calls the existing prepare_chat flow: it rechecks ready HTML or starts the
+existing downloader. The runner receives the transferred message ID. Slot,
+confirmed cancellation, history/cache and publication semantics remain unchanged.
+Confirmed cancellation from a list restores this same inline information card
+or the existing ready offer. Direct-link cancellation is unchanged.
 
-The selecting request best-effort deletes its captured info message in finally,
-after prepare_chat has rendered the screen or returned/failed. Slow deletion
-therefore does not delay that screen, block the session UI lock or prevent a
-new channel request. Cleanup can only delete that captured photo/text message;
-it cannot edit the list/result or clear a newer info-card record. Failure or
-cancellation may leave a visible inert card; its old actions cannot select
-again. Cleanup waits at most five seconds and creates no background task.
-No history/result preview support is included.
+Owner, session, revision, nonce, chat/message, expiry and current-operation
+checks remain mandatory. Text application and binding are serialized under the
+existing session UI lock; captured obsolete cleanup runs outside it. Preview
+checks its captured card both before and after waiting for the lock. It cannot
+modify another selection or a new channel. Channel replacement best-effort
+clears the obsolete information keyboard; old list expiry text is preserved.
+Visible inert messages may remain after deletion failure, expiry or restart.
 
 ## Preview diagnosis (2026-10-30)
 
@@ -89,15 +83,10 @@ available. No evidence justifies size retries, proxy downloads or a file_id cach
 The HTML renderer/meta enrichment are unchanged; that separate path already
 uses Helix thumbnail URLs and has different size lookup behavior.
 
-`src.handlers.handlers_vod_info` emits INFO messages with fixed categories only:
-`url_missing`, `url_rejected`, `placeholder`, `photo_send_failed`,
-`photo_edit_failed`, `text_edit_failed`, `reuse_failed`, `card_delivery_failed`,
-`text_fallback` (successful text delivery). No URL, exception text, channel/VOD,
-Telegram ID or nonce is recorded. Logger failures are swallowed. There are at
-most four records per info invocation, none on ordinary image-free navigation;
-no monitoring task/state. Existing transaction timeouts remain unchanged.
-Delivery attempts are bounded to one edit, optional delete, one photo send and
-one text fallback. Failed deletion prevents replacement to avoid duplicates.
+Current preview diagnostics contain fixed categories only, without URLs,
+exception contents, users or tokens. The shared renderer reports text fallback,
+media edit/delivery failures and cleanup failures. Invalid/missing/placeholder
+URLs retain their existing categories. Logger failures cannot break delivery.
 
 References: [Helix videos](https://dev.twitch.tv/docs/api/videos) and
 [Telegram Bot API](https://core.telegram.org/bots/api#editmessagemedia).

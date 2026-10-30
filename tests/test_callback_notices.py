@@ -35,8 +35,8 @@ class NoticeTests(unittest.IsolatedAsyncioTestCase):
     back = fixture.ReadyPreviewTests.back
 
     def notice(self, update, text):
-        if text == LIST:
-            update.callback_query.answer.assert_awaited_once_with(text, show_alert=True)
+        if text == STALE:
+            update.callback_query.answer.assert_awaited_once_with(text, show_alert=False)
         else:
             update.callback_query.answer.assert_awaited_once_with(text)
 
@@ -51,7 +51,7 @@ class NoticeTests(unittest.IsolatedAsyncioTestCase):
             else:
                 self.assertTrue(await reply.send(STALE))
             await reply.send(LIST)
-            q.answer.assert_awaited_once_with(STALE)
+            q.answer.assert_awaited_once_with(STALE, show_alert=False)
 
     async def test_actual_answer_timeout_and_cancellation_are_not_retried(self):
         for cancel in (False, True):
@@ -292,7 +292,7 @@ class InfoNoticeTests(unittest.IsolatedAsyncioTestCase):
             before=source.edit_text.await_count
             nonce=card.nonce
             await info.info_callback(q,self.context)
-            q.callback_query.answer.assert_awaited_once_with(STALE)
+            q.callback_query.answer.assert_awaited_once_with(STALE, show_alert=False)
             self.assertEqual(before,source.edit_text.await_count)
             self.assertEqual(nonce,card.nonce)
         self.runner.assert_not_awaited();self.metadata.assert_not_awaited()

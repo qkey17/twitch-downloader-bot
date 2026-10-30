@@ -180,7 +180,7 @@ class HistoryPaginationTestCase(unittest.TestCase):
         update.effective_user.id = 71
         query.message.reply_text.reset_mock()
         run_callback(history_files_callback(update, context))
-        self.assertEqual("Кнопка больше неактуальна.", query.answer.call_args.args[0])
+        self.assertEqual("Кнопка больше неактуальна", query.answer.call_args.args[0])
         self.assertIsNone(query.message.reply_text.call_args)
         self.assertEqual(1, len(context.bot.send_document.call_args_list))
 
@@ -188,7 +188,7 @@ class HistoryPaginationTestCase(unittest.TestCase):
         update.effective_user.id = 70
         query.message.reply_text.reset_mock()
         run_callback(history_files_callback(update, context))
-        self.assertEqual("Кнопка больше неактуальна.", query.answer.call_args.args[0])
+        self.assertEqual("Кнопка больше неактуальна", query.answer.call_args.args[0])
         self.assertIsNone(query.message.reply_text.call_args)
         self.assertEqual(1, len(context.bot.send_document.call_args_list))
 
@@ -209,20 +209,20 @@ class HistoryPaginationTestCase(unittest.TestCase):
         query.message.reply_text.reset_mock()
         update.effective_user.id = 81
         run_callback(history_vod_callback(update, context))
-        self.assertEqual("Кнопка больше неактуальна.", query.answer.call_args.args[0])
+        self.assertEqual("Кнопка больше неактуальна", query.answer.call_args.args[0])
         self.assertIsNone(query.message.reply_text.call_args)
 
         query.data = "ui:histvod:0"  # callback from the old position-based format
         query.message.reply_text.reset_mock()
         update.effective_user.id = 80
         run_callback(history_vod_callback(update, context))
-        self.assertEqual("Кнопка больше неактуальна.", query.answer.call_args.args[0])
+        self.assertEqual("Кнопка больше неактуальна", query.answer.call_args.args[0])
         self.assertIsNone(query.message.reply_text.call_args)
 
         query.data = "ui:histvod:h999999"
         query.message.reply_text.reset_mock()
         run_callback(history_vod_callback(update, context))
-        self.assertEqual("Кнопка больше неактуальна.", query.answer.call_args.args[0])
+        self.assertEqual("Кнопка больше неактуальна", query.answer.call_args.args[0])
         self.assertIsNone(query.message.reply_text.call_args)
 
     def test_deleted_cache_entry_invalidates_owned_callback(self):
@@ -245,7 +245,7 @@ class HistoryPaginationTestCase(unittest.TestCase):
         context = SimpleNamespace(bot=SimpleNamespace(send_message=ImmediateAsyncMock()))
 
         run_callback(history_vod_callback(update, context))
-        self.assertEqual("Кнопка больше неактуальна.", query.answer.call_args.args[0])
+        self.assertEqual("Кнопка больше неактуальна", query.answer.call_args.args[0])
         self.assertIsNone(query.message.reply_text.call_args)
 
 

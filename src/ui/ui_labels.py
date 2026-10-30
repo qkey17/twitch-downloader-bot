@@ -15,9 +15,10 @@ CREATE_CHAT = "Создать чат"
 RECREATE_CHAT = "Создать чат заново"
 BACK_TO_LIST = "Вернуться к списку"
 READY_UNAVAILABLE = "Готовый чат недоступен. Выберите VOD заново."
-STALE_LIST_NOTICE = "Список устарел. Отправьте название канала ещё раз."
-STALE_ACTION_NOTICE = "Кнопка больше неактуальна."
-ACTION_DONE_NOTICE = "Действие уже выполнено."
+STALE_ACTION_NOTICE = "Кнопка больше неактуальна"
+# Compatibility names share the single stale-action policy.
+STALE_LIST_NOTICE = STALE_ACTION_NOTICE
+ACTION_DONE_NOTICE = STALE_ACTION_NOTICE
 PROCESSING_NOTICE = "Сейчас обрабатывается чат VOD. Повторите попытку позже."
 ACTION_PENDING_NOTICE = "Действие выполняется. Повторите попытку."
 FILES = "📁 Получить файлы"

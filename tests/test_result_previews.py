@@ -494,10 +494,12 @@ class ChannelResultPreviewTests(unittest.IsolatedAsyncioTestCase):
         from src.handlers import handlers_vod_info as info
         source,view=await self.setup_list()
         await self.show(source,view)
+        self.ready.side_effect=None
         self.ready.return_value=self.ready_result()
         self.ready.return_value['meta']['thumbnail_preview_url']=URL
         self.context.bot.edit_message_media=AsyncMock(side_effect=None if photo else BadRequest('Synthetic text fallback'))
         await info.info_callback(self.process_update(view),self.context)
+        source=self.by_id[self.context.user_data['chat_choice']['message']]
         rows=source.edit_text.await_args.kwargs['reply_markup'].inline_keyboard
         self.assertEqual(photo, self.context.user_data['chat_choice']['photo'])
         self.context.bot.edit_message_media.reset_mock(side_effect=True)
@@ -552,6 +554,7 @@ class ChannelResultPreviewTests(unittest.IsolatedAsyncioTestCase):
     async def test_primary_result_text_replacement_retires_callbacks_before_cleanup(self):
         from src.handlers import handlers_channel_vods as lists
         source,view,rows=await self.offer(photo=False)
+        self.context.bot.send_message.reset_mock()
         self.context.bot.edit_message_text.side_effect=BadRequest('edit rejected')
         self.context.bot.send_message.return_value=SimpleNamespace(message_id=199)
         self.context.bot.delete_message=AsyncMock()

@@ -24,14 +24,17 @@ and modern chat flow. Retired format/regeneration callbacks stay retired.
 
 | Cause | Notification | Alert |
 |---|---|---|
-| Expired/replaced list, old list revision/message | Список устарел. Отправьте название канала ещё раз. | Yes |
-| Old card/nonce/action/operation, missing history binding/row | Кнопка больше неактуальна. | No |
-| Precisely recognized completed action | Действие уже выполнено. | No |
+| Expired/replaced list, old revision/message | Кнопка больше неактуальна | No |
+| Old card/nonce/action/operation, missing history binding/row | Кнопка больше неактуальна | No |
+| Obsolete completed action | Кнопка больше неактуальна | No |
 | Valid action blocked by chat processing | Сейчас обрабатывается чат VOD. Повторите попытку позже. | No |
 | Valid action/lookup currently in progress | Действие выполняется. Повторите попытку. | No |
-| Foreign owner | Neutral card/action refusal, no session details | No |
+| Foreign owner or malformed recognized route | Кнопка больше неактуальна | No |
 
-`ui_labels.py` owns the shared texts. Successful actions acknowledge without
+`ui_labels.py` owns the shared texts. Every recognized stale/invalid button uses
+the single `STALE_ACTION_NOTICE`, exactly «Кнопка больше неактуальна» without a
+final period, with explicit `show_alert=False`. Compatibility list/completed
+names alias that constant; they do not introduce another wording. Successful actions acknowledge without
 text. Availability/history-disabled messages retain their meaning. Useful
 results/documents and explicit VOD URL replies remain normal action outputs;
 warnings alone do not send messages or edit cards.
@@ -86,6 +89,13 @@ scope. Prior PR #16–20 regressions remain mandatory. No production API message
 generations or deployments are required for these tests.
 
 After a separately approved deployment, manually check notification placement
-and duration in Telegram, list alert vs ordinary toast, rapid repeated presses,
+and duration in Telegram, ordinary toast without a modal/OK, rapid repeated presses,
 old photo/Cancel/history buttons, fresh navigation/Back and active actions.
 Mocks verify API calls and state protection, not real client display.
+
+Known channel replacement still removes the old list keyboard and appends the
+existing list-expiry explanation. An obsolete inline information card has its
+keyboard cleared only while it still owns that message. Message replacements
+send/bind the new screen first, then delete the captured retired ID outside
+the UI lock. If deletion fails, a bounded attempt clears that retired keyboard.
+No mass cleanup, background task or arbitrary-prefix fallback is added.

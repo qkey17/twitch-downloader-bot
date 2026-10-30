@@ -51,6 +51,11 @@ async def _delete(bot, chat_id, message_id):
             await bot.delete_message(chat_id=chat_id, message_id=message_id)
     except Exception:
         _diagnostic('card_cleanup_failed')
+        try:
+            async with asyncio.timeout(5):
+                await bot.edit_message_reply_markup(chat_id=chat_id, message_id=message_id, reply_markup=None)
+        except Exception:
+            pass
 
 
 async def cleanup_card(bot, chat_id, shown):
@@ -123,10 +128,11 @@ async def render_card(bot, chat_id, text, keyboard, url=None, *, message_id=None
     if message_id is not None and not photo:
         try:
             async with asyncio.timeout(5):
-                await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text,
+                edited = await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text,
                                             parse_mode='HTML', reply_markup=keyboard)
             _diagnostic('text_fallback')
-            return CardMessage(message_id, False) if current() else None
+            message = edited if getattr(edited, 'message_id', None) == message_id else None
+            return CardMessage(message_id, False, message=message) if current() else None
         except BadRequest as exc:
             if 'message is not modified' in str(exc).lower():
                 return CardMessage(message_id, False) if current() else None
