@@ -58,7 +58,8 @@ async def _prepare_selection(query, message, context, browser, session, result, 
         await query.answer()
         await prepare_chat(message, context, result.owner_id, result.vod_id,
                            is_current=lambda: browser.is_current(result.view), edit=True,
-                           back=callback(result.view, 'back'), on_start=lambda: browser.retire(result.view))
+                           back=callback(result.view, 'back'), on_start=lambda: browser.retire(result.view),
+                           ui_lock=_ui_lock(session), thumbnail_url=result.view.vod.thumbnail_url)
     finally:
         # Show the normal text screen first. Cleanup touches only the captured
         # info message, never the list/result or a newly opened info card.

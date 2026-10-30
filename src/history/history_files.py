@@ -6,9 +6,22 @@ from src.ui.ui_history import build_history_page
 from src.ui.ui_labels import CHAT_GENERIC
 from src.config import HTML_PUBLISH_MODE
 from src.html_publisher import is_local_html_reference, local_published_html_status
+from src.ui.result_preview import send_card
 from src.history.history_callbacks import (
     _answer_if_history_disabled, _history_id_from_callback, _reply_history_not_found,
 )
+
+
+async def _send_file_card(context, chat_id, text, keyboard, item, owner):
+    data = getattr(context, 'user_data', None)
+    if data is None:  # Legacy internal caller, no persistent UI context.
+        await send_card(context, chat_id, text, keyboard, item)
+        return
+    record = dict(chat=chat_id, owner=owner, history_id=item.get('history_id'), message_id=None)
+    data['history_file_card'] = record
+    await send_card(context, chat_id, text, keyboard, item,
+                    current=lambda: data.get('history_file_card') is record,
+                    on_sent=lambda message_id: record.update(message_id=message_id))
 
 
 async def send_cached_files(context, chat_id: int, files: list[dict]):
@@ -40,6 +53,9 @@ async def history_files_callback(update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     vod_id = hist["vod_id"]
+    from .history_view import _current_message
+    if not _current_message(context, q.message, update.effective_user.id, history_id):
+        return
     fmt = hist["fmt"]
     cached = db.get_cache(vod_id, fmt)
 
@@ -74,6 +90,9 @@ async def history_files_callback(update, context: ContextTypes.DEFAULT_TYPE):
             await q.message.reply_text("Готовый чат недоступен. Создайте его заново.")
             return
         item["html_url"] = ready["html_ref"]
+        for key in ('thumbnail_preview_url', 'thumbnail_url'):
+            if key in ready.get('meta', {}):
+                item[key] = ready['meta'][key]
         html_url = item.get("html_url")
         is_local = is_local_html_reference(html_url)
         if is_local and local_published_html_status(html_url) is not True:
@@ -93,12 +112,7 @@ async def history_files_callback(update, context: ContextTypes.DEFAULT_TYPE):
             merged = (kb.inline_keyboard if kb else []) + extra_rows
             kb_final = InlineKeyboardMarkup(merged)
 
-        await context.bot.send_message(
-            chat_id=q.message.chat_id,
-            text=text,
-            parse_mode="HTML",
-            reply_markup=kb_final,
-        )
+        await _send_file_card(context, q.message.chat_id, text, kb_final, item, update.effective_user.id)
         return
 
     # Остальные форматы — нужны файлы
@@ -121,9 +135,4 @@ async def history_files_callback(update, context: ContextTypes.DEFAULT_TYPE):
     merged = (kb.inline_keyboard if kb else []) + extra_rows
     kb_final = InlineKeyboardMarkup(merged) if merged else None
 
-    await context.bot.send_message(
-        chat_id=q.message.chat_id,
-        text=text,
-        parse_mode="HTML",
-        reply_markup=kb_final,
-    )
+    await _send_file_card(context, q.message.chat_id, text, kb_final, item, update.effective_user.id)

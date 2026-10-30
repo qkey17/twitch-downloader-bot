@@ -111,6 +111,18 @@ async def fetch_user_by_login(session: aiohttp.ClientSession, login: str) -> Twi
     return user
 
 
+async def fetch_video_thumbnail(session, vod_id: str) -> str:
+    """One metadata request, no enrichment, image download or retry."""
+    if not _id(vod_id):
+        raise ValueError('Invalid VOD ID')
+    rows = (await _get_json(session, '/videos', {'id': vod_id}))['data']
+    if not rows:
+        return ''
+    if len(rows) != 1 or not isinstance(rows[0], dict) or rows[0].get('id') != vod_id:
+        raise TwitchAPIError('Unexpected thumbnail VOD identity')
+    return _string(rows[0], 'thumbnail_url', allow_empty=True)
+
+
 async def fetch_archive_vods(
     session: aiohttp.ClientSession, user_id: str, cursor: str | None = None,
 ) -> tuple[list[ArchiveVod], str | None]:

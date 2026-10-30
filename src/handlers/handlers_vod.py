@@ -6,6 +6,7 @@ import json
 import re
 import secrets
 import time
+from contextlib import nullcontext
 from src.twitch_api import fetch_vod_meta, get_client_id
 from src.twitch_api.client import TwitchAPIError
 
@@ -60,6 +61,8 @@ def _make_item(meta, stats, vod_url, fmt):
         "vod_url": vod_url,
         "fmt": fmt,
         "html_url": meta.get("html_url"),
+        **({"thumbnail_preview_url": meta["thumbnail_preview_url"]} if "thumbnail_preview_url" in meta else
+           {"thumbnail_url": meta["thumbnail_url"]} if "thumbnail_url" in meta else {}),
     }
 
 
@@ -105,7 +108,9 @@ def _html_button_url(html_ref: str | None) -> str | None:
     return html_ref
 
 
-async def _edit_progress_message_with_card(context, chat_id: int, message_id: int, item: dict, html_url: str | None = None):
+async def _edit_progress_message_with_card(context, chat_id: int, message_id: int, item: dict, html_url: str | None = None,
+                                         *, current=lambda: True, ui_lock=None, photo=False, on_photo=None):
+    from src.ui.result_preview import resolve_preview, render_card, caption_fits, cleanup_card
     text, kb = _build_card(item)
     if not text:
         return
@@ -121,27 +126,28 @@ async def _edit_progress_message_with_card(context, chat_id: int, message_id: in
 
     final_kb = InlineKeyboardMarkup([row])
 
-    try:
-        await context.bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=text,
-            parse_mode="HTML",
-            reply_markup=final_kb,
-        )
-    except BadRequest as exc:
-        if 'message is not modified' not in str(exc).lower():
-            await context.bot.send_message(chat_id=chat_id, text=text, parse_mode='HTML', reply_markup=final_kb)
-    except Exception:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            parse_mode="HTML",
-            reply_markup=final_kb,
-        )
+    # Make HTML available BEFORE any optional Twitch lookup.
+    if not photo:
+        async with ui_lock or nullcontext():
+            shown = await render_card(context.bot, chat_id, text, final_kb, message_id=message_id, current=current)
+            if shown and shown.message_id != message_id and on_photo:
+                on_photo()  # Replacement is terminal too: retire callbacks on the old source.
+        await cleanup_card(context.bot, chat_id, shown)
+        if shown is None or shown.message_id != message_id:
+            return  # Preserve the existing safe fallback, no second card.
+    url = await resolve_preview(context, item) if current() and caption_fits(text) else None
+    if not url and not photo:
+        return
+    async with ui_lock or nullcontext():
+        shown = await render_card(context.bot, chat_id, text, final_kb, url, message_id=message_id,
+                                  photo=photo, current=current, keep_text=not photo)
+        if shown and (shown.photo or shown.message_id != message_id) and on_photo:
+            on_photo()  # Terminal result: old list/back actions cannot edit a photo as text.
+    await cleanup_card(context.bot, chat_id, shown)
 
 
 async def _send_card_with_buttons(context, chat_id, item, html_url=None):
+    from src.ui.result_preview import send_card
     text, kb = _build_card(item)
     if not text:
         return
@@ -157,12 +163,7 @@ async def _send_card_with_buttons(context, chat_id, item, html_url=None):
 
     final_kb = InlineKeyboardMarkup([row])
 
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=text,
-        parse_mode="HTML",
-        reply_markup=final_kb,
-    )
+    await send_card(context, chat_id, text, final_kb, item)
 
 
 async def _offer_ready(message,context,result,edit=False):
@@ -409,6 +410,7 @@ async def vod_format_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _start_download(update,context,vod_id,regenerate=False, *, modern=False):
+    context.user_data['ready_preview_request'] = object()
     q = update.callback_query
     vod_url = f"https://www.twitch.tv/videos/{vod_id}"
     fmt = "html_online"

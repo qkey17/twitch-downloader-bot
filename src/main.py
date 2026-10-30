@@ -62,6 +62,7 @@ async def history_command(update, context: ContextTypes.DEFAULT_TYPE):
         items=items,
         page=0,
         total_items=total_items,
+        owner_id=update.effective_user.id,
     )
 
 
@@ -139,7 +140,7 @@ def main():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("about", about_command))
-    app.add_handler(CommandHandler("history", history_command))
+    app.add_handler(CommandHandler("history", history_command, block=False))
     app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CommandHandler("vod", vod_command, block=False))
     app.add_handler(CommandHandler("channel", channel_command, block=False))
@@ -160,8 +161,8 @@ def main():
     app.add_handler(CallbackQueryHandler(format_cancel_callback, pattern=r"^ui:format_cancel$"))
     app.add_handler(CallbackQueryHandler(pending_cancel_callback, pattern=r"^ui:pending_cancel$"))
 
-    app.add_handler(CallbackQueryHandler(ui_buttons, pattern=r"^ui:(history)$"))
-    app.add_handler(CallbackQueryHandler(history_page_callback, pattern=r"^ui:histpage:\d+$"))
+    app.add_handler(CallbackQueryHandler(ui_buttons, pattern=r"^ui:(history)$", block=False))
+    app.add_handler(CallbackQueryHandler(history_page_callback, pattern=r"^ui:histpage:\d+$", block=False))
     app.add_handler(CallbackQueryHandler(history_files_callback, pattern=r"^ui:histfiles:(?:h\d+|\d+)$"))
     app.add_handler(CallbackQueryHandler(history_vod_callback, pattern=r"^ui:histvod:(?:h\d+|\d+)$"))
     app.add_handler(CallbackQueryHandler(noop_callback, pattern=r"^noop$"))

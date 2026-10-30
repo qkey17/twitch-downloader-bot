@@ -1,4 +1,5 @@
 import shutil
+import asyncio
 import sqlite3
 import tempfile
 import unittest
@@ -19,7 +20,7 @@ class ImmediateAsyncMock:
         self.call_args_list = []
 
     async def _resolved(self):
-        return None
+        return SimpleNamespace(message_id=100)
 
     def __call__(self, *args, **kwargs):
         self.call_args = SimpleNamespace(args=args, kwargs=kwargs)
@@ -32,12 +33,8 @@ class ImmediateAsyncMock:
 
 
 def run_callback(coro):
-    iterator = coro.__await__()
-    try:
-        yielded = next(iterator)
-    except StopIteration as result:
-        return result.value
-    raise AssertionError(f"callback unexpectedly yielded: {yielded!r}")
+    with asyncio.Runner(loop_factory=asyncio.SelectorEventLoop) as runner:
+        return runner.run(coro)
 
 
 class HistoryPaginationTestCase(unittest.TestCase):
@@ -124,30 +121,31 @@ class HistoryPaginationTestCase(unittest.TestCase):
         query = SimpleNamespace(
             data="ui:histpage:1",
             answer=ImmediateAsyncMock(),
-            message=SimpleNamespace(edit_text=ImmediateAsyncMock(), chat_id=7),
+            message=SimpleNamespace(edit_text=ImmediateAsyncMock(), chat_id=7, message_id=20),
         )
         update = SimpleNamespace(callback_query=query, effective_user=SimpleNamespace(id=50))
-        context = SimpleNamespace(bot=SimpleNamespace(send_message=ImmediateAsyncMock()))
+        context = SimpleNamespace(bot=SimpleNamespace(send_message=ImmediateAsyncMock(), edit_message_text=query.message.edit_text),
+            user_data={'history_view':dict(chat=7, owner=50, message_id=20, photo=False, request=object(), lock=asyncio.Lock())})
 
         with patch("src.database.database.get_history_for_user", wraps=db.get_history_for_user) as fetch:
             run_callback(history_page_callback(update, context))
 
         self.assertEqual(1, fetch.call_args.kwargs["offset"])
-        self.assertIn("VOD 1", query.message.edit_text.call_args.args[0])
+        self.assertIn("VOD 1", query.message.edit_text.call_args.kwargs['text'])
 
         query.data = "ui:histpage:0"
         query.message.edit_text.reset_mock()
         with patch("src.database.database.get_history_for_user", wraps=db.get_history_for_user) as fetch:
             run_callback(history_page_callback(update, context))
         self.assertEqual(0, fetch.call_args.kwargs["offset"])
-        self.assertIn("VOD 2", query.message.edit_text.call_args.args[0])
+        self.assertIn("VOD 2", query.message.edit_text.call_args.kwargs['text'])
 
         query.data = "ui:histpage:999"
         query.message.edit_text.reset_mock()
         with patch("src.database.database.get_history_for_user", wraps=db.get_history_for_user) as fetch:
             run_callback(history_page_callback(update, context))
         self.assertEqual(2, fetch.call_args.kwargs["offset"])
-        self.assertIn("VOD 0", query.message.edit_text.call_args.args[0])
+        self.assertIn("VOD 0", query.message.edit_text.call_args.kwargs['text'])
 
     def test_file_button_uses_stable_id_and_fits_telegram_limit(self):
         history_id = self.add_history(60, 0)
