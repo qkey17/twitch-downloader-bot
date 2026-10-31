@@ -2,7 +2,33 @@
 
 **Никакого production-переключения до согласования следующего этапа.** Этот PR
 не устанавливает бинарник/unit на Oracle, не создаёт пользователя, не меняет
-credentials, endpoint, polling, UI, drop_pending_updates или deployment.
+credentials, production endpoint, polling, UI, drop_pending_updates или deployment.
+
+## Конфигурация TCD: Cloud по умолчанию, Local только явно
+
+`TCD_TELEGRAM_API_MODE` принимает ровно `cloud` или `local`. Если переменная
+отсутствует, используется `cloud`: прежний PTB endpoint, local_mode=False,
+те же HTTP-клиенты/timeouts, обработчики, polling и drop_pending_updates=True.
+Никакой зависимости от локальной службы в Cloud нет.
+
+Только явное `local` задаёт base_url=`http://127.0.0.1:8081/bot`,
+base_file_url=`http://127.0.0.1:8081/file/bot`, local_mode=True. PTB добавляет
+bot token сам, один раз. Произвольный URL/host/port не настраиваются.
+Неверное значение (включая пустое) останавливает запуск до создания Application
+с ConfigurationError без вывода введённого значения. При ошибке Local API
+запуск завершается с безопасной диагностикой: fallback на cloud, logOut/close,
+установка или запуск сервера автоматически не выполняются. В Local скрываются
+токен и его URL-encoded форма в итоговом выводе стандартных logging handlers,
+включая DEBUG URL PTB и exception chains; исходные formatters восстанавливаются
+после завершения/ошибки. Cloud сохраняет существующее поведение логирования.
+
+Это подготовка к будущему включению: текущий production по последней проверке
+остаётся на cloud, его .env не менялся. Объединение конфигурационного PR без
+явного local не переключает endpoint. До изменения переменной нужны отдельно
+согласованные установка и ресурсные испытания API, credentials/Unix-права,
+готовность endpoint и план миграции/возврата. Нельзя проверять production-токен
+через local до разрешённого cloud logOut. Отправки файлов пока нет; длительные
+timeouts, защита HTML и очереди этим изменением не добавляются.
 
 ## Подготовленная версия и сборка
 
@@ -110,10 +136,10 @@ MemoryHigh=128M, MemoryMax=256M, MemorySwapMax=64M, CPUQuota=50%, TasksMax=128 �
 проверки OOM/ENOSPC/обрывов и влияния на TCD. Пределы при необходимости пересмотреть
 только по результатам и с разрешения владельца. Не ставить компиляторы на Oracle.
 
-Следующий план: (1) PTB cloud/local configuration с прежним default и тестами;
-(2) отдельно согласованная установка/безопасные ресурсные испытания;
-(3) отдельное окно переключения с cloud logOut, единственным endpoint/poller,
-политикой pending updates и планом возврата; (4) после стабильности — доставка
+Следующий план после review конфигурационного PR: (1) отдельно согласованная
+установка/безопасные ресурсные испытания;
+(2) отдельное окно переключения с cloud logOut, единственным endpoint/poller,
+политикой pending updates и планом возврата; (3) после стабильности — доставка
 HTML. [Telegram](https://core.telegram.org/bots/api#logout) запрещает возврат в cloud
 10 минут после logOut; текущий drop_pending_updates=True нельзя менять молча.
 
