@@ -231,7 +231,16 @@ class PrivateStorageTests(unittest.TestCase):
 
     def opened(self):
         journal = d.Journal(self.selected)
-        self.assertTrue(journal.open())
+        def unexpected_failure():
+            error = sys.exception()
+            journal._release()
+            if error is not None:
+                raise error
+            raise AssertionError('unexpected diagnostic initialization failure')
+        # Fail-closed production warnings intentionally omit filesystem details;
+        # tests must expose the underlying exception to diagnose platform failures.
+        with patch.object(journal, '_failure', side_effect=unexpected_failure):
+            self.assertTrue(journal.open())
         self.addCleanup(journal.close, 'error', None)
         return journal
 

@@ -24,6 +24,9 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/pagination-tests"
           "$RUNNER_TEMP/pagination-tests/bin/python" -m pip install -r requirements.txt
-      - name: Run Linux private-storage checks and full regression suite
+      - name: Run isolated Linux private-storage checks
+        run: |
+          "$RUNNER_TEMP/pagination-tests/bin/python" -B -m unittest discover -s tests -p test_pagination_diagnostics.py -v
+      - name: Run full regression suite
         run: |
           "$RUNNER_TEMP/pagination-tests/bin/python" -B -m unittest discover -s tests -v
