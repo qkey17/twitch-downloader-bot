@@ -220,7 +220,8 @@ class Journal:
             _private(os.fstat(self.file))
             source = hashlib.sha256()
             for name in ('pagination_diagnostics.py', 'twitch_api/client.py', 'twitch_api/fetch_page.py',
-                         'twitch_api/fetch_comments.py', 'twitch_api/meta.py', 'workers/download_worker.py'):
+                         'twitch_api/fetch_comments.py', 'twitch_api/meta.py',
+                         'twitch_api/pagination_repair.py', 'workers/download_worker.py'):
                 with (Path(__file__).parent / name).open('rb') as handle:
                     for chunk in iter(lambda: handle.read(65536), b''):
                         source.update(chunk)
@@ -362,6 +363,17 @@ class Journal:
     def page_end(self):
         self.event('page_emitted', page=self.page_number, attempt=self.attempt,
                    emitted=self.page_emitted, discarded=self.page_discarded, emitted_total=self.emitted,
+                   spooled=None)
+
+    def repair_emitted(self, origin, nonblank):
+        """Buffered pilot rows have explicit source coordinates, not active page."""
+        if self.stopped:
+            return
+        if nonblank:
+            self.emitted += 1
+        branch, page, position = origin
+        self.event('repair_row_processed', branch=branch, page=page, position=position,
+                   emitted_sequence=self.emitted if nonblank else None, emitted=nonblank,
                    spooled=None)
 
     def error(self, phase, exc):

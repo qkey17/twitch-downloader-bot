@@ -140,6 +140,8 @@ complete evidence. Real Twitch/downloader failures still propagate. The end
 event is attempted on success, error and cancellation. No new dependency,
 service, database table, publication, cloud upload or backup inclusion exists.
 
-This PR only prepares evidence. Continuation-cursor validation and a bounded
-offset-repair pilot require separate approval and measurements. Do not infer a
-complete Twitch snapshot from stable hashes or a successful operation.
+The original diagnostic switch only prepares evidence and never adds requests.
+The separately selected [experimental repair pilot](pagination-repair-pilot.md)
+adds branch-qualified v1 events without changing off-mode evidence. Repair is
+independent of diagnostic enablement. Do not infer a complete Twitch snapshot
+from stable hashes or a successful operation.
