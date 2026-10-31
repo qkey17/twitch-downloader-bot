@@ -27,6 +27,7 @@ MAX_BYTES = 4 * 1024 * 1024
 MAX_RECORDS = 4096
 MAX_ESTIMATED_BYTES = 32 * 1024 * 1024
 PREFIX_PAGES = 2
+MAX_START_SHIFT = 2
 _STAMP = re.compile(r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.(\d{1,9}))?Z$')
 _LOG = logging.getLogger(__name__)
 
@@ -324,7 +325,10 @@ async def repaired_comments(session, client_id, vod_id, start_offset, cancel_che
                 continue
 
             low, high = page.records[0].second, page.records[-1].second
-            if not (page.records[0].offset <= selected.start <= selected.end <= page.records[-1].offset):
+            first = page.records[0].offset
+            start_shift = max(Decimal(0), first - selected.start)
+            if not (first <= selected.end <= page.records[-1].offset
+                    and start_shift <= MAX_START_SHIFT):
                 fail('window_not_one_page')
             if last is not None and last.second >= low:
                 fail('left_boundary_committed')
@@ -343,7 +347,7 @@ async def repaired_comments(session, client_id, vod_id, start_offset, cancel_che
                         controlled = await take(control, 'control')
                         if time.monotonic() >= budget.deadline:
                             fail('control_timeout')
-                        if not control_pages and controlled.records[0].second >= low:
+                        if not control_pages and controlled.records[0].second >= min(low, int(selected.start)):
                             fail('control_no_left_barrier')
                         if control_pages and controlled.records[0].key < control_pages[-1].records[-1].key:
                             fail('control_time_regression')
@@ -405,6 +409,7 @@ async def repaired_comments(session, client_id, vod_id, start_offset, cancel_che
             repaired_window = [r for r in merged if r.second <= high]
             added = len({r.ident for r in repaired_window} - originals)
             event('repair_window_verified', window=1, first=low, last=high,
+                  configured_start=float(selected.start), start_shift=float(start_shift),
                   original_ids=len(originals), control_ids=len({r.ident for r in branch}),
                   added_ids=added, merged_ids=len(repaired_window),
                   repeated_ids=repeated_ids,

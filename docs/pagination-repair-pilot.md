@@ -41,10 +41,16 @@ path with two consumers. The ordinary consumer yields unchanged seven-field
 tuples. The pilot retains raw nodes with Message ID, exact numeric offset,
 original createdAt and source page/position until verification.
 
-The first main page whose end reaches `start` must contain the entire configured
-interval. It is held in full, even when start/end select an interior subinterval.
-If the interval straddles pages or the page's left second has already been
-emitted, the operation fails. No window row is yielded before verification.
+The first main page whose end reaches `start` must contain `end` and intersect
+the configured interval. Its first offset may exceed `start` by at most two
+seconds (fixed internal limit); otherwise selection fails. The configured start
+is never moved. The whole actual page is held, including interior selections.
+Prior pages must end before start; an already emitted left second still fails.
+When the page starts later, control must begin in a second strictly before the
+configured start as well as before the actual page. Every control ID in the gap
+must match the retained prefix; unknown IDs or insufficient coverage fail.
+No window row is yielded before verification. `repair_window_verified` records
+`configured_start` and positive `start_shift` separately from actual `first`.
 Previously emitted prefix rows can already be in the temporary spool; this does
 not publish a result. The permanent registry/history are untouched on failure.
 
