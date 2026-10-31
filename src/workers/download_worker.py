@@ -2,12 +2,14 @@ import time
 import logging
 import threading
 import asyncio
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Tuple, List, Dict, Optional
 
 from src.config import OUT_DIR, SPOOL_DIR, SPOOL_BATCH_MESSAGES, SPOOL_BATCH_BYTES
 from src.chat_spool import ChatSpool, encode_row
+from src.pagination_diagnostics import begin
 from src.resource_usage import log_resources, stage
 from .worker_io import run_blocking
 from src.twitch_api import fetch_vod_meta, gql_fetch_comments, get_client_id
@@ -35,6 +37,7 @@ async def download_and_send(
     spool_bytes = 0
     stop = threading.Event()
     cancel_check = lambda: stop.is_set() or is_cancelled(context, operation_id)
+    diagnostic = begin(vod_id)
     try:
         # Direct callers without an operation token retain the legacy behavior;
         # production runs clear stale cancellation state when they are reserved.
@@ -110,6 +113,8 @@ async def download_and_send(
                 pending_batch, batch = batch, []
                 batch_bytes = 0
                 await run_blocking(spool.append_batch, pending_batch, cancel_check, on_cancel=stop.set)
+                if diagnostic is not None:
+                    diagnostic.event('spool_checkpoint', spooled_total=spool.messages)
                 spool_bytes = spool.size_bytes()
                 if spool.messages % 5000 == 0:
                     log_resources("chat_spooled", messages=spool.messages, spool_bytes=spool_bytes)
@@ -177,6 +182,13 @@ async def download_and_send(
         return meta_dict, stats, sent_files, html_result_ref
 
     finally:
+        if diagnostic is not None:
+            failure = sys.exc_info()[1]
+            if failure is not None:
+                diagnostic.error('worker', failure)
+            diagnostic.close('cancelled' if isinstance(failure, asyncio.CancelledError) or is_cancelled(context, operation_id)
+                             else 'error' if failure is not None else 'success',
+                             spool.messages if spool is not None else None)
         try:
             if comment_iter is not None:
                 close = getattr(comment_iter, "aclose", None)
