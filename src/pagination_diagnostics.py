@@ -365,6 +365,18 @@ class Journal:
                    emitted=self.page_emitted, discarded=self.page_discarded, emitted_total=self.emitted,
                    spooled=None)
 
+    def repair_page(self, branch, page, attempt, edges, cursor, next_cursor, has_next):
+        if self.stopped:
+            return
+        try:
+            self.event('repair_page_received', branch=branch, page=page, attempt=attempt,
+                       edges=len(edges), has_next=has_next, ids_sha256=ids_hash(edges),
+                       input_cursor_sha256=_cursor_hash(cursor),
+                       output_cursor_sha256=_cursor_hash(next_cursor),
+                       emitted=None, spooled=None)
+        except Exception:
+            self._failure()
+
     def repair_emitted(self, origin, nonblank):
         """Buffered pilot rows have explicit source coordinates, not active page."""
         if self.stopped:

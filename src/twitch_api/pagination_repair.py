@@ -398,6 +398,8 @@ async def repaired_comments(session, client_id, vod_id, start_offset, cancel_che
             # then remove it from output. Its source order cannot be rewritten.
             merged = ordered_union([[r for p in prefix for r in p.records] + main_records,
                                     [r for p in control_pages for r in p.records]], cancel_check)
+            repeated_ids = (sum(len(p.records) for p in prefix) + len(main_records)
+                            + sum(len(p.records) for p in control_pages) - len(merged))
             merged = [r for r in merged if r.ident not in prefix_map]
             originals = {r.ident for r in main_records if r.second <= high}
             repaired_window = [r for r in merged if r.second <= high]
@@ -405,7 +407,7 @@ async def repaired_comments(session, client_id, vod_id, start_offset, cancel_che
             event('repair_window_verified', window=1, first=low, last=high,
                   original_ids=len(originals), control_ids=len({r.ident for r in branch}),
                   added_ids=added, merged_ids=len(repaired_window),
-                  repeated_ids=len(main_records) + len(branch) - len(merged),
+                  repeated_ids=repeated_ids,
                   conflicts=0, requests=budget.requests, right_barrier=True,
                   tail_ids=len({r.ident for r in tail}), tail_confirmed=True,
                   peak_records=retention.peak_rows, peak_bytes=retention.peak_bytes,

@@ -121,9 +121,8 @@ async def validated_pages(
                 break
 
         if diagnostic is not None and pilot_branch is not None:
-            diagnostic.event('repair_page_received', branch=pilot_branch, page=page_number,
-                             attempt=attempt + 1, edges=len(edges), has_next=has_next,
-                             emitted=None, spooled=None)
+            diagnostic.repair_page(pilot_branch, page_number, attempt + 1,
+                                   edges, cursor, next_cursor, has_next)
 
         if not edges:
             if diagnostic is not None:

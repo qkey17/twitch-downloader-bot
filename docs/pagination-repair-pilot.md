@@ -166,3 +166,13 @@ actual ID gain, retained counts/bytes, process RSS, latency, four physical contr
 attempts, cancellation and preservation of the previous ready result on refusal.
 Live acceptance, merge, deployment and production enablement require a separate
 owner decision. No production configuration instructions are part of this PR.
+
+`repeated_ids` counts all input ID occurrences minus unique IDs in the full
+union, including the retained committed prefix, main records and all control
+records, before prefix removal. It is separate from `added_ids`.
+
+`repair_page_received` includes `ids_sha256` (the full ordered ID sequence using
+the existing `ids_hash`), `input_cursor_sha256` and `output_cursor_sha256`.
+Branch/page/attempt identify each stream independently. Hashing is skipped
+without an active private journal, including after recording stops. Equal
+hashes identify equal observed sequences, not absolute Twitch completeness.
