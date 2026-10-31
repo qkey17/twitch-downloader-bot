@@ -9,6 +9,7 @@ import re
 from typing import Any
 
 import aiohttp
+from src.pagination_diagnostics import CURRENT
 
 from src.config import (
     GQL_ENDPOINT,
@@ -249,6 +250,9 @@ async def gql_post_json(
         request_diagnostic,
     )
     async with session.post(GQL_ENDPOINT, json=payload, headers=headers, timeout=timeout) as r:
+        diagnostic = CURRENT.get()
+        if diagnostic is not None and page_number is not None:
+            diagnostic.event('http_response', page=page_number, attempt=diagnostic.attempt, status=r.status)
         logger.info(
             "Twitch GraphQL response page=%s status=%s",
             page_number if page_number is not None else "n/a",

@@ -3,6 +3,7 @@ from src.config import VIDEO_COMMENTS_HASH
 import aiohttp
 
 from .client import TwitchAPIError, gql_post_json
+from src.pagination_diagnostics import CURRENT
 
 async def gql_fetch_page(
     session: aiohttp.ClientSession,
@@ -69,4 +70,7 @@ async def gql_fetch_page(
     if has_next and (not isinstance(next_cursor, str) or not next_cursor):
         raise TwitchAPIError("Twitch comments page has no continuation cursor")
 
+    diagnostic = CURRENT.get()
+    if diagnostic is not None:
+        diagnostic.response(edges, next_cursor, has_next)
     return edges, next_cursor, has_next

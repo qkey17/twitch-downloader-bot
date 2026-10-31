@@ -1,0 +1,29 @@
+name: Pagination diagnostics tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - src/**
+      - tests/**
+      - requirements.txt
+      - .github/workflows/pagination-diagnostics-tests.yml
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Install existing application dependencies on the disposable runner
+        run: |
+          python3 -m venv "$RUNNER_TEMP/pagination-tests"
+          "$RUNNER_TEMP/pagination-tests/bin/python" -m pip install -r requirements.txt
+      - name: Run Linux private-storage checks and full regression suite
+        run: |
+          "$RUNNER_TEMP/pagination-tests/bin/python" -B -m unittest discover -s tests -v
