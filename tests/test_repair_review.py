@@ -76,4 +76,3 @@ class ReviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([('main',1),('main',2),('control',1),('main',3)],[(r['branch'],r['page']) for r in records])
         self.assertEqual([None,d._cursor_hash('P'),None,d._cursor_hash('C1')],[r['input_cursor_sha256'] for r in records])
         self.assertEqual(4,len(session.calls))
-
