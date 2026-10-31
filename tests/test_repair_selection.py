@@ -15,8 +15,8 @@ class SelectionTests(unittest.IsolatedAsyncioTestCase):
     async def test_shift_one_and_two_seconds_preserves_cursor_rows_and_spool(self):
         for start in ('9','8'):
             session=f.simple()
-            session.routes[('offset',0)]=f.page([f.edge(1,0),f.edge(2,7)],'P')
-            session.routes[('offset',5)]=f.page([f.edge(2,7),f.edge(3,10),f.edge(4,11),f.edge(5,12),f.edge(6,13)],'B')
+            session.routes[('cursor','PRE')]=f.page([f.edge(2,7)],'P')
+            session.routes[('offset',5)]=f.page([f.edge(1,0),f.edge(2,7),f.edge(3,10),f.edge(4,11),f.edge(5,12),f.edge(6,13)],'B')
             journal=f.Capture(); token=d.CURRENT.set(journal)
             try:
                 rows=await self.collect(session,env={**f.ENV,'TCD_PAGINATION_REPAIR_START':start})
@@ -36,7 +36,7 @@ class SelectionTests(unittest.IsolatedAsyncioTestCase):
                 finally:spool.close()
 
     async def test_gap_unknown_id_and_late_left_barrier_refuse_before_window(self):
-        for entries,reason in (([f.edge(2,8),f.edge(90,9),f.edge(4,11),f.edge(6,13)],'unverified_prefix'),
+        for entries,reason in (([f.edge(1,0),f.edge(90,7),f.edge(4,11),f.edge(6,13)],'unverified_prefix'),
                                ([f.edge(90,9),f.edge(4,11),f.edge(6,13)],'control_no_left_barrier')):
             session=f.simple();session.routes[('offset',5)]=f.page(entries,'B');rows=[]
             with self.assertRaisesRegex(r.RepairError,reason):
@@ -46,9 +46,10 @@ class SelectionTests(unittest.IsolatedAsyncioTestCase):
     async def test_live_observed_geometry_with_66_synthetic_ids(self):
         parent=[f.edge(100+n,20344+(n*132)//65,n) for n in range(66)]
         controlled=sorted([*parent,f.edge(999,20400)],key=lambda e:(e['node']['contentOffsetSeconds'],f.datetime.fromisoformat(e['node']['createdAt'])))
-        session=f.Session({('offset',0):f.page([f.edge(1,0),f.edge(2,20342)],'P'),
+        session=f.Session({('offset',0):f.page([f.edge(1,0)],'PRE'),
+                           ('cursor','PRE'):f.page([f.edge(2,20342)],'P'),
                            ('cursor','P'):f.page(parent,'C1'),
-                           ('offset',20330):f.page([f.edge(2,20342),*controlled,f.edge(3,20477)],'B'),
+                           ('offset',20330):f.page([f.edge(1,0),f.edge(2,20342),*controlled,f.edge(3,20477)],'B'),
                            ('cursor','C1'):f.page([f.edge(3,20477),f.edge(4,20500)])})
         rows=await self.collect(session,env={**f.ENV,'TCD_PAGINATION_REPAIR_START':'20343',
                                           'TCD_PAGINATION_REPAIR_END':'20470',
@@ -59,13 +60,13 @@ class SelectionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_excess_shift_and_end_before_first_refuse_without_control(self):
         for start,end in (('7','12'),('9','9.5')):
-            session=f.simple();session.routes[('offset',0)]=f.page([f.edge(1,0)],'P')
+            session=f.simple();session.routes[('cursor','PRE')]=f.page([f.edge(2,6)],'P')
             with self.assertRaisesRegex(r.RepairError,'window_not_one_page'):
                 await self.collect(session,env={**f.ENV,'TCD_PAGINATION_REPAIR_START':start,'TCD_PAGINATION_REPAIR_END':end})
-            self.assertEqual(2,len(session.calls))
+            self.assertEqual(3,len(session.calls))
 
     async def test_already_committed_boundary_second_still_refused(self):
-        session=f.simple();session.routes[('offset',0)]=f.page([f.edge(1,9.1)],'P')
-        session.routes[('cursor','P')]=f.page([f.edge(3,9.5),f.edge(5,12)],'C1')
+        session=f.simple();session.routes[('offset',0)]=f.page([f.edge(1,8.1)],'PRE')
+        session.routes[('cursor','PRE')]=f.page([f.edge(2,8.5)],'P')
         with self.assertRaisesRegex(r.RepairError,'left_boundary_committed'):
             await self.collect(session)

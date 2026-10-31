@@ -1,4 +1,4 @@
-"""One explicitly selected, fail-closed page repair before append-only storage.
+"""One selected, fail-closed two-page repair before append-only storage.
 
 This consumer never assigns a cursor: each validated_pages iterator alone owns
 its parent/continuation pair. No persistent ID index or repair storage is used.
@@ -198,7 +198,9 @@ class Retention:
         self.peak_rows = self.peak_bytes = self.peak_estimated = 0
 
     def retain(self, pages):
-        self.pages = list(pages)
+        # Roles can alias the same page during a handoff; occurrences on
+        # different raw pages still count separately, even for identical IDs.
+        self.pages = list({id(page): page for page in pages}.values())
 
     def before_request(self):
         # Reserve no unknown-size page in the retained buffer. Incoming JSON is
@@ -264,52 +266,98 @@ async def repaired_comments(session, client_id, vod_id, start_offset, cancel_che
     control = None
     budget = None
     repaired = False
-    last = None
+    pending = page = release = item = raw = controlled = continued = None
+    last_received_main_key = last_emitted_key = None
     outcome = 'incomplete'
+    stage = 'fetch_main'
+    prefix_control_ids = set()
+    rejected_unknown_ids = 0
+    main_records, branch, tail, merged = [], [], [], []
+    repaired_window, added_records, missing = [], [], []
+    originals, pair_ids, candidate_originals, output_ids = set(), set(), set(), set()
+    low = high = verification_high = None
+    prefix_map, observed = {}, {}
+    recent, adjacent, seen = {}, {}, set()
+
+    def retain():
+        retention.retain([*prefix, *([pending] if pending is not None else []),
+                          *([page] if page is not None else []), *control_pages, *lookahead])
 
     def event(name, **fields):
         if journal is not None:
             journal.event(name, **fields)
 
     def emit(item):
-        nonlocal last
+        nonlocal last_emitted_key
         _check_cancel(cancel_check)
-        if last is not None and item.key < last.key:
+        if last_emitted_key is not None and item.key < last_emitted_key:
             fail('late_time_regression')
-        last = item
         row = message_row(item.node)
+        if row[3]:
+            last_emitted_key = item.key
         if journal is not None:
             journal.repair_emitted(item.origin, bool(row[3]))
         return row
 
     async def take(iterator, branch):
+        nonlocal last_received_main_key
+        retain()
         retention.before_request()
         _check_cancel(cancel_check)
         try:
-            page = await iterator.__anext__()
+            raw_page = await iterator.__anext__()
         except StopAsyncIteration:
             fail('incomplete_coverage')
-        return retention.accept(page, branch)
+        buffered = retention.accept(raw_page, branch)
+        if branch == 'main':
+            if last_received_main_key is not None and buffered.records[0].key < last_received_main_key:
+                fail('main_time_regression')
+            last_received_main_key = buffered.records[-1].key
+        return buffered
 
     try:
-        event('repair_start', window=1, start=float(selected.start), end=float(selected.end),
+        event('repair_start', window=1, span_pages=2, start=float(selected.start), end=float(selected.end),
               control_offset=selected.control_offset)
         while True:
-            retention.retain(prefix)
+            stage = 'stream_main' if repaired else 'fetch_main'
+            retain()
             try:
                 raw = await main.__anext__()
             except StopAsyncIteration:
                 if not repaired:
                     fail('window_not_checked')
                 outcome = 'success'
+                stage = 'complete'
                 return
             page = retention.accept(raw, 'main')
-            if last is not None and page.records[0].key < last.key:
+            del raw
+            if last_received_main_key is not None and page.records[0].key < last_received_main_key:
                 fail('late_time_regression')
-            if repaired or page.records[-1].offset < selected.start:
+            last_received_main_key = page.records[-1].key
+            if not repaired and page.records[-1].offset < selected.start:
+                # Classify N before the first yield of P. With no pending yet,
+                # this first received page merely fills the slot.
+                if pending is None:
+                    pending, page = page, None
+                    retain()
+                    stage = 'pending'
+                    continue
+                adjacent = {r.ident: r for r in pending.records}
+                for item in page.records:
+                    if item.ident in adjacent:
+                        same(adjacent[item.ident], item)
+                        fail('duplicate_outside_window')
+                adjacent.clear()
+                stage = 'release_prefix'
+                release = pending
+            elif repaired:
+                release = page
+            else:
+                release = None
+            if release is not None:
                 recent = {r.ident: r for p in prefix for r in p.records}
                 seen = set()
-                for item in page.records:
+                for item in release.records:
                     if item.ident in recent:
                         same(recent[item.ident], item)
                         fail('duplicate_outside_window')
@@ -319,25 +367,37 @@ async def repaired_comments(session, client_id, vod_id, start_offset, cancel_che
                     row = emit(item)
                     if row[3]:
                         yield row
-                prefix.append(page)
+                # This transition runs only on resume after the last yield,
+                # including the rest of any blank-only raw records.
+                _check_cancel(cancel_check)
+                prefix.append(release)
+                if not repaired:
+                    pending = page
+                page = release = item = None
                 recent.clear()
+                adjacent.clear()
                 seen.clear()
+                retain()
                 continue
 
-            low, high = page.records[0].second, page.records[-1].second
+            stage = 'freeze'
+            if pending is None:
+                fail('pending_missing')
+            low, high = pending.records[0].second, page.records[-1].second
             verification_high = max(high, int(selected.end))
             first = page.records[0].offset
             start_shift = max(Decimal(0), first - selected.start)
             if not (first <= selected.end and start_shift <= MAX_START_SHIFT):
                 fail('window_not_one_page')
-            if last is not None and last.second >= low:
+            if prefix and prefix[-1].records[-1].second >= low:
                 fail('left_boundary_committed')
             prefix_map = {r.ident: r for p in prefix for r in p.records}
-            for item in page.records:
+            for item in [*pending.records, *page.records]:
                 if item.ident in prefix_map:
                     same(prefix_map[item.ident], item)
                     fail('duplicate_outside_window')
             budget = ControlBudget(retention, cancel_check)
+            stage = 'control'
             control = validated_pages(session, client_id, vod_id, selected.control_offset, cancel_check,
                                       before_attempt=budget.before_attempt, pilot_branch='control', body_limit=MAX_BYTES)
             # Includes request, retry pauses, pacing, decoding and validation.
@@ -357,8 +417,10 @@ async def repaired_comments(session, client_id, vod_id, start_offset, cancel_che
                             if item.ident in prefix_map:
                                 same(prefix_map[item.ident], item)
                             if item.second < low:
+                                prefix_control_ids.add(item.ident)
                                 known = prefix_map.get(item.ident)
                                 if known is None:
+                                    rejected_unknown_ids += 1
                                     fail('unverified_prefix')
                                 same(known, item)
                         if controlled.records[-1].second > verification_high:
@@ -370,7 +432,8 @@ async def repaired_comments(session, client_id, vod_id, start_offset, cancel_che
 
             branch = [r for p in control_pages for r in p.records if r.second >= low]
             tail = [r for r in branch if r.second > high]
-            main_records = list(page.records)
+            main_records = [*pending.records, *page.records]
+            stage = 'lookahead'
             for _ in range(MAX_LOOKAHEAD):
                 continued = await take(main, 'main')  # always the ORIGINAL main iterator
                 if continued.records[0].key < main_records[-1].key:
@@ -400,6 +463,7 @@ async def repaired_comments(session, client_id, vod_id, start_offset, cancel_che
 
             # Include the bounded committed prefix in order/conflict checking,
             # then remove it from output. Its source order cannot be rewritten.
+            stage = 'merge'
             merged = ordered_union([[r for p in prefix for r in p.records] + main_records,
                                     [r for p in control_pages for r in p.records]], cancel_check)
             repeated_ids = (sum(len(p.records) for p in prefix) + len(main_records)
@@ -407,30 +471,51 @@ async def repaired_comments(session, client_id, vod_id, start_offset, cancel_che
             merged = [r for r in merged if r.ident not in prefix_map]
             originals = {r.ident for r in main_records if r.second <= high}
             repaired_window = [r for r in merged if r.second <= high]
-            added = len({r.ident for r in repaired_window} - originals)
-            event('repair_window_verified', window=1, first=low, last=high,
+            pair_ids = {r.ident for r in [*pending.records, *page.records]}
+            added_records = [r for r in repaired_window if r.ident not in originals]
+            added_p = sum(r.offset <= pending.records[-1].offset for r in added_records)
+            added_gap = sum(pending.records[-1].offset < r.offset < first for r in added_records)
+            added_t = len(added_records) - added_p - added_gap
+            candidate_originals = {r.ident for p in [page, *lookahead] for r in p.records if r.second <= high}
+            output_ids = {r.ident for r in merged}
+            # Explicit preservation guards precede the first P/T/Q handoff.
+            if (not originals <= output_ids or len(output_ids) != len(merged)
+                    or not {r.ident for r in branch if r.second <= high} <= output_ids):
+                fail('merge_preservation')
+            if last_emitted_key is not None and merged[0].key < last_emitted_key:
+                fail('late_time_regression')
+            event('repair_window_verified', window=1, span_pages=2, pending_present=True,
+                  first=low, last=high, candidate_first=page.records[0].second,
                   configured_start=float(selected.start), start_shift=float(start_shift),
                   configured_end=float(selected.end), repair_high=high,
                   verification_high=verification_high,
                   main_last_second=continued.records[-1].second,
                   control_last_second=controlled.records[-1].second,
-                  original_ids=len(originals), control_ids=len({r.ident for r in branch}),
-                  added_ids=added, merged_ids=len(repaired_window),
+                  original_ids=len(candidate_originals), control_ids=len({r.ident for r in branch}),
+                  added_ids=added_t, merged_ids=len(candidate_originals) + added_t,
+                  pending_original_ids=len({r.ident for r in pending.records}),
+                  candidate_original_ids=len({r.ident for r in page.records}),
+                  pair_original_ids=len(pair_ids), pair_main_ids=len(originals),
+                  pair_merged_ids=len(repaired_window), pair_added_ids=len(added_records),
+                  added_pending_ids=added_p, added_gap_ids=added_gap, added_target_ids=added_t,
+                  control_prefix_ids=len(prefix_control_ids), rejected_unknown_ids=rejected_unknown_ids,
                   repeated_ids=repeated_ids,
                   conflicts=0, requests=budget.requests, right_barrier=True,
                   tail_ids=len({r.ident for r in tail}), tail_confirmed=True,
                   tail_confirmed_ids=len({r.ident for r in tail}),
                   peak_records=retention.peak_rows, peak_bytes=retention.peak_bytes,
                   peak_estimated_bytes=retention.peak_estimated)
+            stage = 'emit_repair'
             for item in merged:
                 row = emit(item)
                 if row[3]:
                     yield row
+            _check_cancel(cancel_check)
             repaired = True
             # All consumed lookahead has now been emitted. Continue main after
             # its own last buffered page, not from any control cursor.
             prefix.clear()
-            for buffered in [page, *lookahead][-PREFIX_PAGES:]:
+            for buffered in [pending, page, *lookahead][-PREFIX_PAGES:]:
                 prefix.append(buffered)
             del buffered
             control_pages.clear()
@@ -444,7 +529,12 @@ async def repaired_comments(session, client_id, vod_id, start_offset, cancel_che
             originals.clear()
             observed.clear()
             missing.clear()
-            del controlled, continued, raw, page
+            added_records.clear()
+            candidate_originals.clear()
+            output_ids.clear()
+            pair_ids.clear()
+            pending = page = item = controlled = continued = None
+            retain()
             await control.aclose()
             control = None
     except RepairError as exc:
@@ -465,11 +555,34 @@ async def repaired_comments(session, client_id, vod_id, start_offset, cancel_che
                 if control is not None:
                     await control.aclose()
             finally:
+                had_pending = pending is not None
+                pending_ids = len({r.ident for r in pending.records}) if had_pending else 0
                 prefix.clear()
                 control_pages.clear()
                 lookahead.clear()
+                main_records.clear()
+                branch.clear()
+                tail.clear()
+                merged.clear()
+                prefix_map.clear()
+                observed.clear()
+                recent.clear()
+                adjacent.clear()
+                seen.clear()
+                repaired_window.clear()
+                added_records.clear()
+                missing.clear()
+                originals.clear()
+                pair_ids.clear()
+                candidate_originals.clear()
+                output_ids.clear()
+                pending = page = release = item = raw = controlled = continued = None
                 retention.pages.clear()
-                event('repair_end', outcome=outcome, verified=repaired,
+                event('repair_end', outcome=outcome, verified=repaired, span_pages=2,
+                      stage=stage, pending_present=had_pending,
+                      pending_original_ids=pending_ids, repair_low=low, repair_high=high,
+                      verification_high=verification_high,
+                      control_prefix_ids=len(prefix_control_ids), rejected_unknown_ids=rejected_unknown_ids,
                       requests=budget.requests if budget is not None else 0,
                       peak_records=retention.peak_rows, peak_bytes=retention.peak_bytes,
                       peak_estimated_bytes=retention.peak_estimated)

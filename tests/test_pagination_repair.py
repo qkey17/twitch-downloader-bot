@@ -94,14 +94,15 @@ class Session:
 
 
 def simple():
-    return Session({('offset', 0): page([edge(1, 0), edge(2, 8)], 'P'),
+    return Session({('offset', 0): page([edge(1, 0)], 'PRE'),
+                    ('cursor', 'PRE'): page([edge(2, 8)], 'P'),
                     ('cursor', 'P'): page([edge(3, 10), edge(5, 12)], 'C1'),
-                    ('offset', 5): page([edge(2, 8), edge(3, 10), edge(4, 11), edge(5, 12), edge(6, 13)], 'B'),
+                    ('offset', 5): control([edge(3, 10), edge(4, 11), edge(5, 12), edge(6, 13)]),
                     ('cursor', 'C1'): page([edge(6, 13), edge(7, 14), edge(8, 20)])})
 
 
 def control(entries, cursor='B'):
-    return page([edge(2, 8), *entries], cursor)
+    return page([edge(1, 0), edge(2, 8), *entries], cursor)
 
 
 class Capture(diagnostics.Journal):
@@ -164,7 +165,7 @@ class RepairTests(unittest.IsolatedAsyncioTestCase):
         session = simple()
         rows = await self.collect(session)
         self.assertEqual([f'm{i}' for i in range(1, 9)], [r[3] for r in rows])
-        self.assertEqual([('offset', 0), ('cursor', 'P'), ('offset', 5), ('cursor', 'C1')], [c[0] for c in session.calls])
+        self.assertEqual([('offset', 0), ('cursor', 'PRE'), ('cursor', 'P'), ('offset', 5), ('cursor', 'C1')], [c[0] for c in session.calls])
         self.assertEqual(7, len(rows[0]))
         self.assertEqual('#123456', rows[-1][5])
         self.assertEqual([{'set_id': 'subscriber', 'version': '1'}], rows[-1][6])
@@ -240,20 +241,19 @@ class RepairTests(unittest.IsolatedAsyncioTestCase):
     async def test_first_page_without_verifiable_prefix_is_rejected(self):
         session = simple()
         session.routes[('offset', 0)] = page([edge(1, 10)], 'P')
-        with self.assertRaisesRegex(repair.RepairError, 'unverified_prefix'):
+        with self.assertRaisesRegex(repair.RepairError, 'pending_missing'):
             await self.collect(session)
-        # END may be outside the first page, but control cannot insert an
-        # unknown earlier ID when no committed prefix can verify it.
-        self.assertEqual(2, len(session.calls))
+        # No previous page exists. Never fall back to single-page repair.
+        self.assertEqual(1, len(session.calls))
 
     async def test_left_same_second_already_committed_is_rejected(self):
         session = simple()
-        session.routes[('offset', 0)] = page([edge(1, 9.1)], 'P')
-        session.routes[('cursor', 'P')] = page([edge(3, 9.5), edge(5, 12)], 'C1')
+        session.routes[('offset', 0)] = page([edge(1, 8.1)], 'PRE')
+        session.routes[('cursor', 'PRE')] = page([edge(2, 8.5)], 'P')
         await self.failure(session, 'left_boundary_committed')
 
     async def test_unknown_prefix_id_and_outside_retained_prefix_fail(self):
-        for prior in (edge(90, 8), edge(90, 1)):
+        for prior in (edge(90, 7), edge(90, 1)):
             session = simple()
             session.routes[('offset', 5)] = page([prior, edge(4, 11), edge(6, 13)], 'B')
             await self.failure(session, 'unverified_prefix')
@@ -265,8 +265,8 @@ class RepairTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_control_prefix_source_order_cannot_rewrite_committed_order(self):
         session = simple()
-        a, b = edge(1, 8), edge(2, 8)
-        session.routes[('offset', 0)] = page([a, b], 'P')
+        a, b = edge(1, 0), edge(90, 0)
+        session.routes[('offset', 0)] = page([a, b], 'PRE')
         session.routes[('offset', 5)] = page([b, a, edge(4, 11), edge(6, 13)], 'B')
         await self.failure(session, 'order_conflict')
 
@@ -291,7 +291,7 @@ class RepairTests(unittest.IsolatedAsyncioTestCase):
         session.routes[('offset', 5)] = control([edge(3, 10)], 'B1')
         session.routes[('cursor', 'B1')] = page([edge(4, 11)], 'B1')
         await self.failure(session, 'made no progress')
-        self.assertEqual(4, len(session.calls))
+        self.assertEqual(5, len(session.calls))
 
     async def test_missing_control_tail_inside_main_coverage_fails(self):
         session = simple()
@@ -370,7 +370,7 @@ class RepairTests(unittest.IsolatedAsyncioTestCase):
                                        Response(control([edge(3, 10)], 'B1'))]
         session.routes[('cursor', 'B1')] = page([edge(4, 11)], 'B2')
         await self.failure(session, 'request_limit')
-        self.assertEqual(4, len(session.calls)-2)
+        self.assertEqual(4, len(session.calls)-3)
         self.assertNotIn(('cursor', 'B2'), [c[0] for c in session.calls])
 
     async def test_retry_then_success_uses_existing_delay_policy(self):
@@ -423,17 +423,17 @@ class RepairTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await task
         self.assertTrue(closed.is_set())
-        self.assertEqual(3, len(session.calls))
+        self.assertEqual(4, len(session.calls))
         self.assertIsNone(client.COMMENTS_BODY_LIMIT.get())
 
     async def test_cancel_flag_after_http_prevents_next_attempt(self):
         session = simple()
         rows = []
         with self.assertRaisesRegex(RuntimeError, 'отменена'):
-            await self.collect(session, cancel=lambda: len(session.calls) >= 3, rows=rows)
+            await self.collect(session, cancel=lambda: len(session.calls) >= 4, rows=rows)
         self.assertTrue(all(r[0] < 10 for r in rows))
         self.assertTrue(all(r.closed for r in session.responses))
-        self.assertEqual(3, len(session.calls))
+        self.assertEqual(4, len(session.calls))
 
     async def test_buffer_count_memory_and_http_bounds(self):
         for name, maximum, reason in (('MAX_BYTES', 1000, 'buffer_limit|response_limit'),
@@ -474,7 +474,7 @@ class RepairTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn(secret, encoded)
             received = next(i for i,r in enumerate(journal.records) if r['event'] == 'repair_window_verified')
             emitted = [r for r in journal.records[:received] if r['event'] == 'repair_row_processed' and r['emitted']]
-            self.assertEqual(2, len(emitted))
+            self.assertEqual(1, len(emitted))
         finally:
             diagnostics.CURRENT.reset(token)
 
@@ -542,7 +542,7 @@ class RepairTests(unittest.IsolatedAsyncioTestCase):
             session = simple()
             rows = await self.collect(session, env={**env, 'UNRELATED': '1'})
             self.assertEqual(['m1', 'm2', 'm3', 'm5', 'm6', 'm7', 'm8'], [r[3] for r in rows])
-            self.assertEqual([('offset', 0), ('cursor', 'P'), ('cursor', 'C1')], [c[0] for c in session.calls])
+            self.assertEqual([('offset', 0), ('cursor', 'PRE'), ('cursor', 'P'), ('cursor', 'C1')], [c[0] for c in session.calls])
             empty = await self.collect(Session({('offset', 0): page([])}), env={**env, 'UNRELATED': '1'})
             self.assertEqual([], empty)
 

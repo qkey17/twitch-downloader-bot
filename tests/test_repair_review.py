@@ -15,13 +15,13 @@ class ReviewTests(unittest.IsolatedAsyncioTestCase):
         self._asyncioRunner = asyncio.Runner(debug=True, loop_factory=asyncio.SelectorEventLoop)
 
     async def test_exact_repeat_counts_include_prefix_window_and_tail(self):
-        # Four shared IDs: prefix 2, window 3/5, tail 6. Old formula gave 3.
-        for entries, expected in (([edge(2,8),edge(3,10),edge(4,11),edge(5,12),edge(6,13)],4),
-                                  ([edge(2,8),edge(4,11),edge(6,13),edge(6,13)],3)):
+        # C ID 1 now supplies the left barrier; P ID 2 remains unissued.
+        for entries, expected in (([edge(2,8),edge(3,10),edge(4,11),edge(5,12),edge(6,13)],5),
+                                  ([edge(2,8),edge(4,11),edge(6,13),edge(6,13)],4)):
             session = simple()
-            session.routes[('offset',5)] = page(entries,'B')
+            session.routes[('offset',5)] = page([edge(1,0),*entries],'B')
             baseline = await self.collect(session)
-            session = simple(); session.routes[('offset',5)] = page(entries,'B')
+            session = simple(); session.routes[('offset',5)] = page([edge(1,0),*entries],'B')
             journal = Capture(); token = d.CURRENT.set(journal)
             try:
                 rows = await self.collect(session)
@@ -32,7 +32,7 @@ class ReviewTests(unittest.IsolatedAsyncioTestCase):
             self.assertGreaterEqual(event['repeated_ids'],0)
             self.assertEqual((1,3),(event['added_ids'],event['merged_ids']))
             self.assertEqual(baseline,rows)
-            self.assertEqual(4,len(session.calls))
+            self.assertEqual(5,len(session.calls))
 
     async def test_no_repeats(self):
         # Disjoint merge inputs have zero repeats; valid pilot coverage normally
@@ -73,6 +73,6 @@ class ReviewTests(unittest.IsolatedAsyncioTestCase):
         finally:
             d.CURRENT.reset(token)
         records=[r for r in journal.records if r['event']=='repair_page_received']
-        self.assertEqual([('main',1),('main',2),('control',1),('main',3)],[(r['branch'],r['page']) for r in records])
-        self.assertEqual([None,d._cursor_hash('P'),None,d._cursor_hash('C1')],[r['input_cursor_sha256'] for r in records])
-        self.assertEqual(4,len(session.calls))
+        self.assertEqual([('main',1),('main',2),('main',3),('control',1),('main',4)],[(r['branch'],r['page']) for r in records])
+        self.assertEqual([None,d._cursor_hash('PRE'),d._cursor_hash('P'),None,d._cursor_hash('C1')],[r['input_cursor_sha256'] for r in records])
+        self.assertEqual(5,len(session.calls))

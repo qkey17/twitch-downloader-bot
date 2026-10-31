@@ -23,9 +23,10 @@ class RightBoundaryTests(unittest.IsolatedAsyncioTestCase):
     async def test_second_live_geometry_62_ids_control_and_main_cross_end(self):
         parent=[f.edge(100+n,20343+(n*125)//61,n) for n in range(62)]
         ordered=sorted([*parent,f.edge(999,20400)],key=lambda e:(e['node']['contentOffsetSeconds'],f.datetime.fromisoformat(e['node']['createdAt'])))
-        session=f.Session({('offset',0):f.page([f.edge(1,0),f.edge(2,20342)],'P'),
+        session=f.Session({('offset',0):f.page([f.edge(1,0)],'PRE'),
+                           ('cursor','PRE'):f.page([f.edge(2,20342)],'P'),
                            ('cursor','P'):f.page(parent,'C1'),
-                           ('offset',20330):f.page([f.edge(2,20342),*ordered,f.edge(3,20469)],'B1'),
+                           ('offset',20330):f.page([f.edge(1,0),f.edge(2,20342),*ordered,f.edge(3,20469)],'B1'),
                            ('cursor','B1'):f.page([f.edge(4,20470.8),f.edge(5,20472)],'B2'),
                            ('cursor','C1'):f.page([f.edge(3,20469),f.edge(4,20470.8)],'C1b'),
                            ('cursor','C1b'):f.page([f.edge(5,20472),f.edge(6,20500)])})
@@ -41,7 +42,7 @@ class RightBoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1,sum(r[3]=='m999' for r in rows))
         self.assertEqual(len(rows),len({r[3] for r in rows}))
         self.assertEqual(sorted(r[0] for r in rows),[r[0] for r in rows])
-        self.assertEqual([('offset',0),('cursor','P'),('offset',20330),('cursor','B1'),('cursor','C1'),('cursor','C1b')],[k for k,_ in session.calls])
+        self.assertEqual([('offset',0),('cursor','PRE'),('cursor','P'),('offset',20330),('cursor','B1'),('cursor','C1'),('cursor','C1b')],[k for k,_ in session.calls])
 
     async def test_control_passes_h_but_terminal_before_v_refuses(self):
         session=f.simple()
@@ -54,7 +55,7 @@ class RightBoundaryTests(unittest.IsolatedAsyncioTestCase):
         for n,offset in ((1,14),(2,15),(3,15.9)):
             session.routes[('cursor',f'B{n}')]=f.page([f.edge(10+n,offset)],f'B{n+1}')
         await self.failure(session,'request_limit',env={**f.ENV,'TCD_PAGINATION_REPAIR_END':'15'})
-        self.assertEqual(6,len(session.calls))
+        self.assertEqual(7,len(session.calls))
         self.assertNotIn(('cursor','B4'),[k for k,_ in session.calls])
 
     async def test_main_must_cross_v_within_two_pages(self):
