@@ -1,4 +1,5 @@
 import asyncio
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 import json
@@ -23,6 +24,8 @@ _ERROR_BODY_READ_LIMIT = 2048
 _ERROR_BODY_LOG_LIMIT = 512
 _REQUEST_DIAGNOSTIC_LOG_LIMIT = 2048
 _GRAPHQL_ERROR_LIMIT = 5
+# Only the experimental comments consumer sets this; ordinary HTTP is unchanged.
+COMMENTS_BODY_LIMIT = ContextVar('comments_body_limit', default=None)
 _GRAPHQL_PATH_SEGMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _GRAPHQL_EXTENSION_FIELDS = frozenset({
     "code", "classification", "requestId", "request_id", "timestamp", "type",
@@ -275,7 +278,19 @@ async def gql_post_json(
             )
 
         try:
-            data = await r.json()
+            limit = COMMENTS_BODY_LIMIT.get()
+            if limit is None:
+                data = await r.json()
+            else:
+                if r.content_length is not None and r.content_length > limit:
+                    raise TwitchAPIError("Twitch pagination repair pilot: response_limit")
+                try:
+                    raw = await r.content.readexactly(limit + 1)
+                except asyncio.IncompleteReadError as exc:
+                    raw = exc.partial
+                if len(raw) > limit:
+                    raise TwitchAPIError("Twitch pagination repair pilot: response_limit")
+                data = json.loads(raw)
         except (aiohttp.ClientError, ValueError) as exc:
             raise TwitchAPIError("Twitch returned invalid JSON", status=r.status) from exc
 
