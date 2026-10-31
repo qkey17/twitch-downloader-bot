@@ -237,14 +237,14 @@ class RepairTests(unittest.IsolatedAsyncioTestCase):
         await self.failure(session, 'main_barrier_or_tail_limit')
         self.assertNotIn(('cursor', 'C1c'), [c[0] for c in session.calls])
 
-    async def test_committed_left_second_is_rejected(self):
+    async def test_first_page_without_verifiable_prefix_is_rejected(self):
         session = simple()
         session.routes[('offset', 0)] = page([edge(1, 10)], 'P')
-        with self.assertRaisesRegex(repair.RepairError, 'window_not_one_page'):
+        with self.assertRaisesRegex(repair.RepairError, 'unverified_prefix'):
             await self.collect(session)
-        # First page must contain the full configured window; it cannot be
-        # committed and then silently repaired by later pages.
-        self.assertEqual(1, len(session.calls))
+        # END may be outside the first page, but control cannot insert an
+        # unknown earlier ID when no committed prefix can verify it.
+        self.assertEqual(2, len(session.calls))
 
     async def test_left_same_second_already_committed_is_rejected(self):
         session = simple()

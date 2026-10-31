@@ -41,8 +41,8 @@ path with two consumers. The ordinary consumer yields unchanged seven-field
 tuples. The pilot retains raw nodes with Message ID, exact numeric offset,
 original createdAt and source page/position until verification.
 
-The first main page whose end reaches `start` must contain `end` and intersect
-the configured interval. Its first offset may exceed `start` by at most two
+The first main page whose end reaches `start` is selected. Its first offset must
+not exceed `end`, and may exceed `start` by at most two
 seconds (fixed internal limit); otherwise selection fails. The configured start
 is never moved. The whole actual page is held, including interior selections.
 Prior pages must end before start; an already emitted left second still fails.
@@ -60,17 +60,25 @@ its parent page and original continuation cursor. No control cursor can be
 assigned to the main iterator. After checking, consumed main lookahead is emitted
 once and that same main iterator resumes after its own last buffered page.
 
-Control walks until an observed second strictly beyond the whole held page's
-last second. It must cross both sides of the window; ending on its last second
-is insufficient. All boundary-second records stay buffered. Control records
+`end` is the minimum right verification boundary, not the repair page end.
+Let H be the actual page's last second and V = max(H, int(end)). Both control
+and main lookahead must observe a second strictly greater than V. This crosses
+the whole calendar second of fractional end values too. There is no separate
+right drift allowance; the existing query/lookahead budgets decide whether
+coverage is possible. H remains the repair boundary. All boundary-second records stay buffered. Control records
 after that last second are a checkable tail, not extra output. The main iterator
-must cross the right boundary within two lookahead pages. A same-second group in
+must cross V within two lookahead pages. A same-second group in
 the next main page is held together with the original page. Every control-tail
 ID must be matched with identical data in held main continuation. Missing IDs
 strictly inside observed coverage cause immediate refusal. Missing IDs on the
 last partial second or beyond coverage require more lookahead within the same
 two-page budget; otherwise the operation fails. No automatic window expansion
 or dropping of an unverified tail occurs.
+
+The verified event additionally records configured_end, repair_high (H),
+verification_high (V), main_last_second, control_last_second and
+tail_confirmed_ids. right_barrier=true requires both branches strictly past V
+and every control-tail ID matched; IDs after H are never automatic additions.
 
 ## Identity and order
 

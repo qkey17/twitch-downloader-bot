@@ -325,10 +325,10 @@ async def repaired_comments(session, client_id, vod_id, start_offset, cancel_che
                 continue
 
             low, high = page.records[0].second, page.records[-1].second
+            verification_high = max(high, int(selected.end))
             first = page.records[0].offset
             start_shift = max(Decimal(0), first - selected.start)
-            if not (first <= selected.end <= page.records[-1].offset
-                    and start_shift <= MAX_START_SHIFT):
+            if not (first <= selected.end and start_shift <= MAX_START_SHIFT):
                 fail('window_not_one_page')
             if last is not None and last.second >= low:
                 fail('left_boundary_committed')
@@ -361,7 +361,7 @@ async def repaired_comments(session, client_id, vod_id, start_offset, cancel_che
                                 if known is None:
                                     fail('unverified_prefix')
                                 same(known, item)
-                        if controlled.records[-1].second > high:
+                        if controlled.records[-1].second > verification_high:
                             break
                         if not controlled.has_next:
                             fail('control_no_right_barrier')
@@ -389,7 +389,7 @@ async def repaired_comments(session, client_id, vod_id, start_offset, cancel_che
                         missing.append(item)
                     else:
                         same(known, item)
-                if continued.records[-1].second > high and not missing:
+                if continued.records[-1].second > verification_high and not missing:
                     break
                 # Only strict interior absence is conclusive. Uncovered/tied
                 # final seconds must wait for the next main page or fail budget.
@@ -410,11 +410,16 @@ async def repaired_comments(session, client_id, vod_id, start_offset, cancel_che
             added = len({r.ident for r in repaired_window} - originals)
             event('repair_window_verified', window=1, first=low, last=high,
                   configured_start=float(selected.start), start_shift=float(start_shift),
+                  configured_end=float(selected.end), repair_high=high,
+                  verification_high=verification_high,
+                  main_last_second=continued.records[-1].second,
+                  control_last_second=controlled.records[-1].second,
                   original_ids=len(originals), control_ids=len({r.ident for r in branch}),
                   added_ids=added, merged_ids=len(repaired_window),
                   repeated_ids=repeated_ids,
                   conflicts=0, requests=budget.requests, right_barrier=True,
                   tail_ids=len({r.ident for r in tail}), tail_confirmed=True,
+                  tail_confirmed_ids=len({r.ident for r in tail}),
                   peak_records=retention.peak_rows, peak_bytes=retention.peak_bytes,
                   peak_estimated_bytes=retention.peak_estimated)
             for item in merged:
