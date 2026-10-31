@@ -39,6 +39,16 @@ class Capture(d.Journal):
 
 
 class PageEvidenceTests(unittest.TestCase):
+    def test_lease_helper_receives_file_object_without_closing_descriptor(self):
+        with tempfile.TemporaryFile('w+b') as original:
+            fd = original.fileno()
+            def lock(handle):
+                self.assertEqual(fd, handle.fileno())
+                return True
+            with patch.object(d, 'try_lock_file', side_effect=lock):
+                self.assertTrue(d._lock_fd(fd))
+            self.assertEqual(0, os.fstat(fd).st_size)
+
     def test_default_and_other_vod_never_open_storage(self):
         for env in ({}, {'TCD_PAGINATION_DIAGNOSTICS': 'true', 'TCD_PAGINATION_DIAG_VOD': '987654321'}):
             with patch.dict(os.environ, env, clear=True), patch.object(d.Journal, 'open') as opened:

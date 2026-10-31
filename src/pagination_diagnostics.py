@@ -151,6 +151,13 @@ def _private(info, directory=False):
         raise OSError('unsafe diagnostic storage')
 
 
+def _lock_fd(fd):
+    # Existing lease helper accepts a file object. Closing this non-owning view
+    # must leave the descriptor (and its OS lease) alive until _release().
+    with os.fdopen(fd, 'r+b', buffering=0, closefd=False) as handle:
+        return try_lock_file(handle)
+
+
 class Journal:
     """Four fixed 8-MiB slots; one non-blocking OS lease for the writer lifetime.
 
@@ -183,7 +190,7 @@ class Journal:
             _private(os.fstat(self.root), directory=True)
             self.gate = os.open('gate.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=self.root)
             _private(os.fstat(self.gate))
-            if os.fstat(self.gate).st_size != 0 or not try_lock_file(self.gate):
+            if os.fstat(self.gate).st_size != 0 or not _lock_fd(self.gate):
                 raise OSError('diagnostic lease unavailable')
             available = []
             for slot in range(SLOTS):
