@@ -461,8 +461,9 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
         from src.handlers.handlers_input import text_input, vod_command, channel_command
         self.assertIs(text_input, links[0].callback)
         commands = [h for group in app.handlers.values() for h in group if isinstance(h, CommandHandler)]
-        self.assertTrue({'start', 'help', 'vod', 'channel', 'cancel', 'about', 'history'}
+        self.assertTrue({'start', 'help', 'vod', 'channel', 'cancel', 'about'}
                         <= {name for handler in commands for name in handler.commands})
+        self.assertNotIn('history',{name for handler in commands for name in handler.commands})
         for name, callback in (('vod', vod_command), ('channel', channel_command)):
             handler = next(h for h in commands if name in h.commands)
             self.assertIs(callback, handler.callback)
@@ -492,7 +493,12 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
         history = [h for h in callbacks if h.callback.__name__ in ('ui_buttons', 'history_page_callback')]
         self.assertEqual(2, len(history))
         self.assertTrue(all(not h.block for h in history))
-        self.assertFalse(next(h for h in commands if 'history' in h.commands).block)
+        for command in ('/history','/history@TDBBot'):
+            update = Update.de_json({'update_id':1,'message':{
+                'message_id':1,'date':0,'chat':{'id':10,'type':'private'},'text':command,
+                'entities':[{'type':'bot_command','offset':0,'length':len(command)}],
+            }}, SimpleNamespace(username='TDBBot'))
+            self.assertFalse(any(h.check_update(update) for group in app.handlers.values() for h in group))
         file_actions = [h for h in callbacks if h.callback.__name__ == 'file_callback']
         self.assertEqual(1,len(file_actions))
         self.assertFalse(file_actions[0].block)
