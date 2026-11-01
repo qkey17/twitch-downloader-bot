@@ -75,7 +75,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(source.message_id, card.message.message_id)
         self.assertTrue(card.photo)
         self.assertEqual([('text',20),('text',20),('media',20)], self.events)
-        self.assertEqual(['Создать чат','Вернуться к списку'], [r[0].text for r in card.keyboard.inline_keyboard])
+        self.assertEqual(['Обработать чат','Вернуться к списку'], [r[0].text for r in card.keyboard.inline_keyboard])
         for value in ('Channel','Title 123456789','01:02:03','2026-01-02 03:04 UTC'):
             self.assertIn(value,card.text)
         self.context.bot.send_message.assert_not_awaited()
@@ -88,7 +88,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         original = self.context.bot.edit_message_media.side_effect
         async def slow(**kwargs):
             self.assertIn('Title',source.text)
-            self.assertEqual('Создать чат',source.keyboard.inline_keyboard[0][0].text)
+            self.assertEqual('Обработать чат',source.keyboard.inline_keyboard[0][0].text)
             entered.set(); await release.wait(); return await original(**kwargs)
         self.context.bot.edit_message_media.side_effect = slow
         task = self.task(self.show(source,view))
@@ -181,7 +181,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         await info.info_callback(self.process_update(view),self.context)
         choice = self.context.user_data['chat_choice']
         self.assertEqual(self.browser._sessions[view.session_id].message_id,choice['message'])
-        self.assertEqual(['Получить готовый чат','Создать чат заново','Вернуться к списку'],
+        self.assertEqual(['Получить готовый чат','Обработать чат заново','Вернуться к списку'],
                          [r[0].text for r in self.by_id[choice['message']].keyboard.inline_keyboard])
         self.runner.assert_not_awaited()
 

@@ -118,7 +118,7 @@ class HtmlSender:
                 submitted = True
                 await self.application.bot.send_document(
                     chat_id=chat_id,
-                    document=InputFile(owned.handle, filename=owned.filename, read_file_handle=False),
+                    document=InputFile(owned.handle, filename=owned.document_filename, read_file_handle=False),
                     connect_timeout=5, pool_timeout=2, write_timeout=60, read_timeout=30,
                 )
                 return SendResult(SendStatus.SENT)

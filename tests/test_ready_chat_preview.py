@@ -238,7 +238,7 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
             history.assert_called_once_with(7, 1)
         self.context.bot.edit_message_media.assert_awaited_once()
         row = message.keyboard.inline_keyboard[0]
-        self.assertEqual([CHAT_GENERIC, '🔗 Ссылка на VOD'], [b.text for b in row])
+        self.assertEqual([[CHAT_GENERIC], ['🔗 Ссылка на VOD']], [[b.text for b in r] for r in message.keyboard.inline_keyboard])
         self.assertEqual(self.available['123456789']['html_ref'], row[0].url)
         self.assertNotIn(view.session_id, self.browser._sessions)
         self.context.bot.send_message.assert_not_awaited(); self.runner.assert_not_awaited()

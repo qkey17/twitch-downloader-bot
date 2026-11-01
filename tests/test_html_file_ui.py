@@ -20,7 +20,7 @@ class FileUiTests(unittest.IsolatedAsyncioTestCase):
         self.sender=NS(send=AsyncMock(return_value=SendResult(SendStatus.SENT)),closing=False)
         self.app=NS(running=True,bot_data={SENDER_KEY:self.sender})
         self.context=NS(user_data={},bot=self.bot,application=self.app)
-        self.kb=Markup([[Button('Открыть чат',url=READY['html_ref']),Button('🔗 Ссылка на VOD',url=ITEM['vod_url'])]])
+        self.kb=Markup([[Button('🌐 Посмотреть чат онлайн',url=READY['html_ref']),Button('🔗 Ссылка на VOD',url=ITEM['vod_url'])]])
         self.patch=patch.object(preview,'resolve_preview',AsyncMock(return_value=None));self.patch.start();self.addCleanup(self.patch.stop)
 
     def update(self,owner=7,message=20,chat_id=1,token=None):
@@ -34,11 +34,15 @@ class FileUiTests(unittest.IsolatedAsyncioTestCase):
         return kb
 
     async def test_ready_open_and_standalone_and_history_bind_same_generation(self):
+        expected=[['🌐 Посмотреть чат онлайн'],['📥 Скачать чат файлом'],['🔗 Ссылка на VOD']]
         with patch.object(vod,'_build_card',return_value=('card',self.kb)),patch.object(vod,'_html_button_url',side_effect=lambda x:x):
             await vod._edit_progress_message_with_card(self.context,1,20,ITEM,READY['html_ref'],ready=READY,owner_id=7)
+            self.assertEqual(expected,[[b.text for b in row] for row in self.bot.edit_message_text.await_args.kwargs['reply_markup'].inline_keyboard])
             self.assertEqual(READY['id'],self.context.user_data[action.KEY]['generation'])
             await vod._send_card_with_buttons(self.context,1,ITEM,READY['html_ref'],ready=READY,owner_id=7)
+            self.assertEqual(expected,[[b.text for b in row] for row in self.bot.send_message.await_args.kwargs['reply_markup'].inline_keyboard])
         await history_files._send_file_card(self.context,1,'card',self.kb,dict(ITEM,ready_result=READY),7)
+        self.assertEqual(expected,[[b.text for b in row] for row in self.bot.send_message.await_args.kwargs['reply_markup'].inline_keyboard])
         self.assertEqual(8,self.context.user_data[action.KEY]['history'])
         with patch.object(action.db,'get_history_entry_for_user',return_value=dict(vod_id='123',fmt='html_online')):
             await action.file_callback(self.update(),self.context)
@@ -46,12 +50,12 @@ class FileUiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_button_layout_local_and_no_generation(self):
         kb=await self.card()
-        self.assertEqual(['Открыть чат','📄 Получить файл'],[b.text for b in kb.inline_keyboard[0]])
-        self.assertEqual('🔗 Ссылка на VOD',kb.inline_keyboard[1][0].text)
-        self.assertLessEqual(len(kb.inline_keyboard[0][1].callback_data.encode()),64)
+        self.assertEqual([['🌐 Посмотреть чат онлайн'],['📥 Скачать чат файлом'],['🔗 Ссылка на VOD']],[[b.text for b in row] for row in kb.inline_keyboard])
+        self.assertLessEqual(len(kb.inline_keyboard[1][0].callback_data.encode()),64)
         local=action.keyboard(self.context,7,1,READY,Markup([[Button('🔗 Ссылка на VOD',url=ITEM['vod_url'])]]))
-        self.assertEqual(['📄 Получить файл'],[b.text for b in local.inline_keyboard[0]])
-        self.assertIs(self.kb,action.keyboard(self.context,7,1,None,self.kb))
+        self.assertEqual(['📥 Скачать чат файлом'],[b.text for b in local.inline_keyboard[0]])
+        unavailable=action.keyboard(self.context,7,1,None,self.kb)
+        self.assertEqual([['🌐 Посмотреть чат онлайн'],['🔗 Ссылка на VOD']],[[b.text for b in row] for row in unavailable.inline_keyboard])
 
     async def test_owner_message_chat_token_expiry_and_navigation_fences(self):
         await self.card();record=self.context.user_data[action.KEY]

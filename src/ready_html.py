@@ -3,6 +3,7 @@ import hashlib
 import os
 import re
 import stat
+from src.document_name import document_name
 
 from src.database import db_results as results
 
@@ -55,6 +56,7 @@ class ReadyHtml:
         self.generation_id = generation_id
         self.handle = self.lease = None
         self.filename = None
+        self.document_filename = None
 
     def open(self, stop):
         row = _row(self.vod_id, self.generation_id)
@@ -116,6 +118,7 @@ class ReadyHtml:
             raise HtmlUnavailable()
         self.handle.seek(0)
         self.filename = f'chat_{self.vod_id}_{row["id"]}.html'
+        self.document_filename = document_name(row.get('meta_json'),self.filename)
 
     def close(self):
         try:

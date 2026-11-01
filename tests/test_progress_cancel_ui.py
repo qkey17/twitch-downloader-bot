@@ -137,7 +137,7 @@ class ProgressCancelTests(unittest.IsolatedAsyncioTestCase):
         session = self.browser._sessions[view.session_id]
         self.assertIsNotNone(session.info_card)
         self.assertNotEqual(view.revision, session.info_card.revision)
-        self.assertIn('Создать чат', [b.text for r in session.info_card.message.keyboard.inline_keyboard for b in r])
+        self.assertIn('Обработать чат', [b.text for r in session.info_card.message.keyboard.inline_keyboard for b in r])
         q = self.update(f'ui:vi:{session.token}:{session.info_card.nonce}:back', session.info_card.message)
         await info.info_callback(q, self.context)
         q.callback_query.answer.assert_awaited_once()
@@ -166,7 +166,7 @@ class ProgressCancelTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(session.info_card)
         self.assertNotIn('chat_choice', self.context.user_data)
         self.assertEqual(self.ready_result()['html_ref'], old['html_ref'])
-        self.assertEqual('Создать чат', session.info_card.message.keyboard.inline_keyboard[0][0].text)
+        self.assertEqual('Обработать чат', session.info_card.message.keyboard.inline_keyboard[0][0].text)
 
     async def test_text_regen_start_has_single_full_edit_and_restores_text_on_missing_preview(self):
         source, view = await self.regenerate(url='')
@@ -194,7 +194,7 @@ class ProgressCancelTests(unittest.IsolatedAsyncioTestCase):
                 msg = self.by_id[record['message']]
                 self.assertNotIn('Обработка чата отменена пользователем', msg.text)
                 labels = [r[0].text for r in msg.keyboard.inline_keyboard]
-                self.assertEqual(['Получить готовый чат', 'Создать чат заново'] if regenerate else ['Создать чат'], labels)
+                self.assertEqual(['Получить готовый чат', 'Обработать чат заново'] if regenerate else ['Обработать чат'], labels)
                 self.assertFalse(self.browser._sessions)
 
     async def test_expired_session_does_not_revive_old_buttons(self):
@@ -284,8 +284,8 @@ class ProgressCancelTests(unittest.IsolatedAsyncioTestCase):
         item = dict(title='Title',fmt='html_online',html_url=self.ready_result()['html_ref'], vod_url='https://www.twitch.tv/videos/123456789')
         with patch.object(ui,'HTML_PUBLISH_MODE','public'), patch.object(ui,'local_published_html_status',return_value=True):
             text,kb = build_history_page([item],0,1)[0][0]
-        self.assertNotIn('Открыть чат', text)
-        self.assertEqual('Открыть чат',kb.inline_keyboard[0][0].text)
+        self.assertNotIn('🌐 Посмотреть чат онлайн', text)
+        self.assertEqual('🌐 Посмотреть чат онлайн',kb.inline_keyboard[0][0].text)
         self.assertEqual(item['html_url'], kb.inline_keyboard[0][0].url)
 
     async def test_progress_escapes_known_metadata_and_unknown_values_are_safe(self):
@@ -308,7 +308,7 @@ class ProgressCancelTests(unittest.IsolatedAsyncioTestCase):
         await self.done()
         card = self.browser._sessions[view.session_id].info_card
         self.assertIsNotNone(card); self.assertFalse(card.photo)
-        self.assertEqual('Создать чат', card.message.keyboard.inline_keyboard[0][0].text)
+        self.assertEqual('Обработать чат', card.message.keyboard.inline_keyboard[0][0].text)
 
     async def test_publication_close_error_never_shows_confirmed_cancel(self):
         await self.first(); record = await self.cancel()

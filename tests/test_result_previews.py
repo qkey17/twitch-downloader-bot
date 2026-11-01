@@ -70,7 +70,7 @@ class PreviewTests(unittest.IsolatedAsyncioTestCase):
         options=bot.edit_message_media.await_args.kwargs
         self.assertEqual(20,options['message_id'])
         self.assertEqual(URL,options['media'].media)
-        self.assertEqual([HTML,'https://www.twitch.tv/videos/1'],[b.url for b in options['reply_markup'].inline_keyboard[0]])
+        self.assertEqual([[HTML],['https://www.twitch.tv/videos/1']],[[b.url for b in row] for row in options['reply_markup'].inline_keyboard])
         bot.send_message.assert_not_awaited()
 
     async def test_legacy_standalone_result_reuses_new_message_for_photo(self):
@@ -356,7 +356,7 @@ class PreviewTests(unittest.IsolatedAsyncioTestCase):
         self.context.bot.edit_message_text.assert_not_awaited()
         self.context.bot.delete_message.assert_not_awaited()
         rows=self.context.bot.send_message.await_args.kwargs['reply_markup'].inline_keyboard
-        self.assertEqual([HTML,'https://www.twitch.tv/videos/1'],[b.url for b in rows[0]])
+        self.assertEqual([[HTML],['https://www.twitch.tv/videos/1']],[[b.url for b in row] for row in rows])
 
     async def test_file_card_double_failure_preserves_bound_id_and_rejects_old_card(self):
         from src.history.history_files import _send_file_card

@@ -11,7 +11,8 @@ from src.database import database as db
 from src.html_sender import SENDER_KEY, SendStatus
 from src.ready_html import HtmlUnavailable
 from src.ui.callbacks import CallbackReply
-from src.ui.ui_labels import CHAT_GENERIC, VOD_LINK, STALE_ACTION_NOTICE
+from src.ui.ui_labels import CHAT_GENERIC, VOD_LINK, STALE_ACTION_NOTICE, DOWNLOAD_HTML
+from src.ui.result_actions import stack_actions
 
 KEY = 'html_file_action'
 PREFIX = 'ui:htmlfile:'
@@ -41,7 +42,7 @@ def lookup(vod_id):
 def keyboard(context, owner, chat, ready, original, *, history_id=None):
     """Caller has already selected/authorized this ready row, not a user path."""
     if (owner is None or not ready or not re.fullmatch('[0-9a-f]{32}', str(ready.get('id', '')))):
-        return original
+        return stack_actions(original)
     token = secrets.token_hex(12)
     record = dict(token=token, owner=owner, chat=chat, message=None, vod=ready['vod_id'],
                   generation=ready['id'], history=history_id, created=time.monotonic())
@@ -54,8 +55,8 @@ def keyboard(context, owner, chat, ready, original, *, history_id=None):
             elif button.text == VOD_LINK: vod.append(button)
             else: rest.append(button)
         if rest: extra.append(rest)
-    first.append(InlineKeyboardButton('📄 Получить файл', callback_data=PREFIX+token))
-    return InlineKeyboardMarkup([first]+([vod] if vod else [])+extra)
+    first.append(InlineKeyboardButton(DOWNLOAD_HTML, callback_data=PREFIX+token))
+    return stack_actions(InlineKeyboardMarkup([first]+([vod] if vod else [])+extra))
 
 
 def rendering(context, chat, message, markup):
