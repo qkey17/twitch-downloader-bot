@@ -116,7 +116,6 @@ def _result_lease(row):
     finally:
         if handle is not None:
             handle.close()
-            path.unlink(missing_ok=True)
 
 
 def _protected(con, key):

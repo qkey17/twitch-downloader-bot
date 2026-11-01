@@ -452,7 +452,7 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
              patch.object(main, "validate_credentials"), \
              patch.object(main, "setup_logging"), \
              patch.object(Application, "run_polling"):
-            builder.return_value.token.return_value.post_init.return_value.post_stop.return_value.post_shutdown.return_value.build.return_value = app
+            builder.return_value.application_class.return_value.token.return_value.post_init.return_value.post_stop.return_value.post_shutdown.return_value.build.return_value = app
             main.main()
         links = [h for group in app.handlers.values() for h in group if isinstance(h, MessageHandler)]
         callbacks = [h for group in app.handlers.values() for h in group if isinstance(h, CallbackQueryHandler)]
