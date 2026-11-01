@@ -127,7 +127,7 @@ class PublicInstructionPrivacyTests(unittest.IsolatedAsyncioTestCase):
                 text, keyboard = build_channel_vod_card(view)
                 self.assertIn('🟣 Twitch-канал &lt;&amp;&gt;', text)
                 self.assertIn('🎬 Архив: запись и видео', text)
-                self.assertIn('📚 VODs канала: 2+', text)
+                self.assertIn('📚 Доступные VODs канала: 2+', text)
                 self.assertEqual('Выбрать VOD', keyboard.inline_keyboard[0][0].text)
                 self.assertEqual('ui:cv:'+'a'*16+':4:select:2', keyboard.inline_keyboard[0][0].callback_data)
                 self.assertEqual('🔗 Ссылка на VOD', keyboard.inline_keyboard[0][1].text)

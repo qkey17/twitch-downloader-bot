@@ -124,10 +124,10 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn('Title',source.text); self.assertIsNotNone(source.keyboard)
                 self.context.bot.send_message.assert_not_awaited()
 
-    async def test_custom_jpeg_preview_uses_existing_cdn_at_480x270(self):
+    async def test_custom_jpeg_preview_uses_existing_cdn_at_720x405(self):
         source,view = await self.setup_list(); await self.show(source,view)
         media = self.context.bot.edit_message_media.await_args.kwargs['media']
-        self.assertEqual(URL.replace('%{width}','480').replace('%{height}','270'),media.media)
+        self.assertEqual(URL.replace('%{width}','720').replace('%{height}','405'),media.media)
 
     async def test_long_caption_keeps_full_text_and_buttons_without_photo(self):
         source,view = await self.setup_list()

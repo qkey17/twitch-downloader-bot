@@ -242,7 +242,8 @@ async def fetch_vod_meta(
         if meta.is_live is True and isinstance(thumb, str) and '/_404/404_processing_' in thumb:
             thumb = None
         if thumb and isinstance(thumb, str):
-            preview = thumb.replace("%{width}", "480").replace("%{height}", "270")
+            preview = thumb.replace("%{width}", "720").replace("%{height}", "405")
+            preview = preview.replace("{width}", "720").replace("{height}", "405")
             full = await resolve_thumbnail(session, thumb, cancel_check=cancel_check)
             meta.thumbnail_preview_url = preview
             meta.thumbnail_full_url = full or preview

@@ -549,7 +549,7 @@ class ChannelResultPreviewTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(preview,'fetch_video_thumbnail',AsyncMock()) as lookup:
             await chat.chat_callback(self.update(rows[0][0].callback_data,source),self.context)
         lookup.assert_not_awaited()
-        self.assertIn('480x270',self.context.bot.edit_message_media.await_args.kwargs['media'].media)
+        self.assertIn('720x405',self.context.bot.edit_message_media.await_args.kwargs['media'].media)
 
     async def test_primary_result_text_replacement_retires_callbacks_before_cleanup(self):
         from src.handlers import handlers_channel_vods as lists
