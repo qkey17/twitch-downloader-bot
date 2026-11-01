@@ -67,7 +67,7 @@ class DirectCancelTests(unittest.IsolatedAsyncioTestCase):
             await self.cancel(); await self.done()
             message = self.choice_message(); choice = self.context.user_data['chat_choice']
             self.assertEqual(record['message'],message.message_id)
-            self.assertEqual(['Создать чат'],[r[0].text for r in choice['keyboard'].inline_keyboard])
+            self.assertEqual(['Обработать чат'],[r[0].text for r in choice['keyboard'].inline_keyboard])
             for value in ('Channel','&lt;Title&amp;&gt;','01:02:03','2026-01-02 03:04 UTC'):
                 self.assertIn(value,choice['text'])
             self.assertNotIn('Обработка чата отменена',message.text)
@@ -126,7 +126,7 @@ class DirectCancelTests(unittest.IsolatedAsyncioTestCase):
         old = await self.direct(regenerate=True); await self.cancel(); await self.done()
         choice = self.context.user_data['chat_choice']
         self.assertFalse(choice['create'])
-        self.assertEqual(['Получить готовый чат','Создать чат заново'],[r[0].text for r in choice['keyboard'].inline_keyboard])
+        self.assertEqual(['Получить готовый чат','Обработать чат заново'],[r[0].text for r in choice['keyboard'].inline_keyboard])
         self.assertEqual(1,self.worker.await_count)
         self.entered.clear(); self.release.clear()
         await chat.chat_callback(self.action(),self.context); await asyncio.wait_for(self.entered.wait(),1)

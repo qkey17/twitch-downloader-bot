@@ -123,7 +123,7 @@ class ChannelSelectionTests(unittest.IsolatedAsyncioTestCase):
         await self.select(await self.view())
         prompt, _, kwargs = self.messages[-1]
         keyboard = kwargs['reply_markup']
-        self.assertEqual(['Получить готовый чат', 'Создать чат заново'],
+        self.assertEqual(['Получить готовый чат', 'Обработать чат заново'],
                          [row[0].text for row in keyboard.inline_keyboard])
         self.assertNotIn('vod_pending', self.context.user_data)
         self.metadata.assert_not_awaited()

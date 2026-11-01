@@ -7,12 +7,13 @@
 from typing import Optional
 
 # Кнопки / лейблы
-CHAT_HTML_LINK = "Открыть чат"
+CHAT_HTML_LINK = "🌐 Посмотреть чат онлайн"
 CHAT_GENERIC = CHAT_HTML_LINK
 READY_CHAT = "Чат VOD уже готов"
 GET_READY_CHAT = "Получить готовый чат"
-CREATE_CHAT = "Создать чат"
-RECREATE_CHAT = "Создать чат заново"
+CREATE_CHAT = "Обработать чат"
+RECREATE_CHAT = "Обработать чат заново"
+DOWNLOAD_HTML = "📥 Скачать чат файлом"
 BACK_TO_LIST = "Вернуться к списку"
 READY_UNAVAILABLE = "Готовый чат недоступен. Выберите VOD заново."
 STALE_ACTION_NOTICE = "Кнопка больше неактуальна"

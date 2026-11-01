@@ -53,7 +53,7 @@ class ReadyOfferTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(selected,VodSelection)
         self.assertEqual(ready_offer_text(ready),source.edit_text.await_args.args[0])
         rows=source.edit_text.await_args.kwargs['reply_markup'].inline_keyboard
-        self.assertEqual(['Получить готовый чат','Создать чат заново','Вернуться к списку'],[r[0].text for r in rows])
+        self.assertEqual(['Получить готовый чат','Обработать чат заново','Вернуться к списку'],[r[0].text for r in rows])
         self.assertEqual('HTML',source.edit_text.await_args.kwargs['parse_mode'])
         history.assert_not_called();self.metadata.assert_not_awaited();self.runner.assert_not_awaited()
         source.reply_photo.assert_not_awaited();source.reply_text.assert_not_awaited()
@@ -66,7 +66,7 @@ class ReadyOfferTests(unittest.IsolatedAsyncioTestCase):
         await self.pick(source,view)
         self.assertIsNotNone(self.browser._sessions[view.session_id].info_card)
         info_message=self.browser._sessions[view.session_id].info_card.keyboard
-        self.assertEqual(['Создать чат','Вернуться к списку'],[r[0].text for r in info_message.inline_keyboard])
+        self.assertEqual(['Обработать чат','Вернуться к списку'],[r[0].text for r in info_message.inline_keyboard])
         self.assertNotIn('chat_choice',self.context.user_data)
         self.runner.assert_not_awaited();self.metadata.assert_not_awaited()
 

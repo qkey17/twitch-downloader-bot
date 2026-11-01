@@ -1,4 +1,5 @@
 import html
+from .result_actions import stack_actions
 from src.live_capture import WARNING, captured_live
 from src import config
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -129,7 +130,7 @@ def build_history_page(items: list[dict], page: int, per_page: int, total_items:
                 InlineKeyboardButton(VOD_LINK, url=vod_url)
             )
 
-        kb = InlineKeyboardMarkup([buttons])
+        kb = stack_actions(InlineKeyboardMarkup([buttons]))
         cards.append((text, kb))
 
     nav = []
