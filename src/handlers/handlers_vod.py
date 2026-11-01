@@ -112,7 +112,7 @@ def _html_button_url(html_ref: str | None) -> str | None:
 
 
 async def _edit_progress_message_with_card(context, chat_id: int, message_id: int, item: dict, html_url: str | None = None,
-                                         *, current=lambda: True, ui_lock=None, photo=False, on_photo=None):
+                                         *, current=lambda: True, ui_lock=None, photo=False, on_photo=None, ready=None, owner_id=None):
     from src.ui.result_preview import resolve_preview, render_card, caption_fits, cleanup_card
     text, kb = _build_card(item)
     if not text:
@@ -128,11 +128,13 @@ async def _edit_progress_message_with_card(context, chat_id: int, message_id: in
     row.append(vod_btn)
 
     final_kb = InlineKeyboardMarkup([row])
+    from src.ui.html_file_action import keyboard
+    final_kb = keyboard(context, owner_id, chat_id, ready, final_kb)
 
     # Make HTML available BEFORE any optional Twitch lookup.
     if not photo:
         async with ui_lock or nullcontext():
-            shown = await render_card(context.bot, chat_id, text, final_kb, message_id=message_id, current=current)
+            shown = await render_card(context.bot, chat_id, text, final_kb, message_id=message_id, current=current, file_context=context)
             if shown and shown.message_id != message_id and on_photo:
                 on_photo()  # Replacement is terminal too: retire callbacks on the old source.
         await cleanup_card(context.bot, chat_id, shown)
@@ -143,14 +145,14 @@ async def _edit_progress_message_with_card(context, chat_id: int, message_id: in
         return True
     async with ui_lock or nullcontext():
         shown = await render_card(context.bot, chat_id, text, final_kb, url, message_id=message_id,
-                                  photo=photo, current=current, keep_text=not photo)
+                                  photo=photo, current=current, keep_text=not photo, file_context=context)
         if shown and (shown.photo or shown.message_id != message_id) and on_photo:
             on_photo()  # Terminal result: old list/back actions cannot edit a photo as text.
     await cleanup_card(context.bot, chat_id, shown)
     return shown is not None
 
 
-async def _send_card_with_buttons(context, chat_id, item, html_url=None):
+async def _send_card_with_buttons(context, chat_id, item, html_url=None, *, ready=None, owner_id=None):
     from src.ui.result_preview import send_card
     text, kb = _build_card(item)
     if not text:
@@ -166,6 +168,8 @@ async def _send_card_with_buttons(context, chat_id, item, html_url=None):
     row.append(vod_btn)
 
     final_kb = InlineKeyboardMarkup([row])
+    from src.ui.html_file_action import keyboard
+    final_kb = keyboard(context, owner_id, chat_id, ready, final_kb)
 
     await send_card(context, chat_id, text, final_kb, item)
 
@@ -202,7 +206,7 @@ async def vod_result_callback(update,context):
             if config.HISTORY_ENABLED and ready['cache_id'] is not None:
                 db.add_user_history(update.effective_user.id,ready['cache_id'])
             item = _make_item(ready['meta'],ready['stats'],f"https://www.twitch.tv/videos/{vod_id}","html_online")
-            await _send_card_with_buttons(context,q.message.chat_id,item,ready['html_ref'])
+            await _send_card_with_buttons(context,q.message.chat_id,item,ready['html_ref'], ready=ready, owner_id=update.effective_user.id)
         else:
             if different_pending:
                 await q.message.reply_text('Завершите или отмените выбор формата для другого VOD.')
@@ -438,6 +442,7 @@ async def vod_format_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _start_download(update,context,vod_id,regenerate=False, *, modern=False, initial_meta=None):
+    context.user_data.pop('html_file_action', None)
     context.user_data['ready_preview_request'] = object()
     q = update.callback_query
     vod_url = f"https://www.twitch.tv/videos/{vod_id}"
@@ -594,6 +599,7 @@ async def _runner(
             message_id=progress_message_id,
             item=item,
             html_url=html_url,
+            ready=dict(id=getattr(publication,'id',None), vod_id=vod_id), owner_id=user_id,
         )
 
     except RuntimeError as e:
@@ -675,7 +681,7 @@ async def _show_cancelled(context, chat_id, message_id, ui):
             if await restore_cancelled_selection(context, ui):
                 return
         shown = await render_card(context.bot, chat_id, 'Обработка чата отменена пользователем', None,
-                                  message_id=message_id, current=current)
+                                  message_id=message_id, current=current, file_context=context)
         await cleanup_card(context.bot, chat_id, shown)
     except Exception:
         _diagnostic('cancel_restore_failed')

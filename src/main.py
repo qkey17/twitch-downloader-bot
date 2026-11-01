@@ -27,6 +27,7 @@ from .handlers.handlers_input import (
 from .html_cleanup import start_cleanup, stop_cleanup
 from .maintenance import start_maintenance, stop_maintenance
 from .html_sender import start_sender, stop_sender
+from .ui.html_file_action import file_callback
 from src.handlers.handlers import (
     start_command,
     help_command,
@@ -171,6 +172,7 @@ def main():
     app.add_handler(CallbackQueryHandler(legacy_open_callback, pattern=r"^ui:result:open:[1-9][0-9]{0,19}$"))
     app.add_handler(CallbackQueryHandler(input_menu_callback, pattern=r"^(?:vodfmt:|ui:result:)"))
     app.add_handler(CallbackQueryHandler(chat_callback, pattern=r"^ui:chat:", block=False))
+    app.add_handler(CallbackQueryHandler(file_callback, pattern=r"^ui:htmlfile:", block=False))
     app.add_handler(CallbackQueryHandler(info_callback, pattern=r"^ui:vi:", block=False))
     app.add_handler(build_channel_vods_handler())
     app.add_handler(CallbackQueryHandler(input_menu_callback, pattern=INPUT_CALLBACK_PATTERN))

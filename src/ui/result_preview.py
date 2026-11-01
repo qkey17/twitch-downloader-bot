@@ -65,7 +65,7 @@ async def cleanup_card(bot, chat_id, shown):
 
 async def send_card(context, chat_id, text, keyboard, item, *, current=lambda: True, on_sent=None):
     """Standalone card; notify its owner before waiting for optional metadata."""
-    shown = await render_card(context.bot, chat_id, text, keyboard, current=current)
+    shown = await render_card(context.bot, chat_id, text, keyboard, current=current, file_context=context)
     if shown is None:
         return
     if on_sent:
@@ -75,14 +75,24 @@ async def send_card(context, chat_id, text, keyboard, item, *, current=lambda: T
     url = await resolve_preview(context, item)
     if url:
         updated = await render_card(context.bot, chat_id, text, keyboard, url,
-                                    message_id=shown.message_id, current=current, keep_text=True)
+                                    message_id=shown.message_id, current=current, keep_text=True, file_context=context)
         if updated is not None and current():
             if updated.message_id != shown.message_id and on_sent:
                 on_sent(updated.message_id)
             await cleanup_card(context.bot, chat_id, updated)
 
 
-async def render_card(bot, chat_id, text, keyboard, url=None, *, message_id=None, photo=False,
+async def render_card(bot, chat_id, text, keyboard, url=None, *, file_context=None, **kwargs):
+    from .html_file_action import rendering, bind
+    if not kwargs.get('current', lambda: True)():
+        return None
+    record = rendering(file_context, chat_id, kwargs.get('message_id'), keyboard) if file_context else None
+    shown = await _render_card(bot, chat_id, text, keyboard, url, **kwargs)
+    if file_context:bind(file_context, record, shown)
+    return shown
+
+
+async def _render_card(bot, chat_id, text, keyboard, url=None, *, message_id=None, photo=False,
                       current=lambda: True, keep_text=False):
     """Caller serializes Telegram application; metadata must be fetched outside.
 

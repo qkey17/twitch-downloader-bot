@@ -19,6 +19,7 @@ async def prepare_chat(message, context, user_id, vod_id, *, is_current=None, ed
     source_current = is_current or (lambda: True)
     if not source_current():
         return 'stale'
+    context.user_data.pop('html_file_action', None)
     request = object()
     context.user_data['chat_request'] = request
     preparing = True
@@ -97,7 +98,7 @@ async def create_from_choice(query, context, choice):
             message = query.message
             if choice.get('photo'):
                 replaced = await render_card(context.bot, choice['chat'], choice['text'], choice['keyboard'],
-                    message_id=choice['message'], photo=True, current=current)
+                    message_id=choice['message'], photo=True, current=current, file_context=context)
                 if replaced is None:
                     return
                 _bind_choice(choice, replaced)
@@ -141,7 +142,7 @@ async def offer_chat(message, context, owner, ready, current, back, on_start=Non
         context.user_data['chat_choice'] = choice
         if restore:
             shown = await render_card(context.bot, choice['chat'], text, keyboard,
-                                      message_id=choice['message'], current=offer_current)
+                                      message_id=choice['message'], current=offer_current, file_context=context)
             if shown is None:
                 if context.user_data.get('chat_choice') is choice:
                     context.user_data.pop('chat_choice', None)
@@ -175,7 +176,7 @@ async def offer_chat(message, context, owner, ready, current, back, on_start=Non
         # it conservatively as photo until a definite text fallback is known.
         _bind_choice(choice, CardMessage(choice['message'], True))
         shown = await render_card(context.bot, choice['chat'], text, keyboard, url,
-                                  message_id=choice['message'], current=offer_current, keep_text=True)
+                                  message_id=choice['message'], current=offer_current, keep_text=True, file_context=context)
         if shown is not None and offer_current():
             _bind_choice(choice, shown)
 
@@ -273,7 +274,7 @@ async def chat_callback(update, context):
                         return  # Failed first delivery: keep the original photo/actions.
                     replaced = await render_card(context.bot, choice['chat'], kwargs['text'], kwargs['reply_markup'],
                                                  message_id=choice['message'], photo=True,
-                                                 current=lambda: context.user_data.get('chat_choice') is choice and choice['current']())
+                                                 current=lambda: context.user_data.get('chat_choice') is choice and choice['current'](), file_context=context)
                     if replaced is None:
                         raise RuntimeError('progress_delivery_failed')
                     _bind_choice(choice, replaced)
@@ -339,7 +340,7 @@ async def show_ready(message, context, user_id, vod_id, *, current=lambda: True,
         item['thumbnail_preview_url'] = thumbnail_url
     return await vod._edit_progress_message_with_card(context, message.chat_id, message.message_id, item, ready['html_ref'],
         current=lambda: context.user_data.get('ready_preview_request') is request and current(),
-        ui_lock=ui_lock, photo=bool(getattr(message, 'photo', False)) if photo is None else photo, on_photo=on_photo)
+        ready=ready, owner_id=user_id, ui_lock=ui_lock, photo=bool(getattr(message, 'photo', False)) if photo is None else photo, on_photo=on_photo)
 
 
 async def legacy_open_callback(update, context):
