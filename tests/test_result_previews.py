@@ -66,10 +66,10 @@ class PreviewTests(unittest.IsolatedAsyncioTestCase):
         record.assert_called_once_with(7,42)
         self.lookup.assert_not_awaited()
         bot=self.context.bot
-        bot.edit_message_text.assert_awaited_once()  # Links first.
-        options=bot.edit_message_media.await_args.kwargs
-        self.assertEqual(20,options['message_id'])
-        self.assertEqual(URL,options['media'].media)
+        bot.edit_message_text.assert_not_awaited()  # Fresh final photo.
+        options=bot.send_photo.await_args.kwargs
+        self.assertNotIn('message_id',options)
+        self.assertEqual(URL,options['photo'])
         self.assertEqual([[HTML],['https://www.twitch.tv/videos/1']],[[b.url for b in row] for row in options['reply_markup'].inline_keyboard])
         bot.send_message.assert_not_awaited()
 
@@ -114,13 +114,13 @@ class PreviewTests(unittest.IsolatedAsyncioTestCase):
         self.lookup.assert_not_awaited()
 
     async def test_photo_rejection_keeps_text_buttons_without_generation_or_extra_card(self):
-        self.context.bot.edit_message_media.side_effect=BadRequest('SECRET')
+        self.context.bot.send_photo.side_effect=BadRequest('SECRET')
         with patch.object(vod.results,'get_ready_result',return_value=self.ready),patch.object(vod.db,'add_user_history'),patch.object(vod,'_start_download',AsyncMock()) as start:
             await chat.show_ready(SimpleNamespace(chat_id=10,message_id=20,photo=[]),self.context,7,'1')
         start.assert_not_awaited()
-        self.context.bot.edit_message_text.assert_awaited_once()
-        self.context.bot.send_message.assert_not_awaited()
-        self.assertEqual(HTML,self.context.bot.edit_message_text.await_args.kwargs['reply_markup'].inline_keyboard[0][0].url)
+        self.context.bot.send_message.assert_awaited_once()
+        self.context.bot.edit_message_text.assert_not_awaited()
+        self.assertEqual(HTML,self.context.bot.send_message.await_args.kwargs['reply_markup'].inline_keyboard[0][0].url)
 
     async def test_stale_result_probe_never_applies_photo(self):
         entered,release=asyncio.Event(),asyncio.Event()
@@ -511,7 +511,7 @@ class ChannelResultPreviewTests(unittest.IsolatedAsyncioTestCase):
         opening=self.update(rows[0][0].callback_data,source)
         await chat.chat_callback(opening,self.context)
         opening.callback_query.answer.assert_awaited_once()
-        self.context.bot.edit_message_media.assert_awaited_once()
+        self.context.bot.send_photo.assert_awaited_once()
         self.assertNotIn(view.session_id,self.browser._sessions)
         before=source.edit_text.await_count
         back=self.update(rows[2][0].callback_data,source)
@@ -538,7 +538,7 @@ class ChannelResultPreviewTests(unittest.IsolatedAsyncioTestCase):
                 release.set();await asyncio.wait_for(task,1)
 
                 self.context.bot.edit_message_media.assert_not_awaited()
-                self.assertIn('VODs канала',source.edit_text.await_args.args[0])
+                self.assertIn('Время указано по UTC',source.edit_text.await_args.args[0])
                 source.reply_text.assert_not_awaited()
             finally:
                 release.set();await asyncio.wait_for(task,1)
@@ -549,9 +549,9 @@ class ChannelResultPreviewTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(preview,'fetch_video_thumbnail',AsyncMock()) as lookup:
             await chat.chat_callback(self.update(rows[0][0].callback_data,source),self.context)
         lookup.assert_not_awaited()
-        self.assertIn('720x405',self.context.bot.edit_message_media.await_args.kwargs['media'].media)
+        self.assertIn('720x405',self.context.bot.send_photo.await_args.kwargs['photo'])
 
-    async def test_primary_result_text_replacement_retires_callbacks_before_cleanup(self):
+    async def test_fresh_result_retires_callbacks_before_cleanup(self):
         from src.handlers import handlers_channel_vods as lists
         source,view,rows=await self.offer(photo=False)
         self.context.bot.send_message.reset_mock()
@@ -564,7 +564,7 @@ class ChannelResultPreviewTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(self.context.user_data['chat_choice']['media_final'])
         self.context.bot.delete_message.side_effect=deleted
         await chat.chat_callback(self.update(rows[0][0].callback_data,source),self.context)
-        self.context.bot.send_message.assert_awaited_once()
+        self.context.bot.send_photo.assert_awaited_once()
         self.context.bot.delete_message.assert_awaited_once()
         self.context.bot.edit_message_media.assert_not_awaited()
         old=self.update(rows[2][0].callback_data,source)

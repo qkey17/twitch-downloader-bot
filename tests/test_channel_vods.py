@@ -91,7 +91,7 @@ class ChannelVodsTests(unittest.IsolatedAsyncioTestCase):
                 for position in range(count):
                     self.assertFalse(view.complete)
                     text, _ = build_channel_vod_card(view)
-                    self.assertIn(f'VODs канала: {count}+', text)
+                    self.assertNotIn('VODs канала:',text)
                     self.assertIn(f'{position+1}/{count}+', [b.text for b in buttons(view)])
                     self.fetch_vods.assert_awaited_once()
                     if position < count-1:
@@ -104,7 +104,7 @@ class ChannelVodsTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(2, self.fetch_vods.await_count)
                 for position in reversed(range(count)):
                     text, _ = build_channel_vod_card(view)
-                    self.assertIn(f'VODs канала: {count}', text)
+                    self.assertNotIn('VODs канала:',text)
                     self.assertNotIn(f'{count}+', text)
                     self.assertIn(f'{position+1}/{count}', [b.text for b in buttons(view)])
                     if position:
@@ -374,7 +374,7 @@ class ChannelVodsTests(unittest.IsolatedAsyncioTestCase):
         text, _ = build_channel_vod_card(view)
         self.assertIn('&lt;Owner&gt;&amp;', text)
         self.assertIn('01:02:03', text)
-        self.assertIn('2026-01-02 03:04 UTC', text)
+        self.assertIn('2 янв 2026 03:04 UTC', text)
         self.assertNotIn('💬', text)
         self.assertNotIn('👥', text)
         self.assertLess(len(text), 4096)

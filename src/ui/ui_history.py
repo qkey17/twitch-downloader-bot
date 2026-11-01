@@ -33,22 +33,10 @@ def _format_button(it: dict, idx: int):
     return InlineKeyboardButton(FILES, callback_data=f"{CB_HIST_FILES_PREFIX}{callback_id}")
 
 
-def _fmt_date_ru(dt: str) -> str:
-    try:
-        months = ["Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"]
-        date_part, time_part, tz = dt.split(" ")
-        y, m, d = date_part.split("-")
-        m_txt = months[int(m) - 1]
-        return f"{d} {m_txt} {y} {time_part} {tz}"
-    except Exception:
-        return dt
-
-
 def format_vod_summary(it: dict, *, unknown_stats=False):
     channel = html.escape(it.get('channel') or '—')
     title = html.escape(it.get('title') or 'Без названия')
     date = _fmt_dt_utc(it.get('created_at')) if it.get('created_at') else '—'
-    date = _fmt_date_ru(date) if date != '—' else date
     duration = _fmt_len(it.get('length_seconds')) if it.get('length_seconds') else '—'
     def count(key):
         value = it.get(key)

@@ -68,7 +68,7 @@ class DirectCancelTests(unittest.IsolatedAsyncioTestCase):
             message = self.choice_message(); choice = self.context.user_data['chat_choice']
             self.assertEqual(record['message'],message.message_id)
             self.assertEqual(['Обработать чат'],[r[0].text for r in choice['keyboard'].inline_keyboard])
-            for value in ('Channel','&lt;Title&amp;&gt;','01:02:03','2026-01-02 03:04 UTC'):
+            for value in ('Channel','&lt;Title&amp;&gt;','01:02:03','2 янв 2026 03:04 UTC'):
                 self.assertIn(value,choice['text'])
             self.assertNotIn('Обработка чата отменена',message.text)
             self.assertFalse(self.browser._sessions)

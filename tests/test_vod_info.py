@@ -76,7 +76,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(card.photo)
         self.assertEqual([('text',20),('text',20),('media',20)], self.events)
         self.assertEqual(['Обработать чат','Вернуться к списку'], [r[0].text for r in card.keyboard.inline_keyboard])
-        for value in ('Channel','Title 123456789','01:02:03','2026-01-02 03:04 UTC'):
+        for value in ('Channel','Title 123456789','01:02:03','2 янв 2026 03:04 UTC'):
             self.assertIn(value,card.text)
         self.context.bot.send_message.assert_not_awaited()
         self.metadata.assert_not_awaited(); self.runner.assert_not_awaited()
@@ -344,7 +344,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         query.callback_query.answer.side_effect = answer
         await info.info_callback(query,self.context)
         query.callback_query.answer.assert_awaited_once()
-        self.assertIn('VODs канала',self.by_id[30].text)
+        self.assertIn('Время указано по UTC',self.by_id[30].text)
         self.assertIsNotNone(self.by_id[30].keyboard)
 
     async def test_new_channel_during_metadata_prevents_old_download(self):
