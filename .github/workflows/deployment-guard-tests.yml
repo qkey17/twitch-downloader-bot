@@ -1,0 +1,27 @@
+name: Deployment guard tests
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - deploy/oracle_deploy.sh
+      - deploy/tests/**
+      - .github/workflows/deployment-guard-tests.yml
+permissions:
+  contents: read
+jobs:
+  guard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Shell syntax and exact registry transition
+        run: |
+          bash -n deploy/oracle_deploy.sh
+          python3 -B -m unittest discover -s deploy/tests -v
+      - name: Existing restricted deployment and recovery regressions
+        run: |
+          python3 -B -m unittest discover -s tests -p test_oracle_deployment.py -v
+          python3 -B -m unittest discover -s tests -p test_oracle_recovery.py -v
