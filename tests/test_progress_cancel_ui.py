@@ -332,16 +332,17 @@ class ProgressCancelTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(entered.is_set()); self.assertFalse(is_busy(self.context))
         self.assertTrue(self.closed); self.assertNotIn('download_ui',self.context.user_data)
 
-    async def test_necessary_ready_photo_transition_is_one_edit_not_resend(self):
+    async def test_ready_final_photo_is_one_new_send_without_offer_edits(self):
         source, _, choice = await self.offer()
         self.context.bot.edit_message_media.reset_mock()
         self.context.bot.edit_message_text.reset_mock()
         self.context.bot.send_message.reset_mock()
         await self.act(choice,'open',source)
-        self.context.bot.edit_message_media.assert_awaited_once()
+        self.context.bot.send_photo.assert_awaited_once()
+        self.context.bot.edit_message_media.assert_not_awaited()
         self.context.bot.edit_message_text.assert_not_awaited()
         self.context.bot.send_message.assert_not_awaited()
-        self.context.bot.delete_message.assert_not_awaited()
+        self.context.bot.delete_message.assert_awaited_once_with(chat_id=source.chat_id,message_id=source.message_id)
 
     async def test_direct_input_full_progress_deduplicates_initial_worker_card(self):
         self.available.clear()
