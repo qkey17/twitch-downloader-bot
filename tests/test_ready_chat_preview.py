@@ -12,7 +12,7 @@ from src.handlers.handlers_state import begin_download, finish_download
 from src.vod_list import callback, build_list
 from src.twitch_api import videos
 from src.ui import result_preview as preview
-from src.ui.ui_labels import GET_READY_CHAT, RECREATE_CHAT, CREATE_CHAT, CHAT_GENERIC, READY_CHAT
+from src.ui.ui_labels import GET_READY_CHAT, RECREATE_CHAT, CREATE_CHAT, CHAT_GENERIC
 
 
 URL = 'https://static-cdn.jtvnw.net/cf_vods/example/thumb/custom-480x270.jpeg'
@@ -105,7 +105,7 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
             message, view, choice = await self.offer()
         self.assertEqual([GET_READY_CHAT, RECREATE_CHAT, 'Вернуться к списку'],
                          [r[0].text for r in message.keyboard.inline_keyboard])
-        self.assertTrue(message.caption.startswith(READY_CHAT))
+        self.assertTrue(message.caption.startswith('🟣 '))
         self.assertEqual([('text',20), ('text',20), ('media',20)], self.events)
         self.assertTrue(choice['photo']); self.assertTrue(self.browser.is_current(view))
         self.lookup.assert_not_awaited(); history.assert_not_called()
@@ -277,7 +277,7 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(self.context.user_data['vod_busy'])
                 self.assertNotIn('vod_global_operation', self.app.bot_data)
                 new = self.by_id[choice['message']]
-                self.assertTrue(new.text.startswith(READY_CHAT)); self.assertIsNotNone(new.keyboard)
+                self.assertTrue(new.text.startswith('🟣 ')); self.assertIsNotNone(new.keyboard)
                 self.assertFalse(choice['photo']); self.assertNotIn('action', choice)
                 self.app.create_task.side_effect = original
                 await self.act(choice, 'regen', new)

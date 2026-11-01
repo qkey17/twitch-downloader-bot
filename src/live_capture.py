@@ -1,7 +1,7 @@
 """Historical capture facts from the generation, independent of current Twitch state."""
 import json
 
-WARNING = '🔴 Чат получен во время LIVE и может быть неполным: сообщения только до момента обработки.'
+WARNING = '🔴 Чат получен во время LIVE-трансляции и может быть неполным'
 
 
 def captured_live(meta):

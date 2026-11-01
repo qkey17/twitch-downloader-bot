@@ -5,7 +5,7 @@ from src import config
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from .ui_constants import *
 from .ui_formatters import _fmt_dt_utc, _fmt_len
-from .ui_labels import CHAT_GENERIC, FILES, VOD_LINK, READY_CHAT, label_for_fmt
+from .ui_labels import CHAT_GENERIC, FILES, VOD_LINK, label_for_fmt
 from src.config import HTML_PUBLISH_MODE
 from src.html_publisher import (
     is_local_html_reference,
@@ -78,7 +78,7 @@ def ready_offer_text(ready):
         item[key] = value[:limit] if isinstance(value, str) else None
     item.update(messages=stats.get('messages'), unique_users=stats.get('unique_users'))
     item['captured_during_live'] = captured_live(meta)
-    return READY_CHAT + '\n\n' + format_vod_summary(item, unknown_stats=True)
+    return format_vod_summary(item, unknown_stats=True)
 
 
 def build_history_page(items: list[dict], page: int, per_page: int, total_items: int | None = None):

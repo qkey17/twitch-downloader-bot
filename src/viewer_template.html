@@ -417,6 +417,12 @@ button, .vod-card{
   max-width:none;
 }
 
+.vod-live-panel{align-items:center;}
+.vod-live-panel .snapshot-actions{width:auto;min-width:0;}
+.vod-live-panel > button{flex:none;min-height:44px;}
+.vod-live-panel button:focus-visible{outline:2px solid #9146ff;outline-offset:2px;}
+.vod-card[aria-disabled="true"]{cursor:default;}
+
 .snapshot-toggle{
   height: var(--control-h);
   border-radius: var(--control-radius);
@@ -891,7 +897,7 @@ const DATA = JSON.parse(document.getElementById("chat-data").textContent || "{}"
 const meta = DATA.meta || {};
 if(meta.captured_during_live === true){
   const warning = document.getElementById('liveCaptureWarning');
-  warning.textContent = '🔴 Чат получен во время LIVE и может быть неполным: сообщения только до момента обработки.';
+  warning.textContent = '🔴 Чат получен во время LIVE-трансляции и может быть неполным';
   warning.hidden = false;
 }
 const rows = DATA.rows || [];
@@ -1129,8 +1135,20 @@ window.addEventListener("resize", ()=>{
 let vodOverlay = null;
 let vodOverlayToken = 0;
 
+function safeVodUrl(value){
+  if(typeof value !== "string" || value.length > 2048) return "";
+  try{
+    const url = new URL(value);
+    if(url.protocol !== "https:" || !["www.twitch.tv", "twitch.tv"].includes(url.hostname)
+       || url.username || url.password || url.port || !/^\/videos\/[1-9][0-9]{0,19}\/?$/.test(url.pathname)) return "";
+    return url.href;
+  }catch(e){ return ""; }
+}
+const livePreview = meta.captured_during_live === true;
+const vodLink = safeVodUrl(meta.vod_url);
+
 function openVodOverlay(){
-  if(!meta.thumbnail_full_url && !meta.thumbnail_preview_url) return;
+  if(livePreview ? !vodLink : (!meta.thumbnail_full_url && !meta.thumbnail_preview_url)) return;
 
   const token = ++vodOverlayToken;
   if(vodOverlay){
@@ -1142,18 +1160,22 @@ function openVodOverlay(){
   vodOverlay = overlay;
 
   const panel = document.createElement("div");
-  panel.className = "snapshot-panel vod-preview-panel";
+  panel.className = "snapshot-panel vod-preview-panel" + (livePreview ? " vod-live-panel" : "");
+  if(livePreview){
+    panel.setAttribute("role", "dialog");
+    panel.setAttribute("aria-modal", "true");
+    panel.setAttribute("aria-label", "Открыть VOD");
+  }
 
   // ПРЕВЬЮ
-  const preview = document.createElement("img");
-  preview.className = "snapshot-preview";
-  preview.alt = "";
-  panel.appendChild(preview);
+  const preview = livePreview ? null : document.createElement("img");
+  if(preview){ preview.className = "snapshot-preview"; preview.alt = ""; }
+  if(!livePreview) panel.appendChild(preview);
 
   // ЛОАДЕР
   const loader = document.createElement("div");
   loader.className = "snapshot-loader";
-  panel.appendChild(loader);
+  if(!livePreview) panel.appendChild(loader);
 
   // ACTIONS
   const actions = document.createElement("div");
@@ -1162,32 +1184,54 @@ function openVodOverlay(){
   const linkBtn = document.createElement("button");
   linkBtn.className = "snapshot-toggle is-active";
 
-  linkBtn.textContent = "🔗 Ссылка на VOD";
+  linkBtn.textContent = livePreview ? "Открыть VOD" : "🔗 Ссылка на VOD";
 
   linkBtn.addEventListener("click", (e)=>{
     e.stopPropagation();
-    if(meta.vod_url){
-      window.open(meta.vod_url,"_blank");
+    if(vodLink){
+      window.open(vodLink,"_blank", "noopener,noreferrer");
     }
   });
 
-  actions.appendChild(linkBtn);
+  if(vodLink) actions.appendChild(linkBtn);
   panel.appendChild(actions);
   overlay.appendChild(panel);
 
-  overlay.addEventListener("click", ()=>{
+  function closeOverlay(){
     overlay.remove();
     if(vodOverlay === overlay){
       vodOverlay = null;
       vodOverlayToken++;
     }
     document.body.style.overflow = "";
-  });
+    if(livePreview) elVodCard.focus();
+  }
+  overlay.addEventListener("click", closeOverlay);
+  if(livePreview){
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "snapshot-toggle";
+    closeBtn.textContent = "Закрыть";
+    closeBtn.addEventListener("click", closeOverlay);
+    panel.appendChild(closeBtn);
+    overlay.addEventListener("keydown", (e)=>{
+      if(e.key === "Escape"){ e.preventDefault(); closeOverlay(); }
+      if(e.key === "Tab"){
+        e.preventDefault();
+        (document.activeElement === linkBtn ? closeBtn : linkBtn).focus();
+      }
+    });
+  }
 
   panel.addEventListener("click", (e)=>e.stopPropagation());
 
   document.body.style.overflow = "hidden";
   document.body.appendChild(overlay);
+
+  if(livePreview){
+    actions.classList.add("is-ready");
+    linkBtn.focus();
+    return;
+  }
 
   // ЗАГРУЗКА КАРТИНКИ
   const full = new Image();
@@ -1207,8 +1251,15 @@ function openVodOverlay(){
 }
 
 elVodCard.addEventListener("click", openVodOverlay);
+elVodCard.addEventListener("keydown", (e)=>{
+  if(e.key === "Enter" || e.key === " "){ e.preventDefault(); openVodOverlay(); }
+});
+if(livePreview && !vodLink){
+  elVodCard.setAttribute("aria-disabled", "true");
+  elVodCard.tabIndex = -1;
+}
 
-const previewUrl = meta.thumbnail_preview_url || meta.thumbnail_full_url || "";
+const previewUrl = livePreview ? "" : (meta.thumbnail_preview_url || meta.thumbnail_full_url || "");
 
 if(previewUrl){
   elVodPreviewImg.src = previewUrl;

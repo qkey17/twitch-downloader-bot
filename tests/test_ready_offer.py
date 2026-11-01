@@ -138,7 +138,7 @@ class ReadyOfferTests(unittest.IsolatedAsyncioTestCase):
         self.available['123456789']=self.ready_result()
         entered,release=asyncio.Event(),asyncio.Event()
         async def slow(text,**kwargs):
-            if text.startswith('Чат VOD уже готов'):
+            if text.startswith('🟣 '):
                 entered.set();await release.wait()
         source.edit_text.side_effect=slow
         selecting=self.task(self.pick(source,view))
@@ -158,7 +158,7 @@ class ReadyFormattingTests(unittest.TestCase):
         ready={'meta':dict(channel='C<&>',title='T<&>',created_at='2026-01-02T03:04:00Z',length_seconds=3723),
                'stats':dict(messages=1234,unique_users=56)}
         text=ready_offer_text(ready)
-        self.assertEqual('Чат VOD уже готов\n\n🟣 C&lt;&amp;&gt;\n🎬 T&lt;&amp;&gt;\n⏱ 01:02:03 • 💬 1234 • 👥 56\n🗓 02 Янв 2026 03:04 UTC',text)
+        self.assertEqual('🟣 C&lt;&amp;&gt;\n🎬 T&lt;&amp;&gt;\n⏱ 01:02:03 • 💬 1234 • 👥 56\n🗓 02 Янв 2026 03:04 UTC',text)
         item=ready['meta'] | ready['stats']
         self.assertIn(format_vod_summary(item),build_history_page([item],0,1)[0][0][0])
 
@@ -198,7 +198,7 @@ class RegistryReadyOfferTests(unittest.IsolatedAsyncioTestCase):
                     query=SimpleNamespace(data=build_list(view)[1].inline_keyboard[0][0].callback_data,message=source,answer=AsyncMock())
                     await lists.channel_vods_callback(SimpleNamespace(callback_query=query,effective_user=SimpleNamespace(id=7)),context)
                     if state=='available':
-                        self.assertTrue(source.edit_text.await_args.args[0].startswith('Чат VOD уже готов'))
+                        self.assertTrue(source.edit_text.await_args.args[0].startswith('🟣 '))
                         source.reply_text.assert_not_awaited()
                     else:
                         self.assertNotIn('chat_choice',context.user_data)

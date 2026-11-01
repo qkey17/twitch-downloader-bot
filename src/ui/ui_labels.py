@@ -9,7 +9,6 @@ from typing import Optional
 # Кнопки / лейблы
 CHAT_HTML_LINK = "🌐 Посмотреть чат онлайн"
 CHAT_GENERIC = CHAT_HTML_LINK
-READY_CHAT = "Чат VOD уже готов"
 GET_READY_CHAT = "Получить готовый чат"
 CREATE_CHAT = "Обработать чат"
 RECREATE_CHAT = "Обработать чат заново"

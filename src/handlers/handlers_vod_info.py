@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 from dataclasses import dataclass
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from src.vod_list import callback
+from src.live_capture import WARNING
 from src.channel_browser import VodSelection
 from src.ui.ui_channel_vods import _duration
 from src.ui.ui_formatters import _fmt_dt_utc
@@ -100,7 +101,7 @@ def information_text(channel, title, duration, created_at, *, is_live=False):
     return (f'🟣 {html.escape(channel or "—")}\n'
             f'🎬 {html.escape(title or "Без названия")}\n'
             f'⏱ {duration}\n🗓 {_fmt_dt_utc(created_at)}'
-            + ('\n🔴 LIVE — трансляция ещё идёт. Чат может быть неполным.' if is_live else ''))
+            + ('\n'+WARNING if is_live else ''))
 
 
 async def show_info(browser, session, source, request, *, bot):

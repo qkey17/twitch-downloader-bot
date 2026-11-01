@@ -132,6 +132,19 @@ class CaptureTests(unittest.TestCase):
     publish=registry.ResultRegistryTestCase.publish
     rows=registry.ResultRegistryTestCase.rows
 
+    def test_exact_shared_warning_and_heading_free_offer(self):
+        expected='🔴 Чат получен во время LIVE-трансляции и может быть неполным'
+        self.assertEqual(expected,WARNING)
+        ready={'meta':{'captured_during_live':True,'channel':'C','title':'T'},'stats':{'messages':42,'unique_users':7}}
+        for text in [ready_offer_text(ready),format_vod_summary(ready['meta']|ready['stats']),
+                     _build_progress_card(ready['meta'],'vod',1,1,False)]:
+            self.assertEqual(1,text.count(expected))
+            self.assertNotIn('Чат VOD уже готов',text)
+            self.assertFalse(text.startswith('\n'))
+        self.assertIn('💬 42',ready_offer_text(ready))
+        rendered=render_viewer_html([],'title','channel','https://www.twitch.tv/videos/123',captured_during_live=True)
+        self.assertEqual(1,rendered.count(expected))
+
     def test_generation_retains_live_fact_after_stream_ends_and_history_reopens(self):
         from src.database import database as db, db_results
         plan=self.plan();plan.meta['captured_during_live']=True
@@ -158,7 +171,7 @@ class CaptureTests(unittest.TestCase):
         for value in ('invalid','[]','null'):
             self.assertFalse(generation_capture({'meta_json':value}))
         self.assertIn(WARNING,_build_progress_card({'captured_during_live':True},'vod',1,1,False))
-        self.assertIn('трансляция ещё идёт',information_text('<x>','<script>','00:01',None,is_live=True))
+        self.assertIn(WARNING,information_text('<x>','<script>','00:01',None,is_live=True))
         self.assertNotIn('<script>',information_text('<x>','<script>','00:01',None,is_live=True))
 
     def test_streaming_html_parity_persistent_flag_and_xss_escaping(self):
