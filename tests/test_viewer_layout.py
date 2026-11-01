@@ -154,6 +154,18 @@ class ViewerPreviewLayoutTests(unittest.TestCase):
         self.assertEqual('1', expanded.get('opacity'))
         self.assertEqual('none', expanded.get('transform'))
 
+    def test_mobile_live_warning_and_expanded_metadata_are_scoped(self):
+        for width in (320,390,900):
+            compact=self.responsive_properties('header.is-compact .live-capture-warning',width)
+            self.assertEqual('none',compact['display'])
+            self.assertEqual('grid',self.responsive_properties('header.is-expanded .panel-stats',width)['display'])
+            channel=self.responsive_properties('header.is-expanded #mobileChannel',width)
+            self.assertEqual(('1 / -1','normal','anywhere'),(channel['grid-column'],channel['white-space'],channel['overflow-wrap']))
+            selectors=['header .panel-stats','header .live-capture-warning','header .controls']
+            self.assertEqual(['1','2','3'],[self.responsive_properties(s,width)['order'] for s in selectors])
+        for selector in ['header.is-compact .live-capture-warning','header.is-expanded .panel-stats','header.is-expanded #mobileChannel']:
+            self.assertEqual({},self.responsive_properties(selector,1440))
+
 
 if __name__ == '__main__':
     unittest.main()

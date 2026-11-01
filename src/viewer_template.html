@@ -676,6 +676,34 @@ button, .vod-card{
 
 @media (max-width: 900px){
 
+  header .panel-top{order:0;}
+  header .panel-stats{order:1;}
+  header .live-capture-warning{order:2;}
+  header .controls{order:3;}
+  header .panel-actions{order:4;}
+  header.is-compact .live-capture-warning{display:none;}
+
+  header.is-expanded .panel-stats{
+    display:grid;
+    grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+    gap:6px;
+    align-items:start;
+  }
+  header.is-expanded #mobileChannel{
+    display:block;
+    grid-column:1 / -1;
+    white-space:normal;
+    overflow:visible;
+    overflow-wrap:anywhere;
+  }
+  header.is-expanded .panel-stats > .pill:not(.panel-stats-channel){
+    white-space:normal;
+    overflow:visible;
+    overflow-wrap:anywhere;
+  }
+  header.is-expanded #stat{max-width:100%;justify-self:end;text-align:right;}
+  .chat:has(header.is-expanded) #list{padding-top:var(--mobile-expanded-height,145px);}
+
   #list{
     padding-top: 145px;
   }
@@ -1017,6 +1045,12 @@ function syncPanelState(expanded, animate=true){
 }
 
 syncPanelState(PANEL_EXPANDED, false);
+
+if("ResizeObserver" in window){
+  new ResizeObserver(()=>{
+    elList.style.setProperty("--mobile-expanded-height", elHeader.getBoundingClientRect().height + "px");
+  }).observe(elHeader);
+}
 
 elHeader.addEventListener("pointerdown", (e)=>{
   if(!MOBILE_MQ.matches) return;
