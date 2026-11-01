@@ -21,6 +21,6 @@ def document_name(meta_json, fallback):
         # Keep the whole filename comfortably below common 255-byte limits.
         channel=channel.encode('utf-8')[:150].decode('utf-8','ignore').rstrip(' .')
         if not channel:return fallback
-        return f'{channel} — {date.year:04d}-{date.month:02d}-{date.day:02d} {date.hour:02d}-{date.minute:02d} UTC.html'
+        return f'{channel} - {date.year:04d}-{date.month:02d}-{date.day:02d} {date.hour:02d}-{date.minute:02d} UTC.html'
     except (ValueError,TypeError,OverflowError,RecursionError):
         return fallback
