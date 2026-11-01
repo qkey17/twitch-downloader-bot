@@ -60,7 +60,7 @@ test('LIVE opens the shared dialog without any image even with stale thumbnails'
     assert.equal(s.created.filter(x=>x.tag==='img').length, 1); // Only original page placeholder.
     assert.equal(s.thumbnail.src, undefined);
     const button=panel.children[0].children[0];
-    assert.equal(button.textContent, 'Открыть VOD');
+    assert.equal(button.textContent, '🔗 Ссылка на VOD');
     assert.equal(s.document.activeElement, button);
     button.events.click({stopPropagation(){}});
     assert.deepEqual(s.opened, [[metadata.vod_url,'_blank','noopener,noreferrer']]);

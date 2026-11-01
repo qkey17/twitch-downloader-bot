@@ -84,6 +84,25 @@ class ReadyOfferTests(unittest.IsolatedAsyncioTestCase):
         for row in old_rows[:2]:await chat.chat_callback(self.update(row[0].callback_data,source),self.context)
         self.assertEqual(before,self.context.bot.edit_message_text.await_count)
         self.runner.assert_not_awaited()
+
+    async def test_saved_capture_controls_list_and_repeated_offer_not_current_live(self):
+        for captured,expected in [(True,'Получить готовый неполный чат'),(False,'Получить готовый чат'),(None,'Получить готовый чат')]:
+            source,view=await self.setup_offer()
+            ready=self.available['123456789']=self.ready_result()
+            ready['meta']['is_live']=not bool(captured)
+            if captured is not None:ready['meta']['captured_during_live']=captured
+            await self.pick(source,view)
+            choice=self.context.user_data['chat_choice']
+            button=choice['keyboard'].inline_keyboard[0][0]
+            self.assertEqual(expected,button.text)
+            self.assertEqual('ui:chat:open:'+choice['token'],button.callback_data)
+            self.assertEqual('123456789',choice['vod_id'])
+            self.assertEqual('Обработать чат заново',choice['keyboard'].inline_keyboard[1][0].text)
+            # Re-offering the same saved generation after current stream status changes.
+            ready['meta']['is_live']=False
+            await chat.offer_chat(source,self.context,7,ready,lambda:True,None)
+            self.assertEqual(expected,self.context.user_data['chat_choice']['keyboard'].inline_keyboard[0][0].text)
+            self.metadata.assert_not_awaited()
         source.reply_text.assert_not_awaited()
 
     async def test_repeat_foreign_and_wrong_message_dates_are_rejected(self):
