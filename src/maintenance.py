@@ -44,7 +44,9 @@ class Coordinator:
         if action == 'prepare':
             if not self.app.running or self.shutting_down:
                 return self.response('unavailable')
-            if self.token is not None or self.app.bot_data.get('vod_global_operation') is not None:
+            sender = self.app.bot_data.get('tdb_html_sender')
+            if (self.token is not None or self.app.bot_data.get('vod_global_operation') is not None
+                    or (sender is not None and sender.active)):
                 return self.response('busy')
             # No await may occur between the busy check and closing admission.
             self.token, self.owner = token, owner

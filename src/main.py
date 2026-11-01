@@ -26,6 +26,7 @@ from .handlers.handlers_input import (
 )
 from .html_cleanup import start_cleanup, stop_cleanup
 from .maintenance import start_maintenance, stop_maintenance
+from .html_sender import start_sender, stop_sender
 from src.handlers.handlers import (
     start_command,
     help_command,
@@ -66,6 +67,14 @@ async def history_command(update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+class TcdApplication(Application):
+    async def stop(self):
+        # A future PTB callback can itself be awaiting sender.send(). Cancel and
+        # join uploads BEFORE PTB waits for those handlers/create_task waiters.
+        await stop_sender(self)
+        await super().stop()
+
+
 async def post_init(app: Application):
     db.init_db()
     recover_results()
@@ -79,6 +88,7 @@ async def post_init(app: Application):
         )
     # Reclaim already eligible orphan temps before considering finished HTML.
     await start_cleanup(app)
+    start_sender(app)
     app.bot_data["aiohttp"] = aiohttp.ClientSession()
 
     commands = [
@@ -94,7 +104,10 @@ async def post_stop(app: Application):
     try:
         await stop_maintenance(app)
     finally:
-        await stop_cleanup(app)
+        try:
+            await stop_sender(app)
+        finally:
+            await stop_cleanup(app)
 
 
 async def post_shutdown(app: Application):
@@ -103,7 +116,10 @@ async def post_shutdown(app: Application):
         try:
             await stop_maintenance(app)
         finally:
-            await stop_cleanup(app)
+            try:
+                await stop_sender(app)
+            finally:
+                await stop_cleanup(app)
     finally:
         session: aiohttp.ClientSession | None = app.bot_data.get("aiohttp")
         if session:
@@ -124,6 +140,7 @@ def main():
 
     app = (
         Application.builder()
+        .application_class(TcdApplication)
         .token(token)
         .post_init(post_init)
         .post_stop(post_stop)

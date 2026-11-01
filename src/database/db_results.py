@@ -2,7 +2,9 @@
 import hashlib
 import json
 import logging
+import os
 import re
+import stat
 import time
 import uuid
 from pathlib import Path
@@ -303,12 +305,10 @@ class Publication:
             raise FileExistsError("Generation filename already exists")
         lease = _lease_path(self.id)
         lease.parent.mkdir(parents=True,exist_ok=True)
-        self._lease = lease.open("x+b")
+        self._lease = _recovery_lease(self.id, create_only=True)
         self._lease_created = True
-        if not try_lock_file(self._lease):
+        if self._lease is None:
             raise OSError("Could not reserve HTML generation")
-        self._lease.write(f"TDB_RESULT_V1 {self.id}\n".encode('ascii'))
-        self._lease.flush()
         con = _connect()
         try:
             with con:
@@ -378,9 +378,8 @@ class Publication:
         if self._lease is not None:
             self._lease.close()
             self._lease = None
-        if self._lease_created:
-            _lease_path(self.id).unlink(missing_ok=True)
-            self._lease_created = False
+        # Stable pathname: another owner may already hold this inode. Never unlink.
+        self._lease_created = False
 
 
 def _payload(row):
@@ -427,16 +426,32 @@ def _reference_matches(row):
         return False
 
 
-def _recovery_lease(key):
+def _recovery_lease(key, *, create_only=False):
+    """Acquire a stable generation lock. Closing releases ownership, not its name.
+
+    Even orphan/deleted-generation markers are retained: deleting after unlock
+    can split a concurrent owner's lock from a newly created inode.
+    """
     path = _lease_path(key)
     path.parent.mkdir(parents=True,exist_ok=True)
+    flags = os.O_RDWR | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
     try:
-        handle = path.open('x+b')
+        fd = os.open(path, flags | os.O_CREAT | os.O_EXCL, 0o600)
         created = True
     except FileExistsError:
-        handle = path.open('r+b')
+        if create_only:
+            raise
+        if path.is_symlink():
+            return None
+        fd = os.open(path, flags)
         created = False
+    handle = os.fdopen(fd, 'r+b')
     try:
+        info, named = os.fstat(handle.fileno()), path.lstat()
+        if (not stat.S_ISREG(info.st_mode) or not stat.S_ISREG(named.st_mode)
+                or (info.st_dev, info.st_ino) != (named.st_dev, named.st_ino)):
+            handle.close()
+            return None
         if not try_lock_file(handle):
             handle.close()
             return None
@@ -503,7 +518,6 @@ def _recover_one(con,key):
                     log.warning("Unverified HTML artifact retained: id=%s status=%s",key,status)
     finally:
         lease.close()
-    _lease_path(key).unlink(missing_ok=True)
 
 
 def recover_results():
@@ -532,7 +546,6 @@ def recover_results():
                 lease=_recovery_lease(key)
                 if lease is not None:
                     lease.close()
-                    path.unlink(missing_ok=True)
     finally:
         con.close()
 
