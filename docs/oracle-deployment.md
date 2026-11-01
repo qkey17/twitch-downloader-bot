@@ -355,6 +355,76 @@ SSH, без работающего deployment/backup/recovery:
 исходников бота. После включения daily-автоматизации её owner и boot recovery
 требуют отдельной координации; наличие нового helper не отменяет этот протокол.
 
+### Исключение для stable result leases PR #31 (ещё не установлено)
+
+Четыре отдельные стадии: review/merge исправления в Git; установка reviewed helper;
+deployment TCD через A*; ручная приёмка. Merge этой правки сам по себе **не делает
+Oracle готовым к deployment**. Обычный workflow не обновляет root-owned helper,
+а restricted SSH не имеет команды установки. Новый привилегированный workflow,
+SSH-команда, sudoers grant или общий bypass здесь не добавляются.
+
+Guard разрешает только normal-file mode `100644` и точную пару Git blob для
+`src/database/db_results.py`:
+
+```text
+220c8817cb1e473b60ccae3bb57f615bb44af48e (production 264be7c)
+56647c94ac7d865b115613050f4c62041788cdfd (PR #31, main e4155c0)
+```
+
+Все остальные файлы `src/database` и `requirements.txt` должны быть неизменны.
+Неожиданный исходный/целевой blob, mode, схема, migration или другая правка БД
+не проходят исключение. HEAD может измениться при merge helper: проверяется
+содержимое registry, а не общий SHA. Последующие релизы без изменений БД проходят
+прежнюю политику. Ancestry, protected paths, локальные коллизии и readiness не
+ослаблены; проверка выполняется в check_target до управления службой.
+
+**Bootstrap пока BLOCKED при запрете прямого административного SSH владельца.**
+В существующих материалах не подтверждён другой доступный привилегированный
+канал установки. Существующий Actions deployment с forced command не подходит.
+Нельзя заявлять, что helper будет установлен через этот workflow.
+
+Минимальное отдельное решение для согласования: подтвердить уже существующую
+доверенную интерактивную консоль Oracle с нужными правами и разрешить одну строго
+ограниченную установку через неё, без прямого SSH владельца. Доступность такой
+консоли/прав здесь не проверялась. Если её нет, остановиться для отдельного плана
+доступа; не создавать его автоматически. Ниже только план, не разрешение исполнения.
+
+После выбора/согласования канала оператор выполняет существующий bootstrap:
+
+1. Зафиксировать reviewed Git commit и извлечь именно его `deploy/oracle_deploy.sh`
+   с LF, без исполнения скачанного содержимого. Проверить SHA256 нового файла:
+   `bca5d2350430406c92b565622b005f2042f7155f544ade66f4152bf36d1dd505`.
+   Любая дальнейшая правка helper требует нового review/hash.
+2. Исключить Actions deployment и daily/recovery/offsite jobs. Под существующим
+   deployment lock повторно проверить отсутствие конфликтов. Не менять timer,
+   hold или службы без отдельного разрешения на их координацию.
+3. Проверить установленный helper: обычный файл, без symlink, root:root 0755,
+   SHA256 `8d97a1d46888137d07c138d41a7ab0d0f060f13114200694548f350d53610239`.
+   При расхождении остановиться. Создать новую уникальную root-owned backup-копию
+   вне checkout/web root, проверить её hash; не перезаписывать старые копии.
+4. Проверить staged файл и `bash -n`. Создать новый root-owned staging в том же
+   каталоге, что installed helper, проверить root:root 0755/hash, выполнить
+   атомарную замену только helper. Сверить установленный hash/type/owner/mode;
+   сохранить authorized_keys, sudoers, environment и приложение без изменений.
+5. По отдельному разрешению проверить restricted `check` существующим механизмом.
+   При отказе, отсутствии выполняющегося helper и под тем же lock атомарно вернуть
+   проверенную backup-копию; сверить старые hash/owner/mode и протокол. Возврат
+   старого helper вновь блокирует релиз PR #31/#32 — это безопасный отказ.
+
+Перед последующим deployment сохраняется A*: настоящий prepare (busy при активном
+VOD; systemctl status не доказывает idle), закрытие admission, COMMIT, полный
+graceful stop без процессов/jobs/auto-restart, свежий проверенный snapshot и
+передача управления recovery helper. Обычный deploy сам prepare/commit не вызывает.
+До stop ошибка admission/guard оставляет бот работающим; после намеренного stop
+применяется прежняя матрица возврата. SQLite/HTML/history/generations не заменять.
+
+**Rollback приложения:** обратная пара blob и downgrade намеренно запрещены.
+До Git update при исправных данных вернуть тот же previous по A* runbook. После
+update — отдельный reviewed forward-fix/revert поверх нового main, сохраняющий
+stable leases в `db_results.py` и `html_cleanup.py` (без возврата close/unlink race),
+с отдельным разрешением deployment и актуальными EXPECTED/TARGET. Откат UI/поведения
+не требует restore SQLite/HTML. Старый helper не восстанавливает старое приложение.
+
 ### Изолированная квалификация
 
 Offline-регрессии: `python3 -B -m unittest tests.test_oracle_deployment tests.test_oracle_recovery -v`.

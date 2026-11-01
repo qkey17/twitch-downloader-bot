@@ -217,6 +217,22 @@ reject_protected_paths() {
     done < "$manifest"
 }
 
+check_database_transition() {
+    # Ordinary releases retain the original policy. The ONLY changed-database
+    # exception is the reviewed PR #31 stable-lease file, not an arbitrary HEAD.
+    if git_cmd diff --quiet "$previous" "$target" -- requirements.txt src/database; then
+        return
+    fi
+    local old_entry new_entry
+    old_entry=$(git_cmd ls-tree "$previous" -- src/database/db_results.py) || fail 'Could not inspect previous registry blob.'
+    new_entry=$(git_cmd ls-tree "$target" -- src/database/db_results.py) || fail 'Could not inspect target registry blob.'
+    [[ "$old_entry" == $'100644 blob 220c8817cb1e473b60ccae3bb57f615bb44af48e\tsrc/database/db_results.py' &&
+       "$new_entry" == $'100644 blob 56647c94ac7d865b115613050f4c62041788cdfd\tsrc/database/db_results.py' ]] ||
+        fail 'Dependency/database changes require manual maintenance and backups.'
+    git_cmd diff --quiet "$previous" "$target" -- requirements.txt src/database \
+        ':(exclude)src/database/db_results.py' || fail 'Other dependency/database changes require manual maintenance and backups.'
+}
+
 check_target() {
     local path parent
     stage=fetch
@@ -229,7 +245,7 @@ check_target() {
     fi
     git_cmd merge-base --is-ancestor "$previous" "$target" || fail 'Refusing a downgrade or divergent update.'
     # Dependencies and schema changes need a separately reviewed maintenance plan.
-    git_cmd diff --quiet "$previous" "$target" -- requirements.txt src/database || fail 'Dependency/database changes require manual maintenance and backups.'
+    check_database_transition
     # Check command status before reading NUL-delimited paths; process substitution
     # would silently accept an empty list when Git fails.
     manifest=$(mktemp "$STATE_DIR/paths.XXXXXXXX") || fail 'Could not create a private path manifest.'
