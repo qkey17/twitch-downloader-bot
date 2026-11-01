@@ -130,7 +130,9 @@ def build_history_page(items: list[dict], page: int, per_page: int, total_items:
                 InlineKeyboardButton(VOD_LINK, url=vod_url)
             )
 
-        kb = stack_actions(InlineKeyboardMarkup([buttons]))
+        kb = InlineKeyboardMarkup([buttons])
+        if fmt == 'html_online':
+            kb = stack_actions(kb)
         cards.append((text, kb))
 
     nav = []
