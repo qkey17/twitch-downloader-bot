@@ -95,8 +95,6 @@ async def post_init(app: Application):
     commands = [
         BotCommand("help", "Справка"),
     ]
-    if config.HISTORY_ENABLED:
-        commands.append(BotCommand("history", "История"))
     await app.bot.set_my_commands(commands)
     await start_maintenance(app)
 
@@ -158,7 +156,6 @@ def main():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("about", about_command))
-    app.add_handler(CommandHandler("history", history_command, block=False))
     app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CommandHandler("vod", vod_command, block=False))
     app.add_handler(CommandHandler("channel", channel_command, block=False))

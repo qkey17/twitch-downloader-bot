@@ -350,7 +350,7 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
         context.bot.send_message.assert_awaited_once()
         self.assertIn("old", context.bot.send_message.await_args.kwargs["text"])
 
-    async def test_command_menu_respects_history_setting(self):
+    async def test_command_menu_does_not_register_history(self):
         for enabled in (False, True):
             app = SimpleNamespace(bot_data={}, bot=SimpleNamespace(set_my_commands=AsyncMock()))
             session = SimpleNamespace(close=AsyncMock())
@@ -361,10 +361,10 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
                 await main.post_init(app)
                 commands = [command.command for command in app.bot.set_my_commands.await_args.args[0]]
                 expected = ['help']
-                self.assertEqual(expected + (['history'] if enabled else []), commands)
+                self.assertEqual(expected, commands)
                 self.assertNotIn('cancel', commands)
                 expected_descriptions = ['Справка']
-                self.assertEqual(expected_descriptions + (['История'] if enabled else []),
+                self.assertEqual(expected_descriptions,
                                  [command.description for command in app.bot.set_my_commands.await_args.args[0]])
                 await main.post_shutdown(app)
             session.close.assert_awaited_once()

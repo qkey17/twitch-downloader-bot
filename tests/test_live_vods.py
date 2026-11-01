@@ -85,6 +85,13 @@ class LiveAPITests(unittest.IsolatedAsyncioTestCase):
             confirmed=await meta.fetch_vod_meta(session,'client','11')
             self.assertTrue(confirmed.is_live)
             self.assertIsNone(confirmed.thumbnail_preview_url)
+            video['stream_id']='54'
+            for template in ('%{width}x%{height}','{width}x{height}'):
+                video['thumbnail_url']='https://static-cdn.jtvnw.net/cf_vods/x/custom-'+template+'.jpg'
+                with patch.object(meta,'resolve_thumbnail',AsyncMock(return_value='https://synthetic.invalid/full')) as full:
+                    enriched=await meta.fetch_vod_meta(session,'client','11')
+                    self.assertEqual('https://static-cdn.jtvnw.net/cf_vods/x/custom-720x405.jpg',enriched.thumbnail_preview_url)
+                    full.assert_awaited_once()
 
     async def test_download_freezes_fact_before_html_publication(self):
         from src.workers import download_worker as worker

@@ -59,8 +59,8 @@ def preview_url(value):
     """No app-side fetch. Only the fixed Twitch CDN without redirect parameters."""
     if not isinstance(value, str) or len(value) > 1024:
         return None
-    value = value.replace('%{width}', '480').replace('%{height}', '270')
-    value = value.replace('{width}', '480').replace('{height}', '270')
+    value = value.replace('%{width}', '720').replace('%{height}', '405')
+    value = value.replace('{width}', '720').replace('{height}', '405')
     try:
         url = urlsplit(value)
     except ValueError:
