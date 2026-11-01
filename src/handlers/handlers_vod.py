@@ -43,7 +43,7 @@ from .handlers_state import (
 from src.ui.ui_history import build_history_page, ready_offer_text
 from src.ui.callbacks import CallbackReply
 from src.ui.ui_labels import STALE_ACTION_NOTICE
-from src.ui.ui_labels import CHAT_GENERIC, VOD_LINK, CANCEL, GET_READY_CHAT, RECREATE_CHAT, READY_UNAVAILABLE
+from src.ui.ui_labels import CHAT_GENERIC, VOD_LINK, CANCEL, ready_chat_label, RECREATE_CHAT, READY_UNAVAILABLE
 from src.ui.ui_constants import CB_PENDING_CANCEL
 
 
@@ -181,7 +181,7 @@ async def _offer_ready(message,context,result,edit=False):
     context.user_data["vod_result_choice"] = {"vod_id":vod_id,"nonce":nonce,"created_at":time.time()}
     text = ready_offer_text(result)
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(GET_READY_CHAT,callback_data=f"ui:result:open:{vod_id}")],
+        [InlineKeyboardButton(ready_chat_label(result),callback_data=f"ui:result:open:{vod_id}")],
         [InlineKeyboardButton(RECREATE_CHAT,callback_data=f"ui:result:regen:{vod_id}:{nonce}")],
     ])
     if edit:

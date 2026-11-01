@@ -10,7 +10,7 @@ from . import handlers_vod as vod
 from .handlers_state import is_busy, pending_expired
 from src.ui.callbacks import CallbackReply
 from src.ui.ui_labels import STALE_ACTION_NOTICE, ACTION_DONE_NOTICE, PROCESSING_NOTICE, ACTION_PENDING_NOTICE
-from src.ui.ui_labels import GET_READY_CHAT, RECREATE_CHAT, CREATE_CHAT, BACK_TO_LIST, READY_UNAVAILABLE
+from src.ui.ui_labels import ready_chat_label, RECREATE_CHAT, CREATE_CHAT, BACK_TO_LIST, READY_UNAVAILABLE
 from src.ui.ui_history import ready_offer_text
 from src.ui.result_preview import render_card, resolve_preview, caption_fits, cleanup_card, CardMessage
 
@@ -124,7 +124,7 @@ async def offer_chat(message, context, owner, ready, current, back, on_start=Non
                   download_origin=getattr(message, 'download_origin', None),
                   on_download=getattr(message, 'on_download', None), meta=ready['meta'],
                   direct=bool(getattr(message, 'direct_vod', False)), create=create)
-    rows = [[InlineKeyboardButton(GET_READY_CHAT, callback_data=f'ui:chat:open:{token}')],
+    rows = [[InlineKeyboardButton(ready_chat_label(ready), callback_data=f'ui:chat:open:{token}')],
             [InlineKeyboardButton(RECREATE_CHAT, callback_data=f'ui:chat:regen:{token}')]]
     if create:
         rows = [[InlineKeyboardButton(CREATE_CHAT, callback_data=f'ui:chat:create:{token}')]]

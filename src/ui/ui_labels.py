@@ -5,11 +5,13 @@
 """
 
 from typing import Optional
+from src.live_capture import generation_capture
 
 # Кнопки / лейблы
 CHAT_HTML_LINK = "🌐 Посмотреть чат онлайн"
 CHAT_GENERIC = CHAT_HTML_LINK
 GET_READY_CHAT = "Получить готовый чат"
+GET_READY_INCOMPLETE_CHAT = "Получить готовый неполный чат"
 CREATE_CHAT = "Обработать чат"
 RECREATE_CHAT = "Обработать чат заново"
 DOWNLOAD_HTML = "📥 Скачать чат файлом"
@@ -32,3 +34,7 @@ def label_for_fmt(fmt: Optional[str]) -> str:
     if fmt == "html_online":
         return CHAT_HTML_LINK
     return FILES
+
+
+def ready_chat_label(ready):
+    return GET_READY_INCOMPLETE_CHAT if generation_capture(ready) else GET_READY_CHAT
