@@ -57,6 +57,7 @@ class VodMeta:
 
     thumbnail_preview_url: Optional[str] = None
     thumbnail_full_url: Optional[str] = None
+    is_live: Optional[bool] = None
 
 
 def extract_user_color(node: dict) -> Optional[str]:
@@ -230,7 +231,16 @@ async def fetch_vod_meta(
         return meta
     videos = data2.get("data") or []
     if videos and isinstance(videos[0], dict):
+        video2 = videos[0]
+        if (len(videos) == 1 and video2.get('id') == vod_id
+                and video2.get('user_id') == meta.channel_id and video2.get('type') == 'archive'):
+            from .live import current_stream, match_stream
+            meta.is_live = match_stream(video2.get('stream_id'),
+                await current_stream(session, meta.channel_id, fresh=True))
+            _check_cancel(cancel_check)
         thumb = videos[0].get("thumbnail_url")
+        if meta.is_live is True and isinstance(thumb, str) and '/_404/404_processing_' in thumb:
+            thumb = None
         if thumb and isinstance(thumb, str):
             preview = thumb.replace("%{width}", "480").replace("%{height}", "270")
             full = await resolve_thumbnail(session, thumb, cancel_check=cancel_check)

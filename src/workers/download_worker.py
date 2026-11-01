@@ -67,6 +67,7 @@ async def download_and_send(
             "created_at": meta.created_at,
             "thumbnail_preview_url": meta.thumbnail_preview_url,
             "thumbnail_full_url": meta.thumbnail_full_url,
+            "captured_during_live": getattr(meta, 'is_live', None),
         }
 
         out_dir = Path(OUT_DIR)

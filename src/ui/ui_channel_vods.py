@@ -47,6 +47,8 @@ def build_channel_vod_card(view: BrowseView) -> tuple[str, InlineKeyboardMarkup 
         lines.append(f'🟣 {_short(view.channel.display_name, 80)} (<code>{_short(view.channel.login, 25)}</code>)')
     if view.vod is not None:
         vod = view.vod
+        if vod.id in getattr(view, 'live_vod_ids', ()):
+            lines.append('🔴 LIVE — трансляция ещё идёт.')
         lines.extend((
             f'🎬 {_short(vod.title or "Без названия", 240)}',
             f'⏱ {_duration(vod.duration)}',

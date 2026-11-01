@@ -824,6 +824,8 @@ button, .vod-card{
   }
 
 }
+.live-capture-warning{margin:8px 0;padding:8px 10px;border:1px solid #a74444;border-radius:8px;background:rgba(180,45,45,.12);font-size:13px;line-height:1.4;overflow-wrap:anywhere;}
+.live-capture-warning[hidden]{display:none;}
 </style>
 
 </head>
@@ -870,6 +872,7 @@ button, .vod-card{
     <button id="toggleTime" class="toggle-button is-active" aria-pressed="true">⏱️ Время</button>
   </div>
 </div>
+      <div id="liveCaptureWarning" class="live-capture-warning" role="note" hidden></div>
     </header>
 
     <div id="list"></div>
@@ -886,6 +889,11 @@ button, .vod-card{
 
 const DATA = JSON.parse(document.getElementById("chat-data").textContent || "{}");
 const meta = DATA.meta || {};
+if(meta.captured_during_live === true){
+  const warning = document.getElementById('liveCaptureWarning');
+  warning.textContent = '🔴 Чат получен во время LIVE и может быть неполным: сообщения только до момента обработки.';
+  warning.hidden = false;
+}
 const rows = DATA.rows || [];
 for(const r of rows){
   r._u = (r.user || "").toLowerCase();

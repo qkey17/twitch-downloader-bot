@@ -3,6 +3,8 @@ import asyncio
 from dataclasses import dataclass, replace
 import html
 import re
+import time
+from src.twitch_api.live import current_stream, match_stream, TTL
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from src.channel_browser import BrowseView, ChannelBrowser, VodSelection
@@ -21,6 +23,7 @@ class ListView(BrowseView):
     page_count: int = 0
     grid: bool = False
     group: int = 0
+    live_vod_ids: frozenset = frozenset()
 
 
 @dataclass(frozen=True)
@@ -50,10 +53,15 @@ class VodListBrowser(ChannelBrowser):
                 while True:
                     view = await super()._load(http, session, wanted)
                     if view.status != 'ready' or view.complete:
-                        return view
+                        break
         except TimeoutError:
             session.status, session.reason = 'api_error', 'timeout'
             return self._view(session)
+        # Optional enrichment must not consume the archive pagination deadline.
+        if view.complete and session.channel and self._live(session):
+            await self._refresh_live(http, session)
+            return self._view(session) if self._live(session) else BrowseView('expired')
+        return view
 
     def _append_page(self, session, page, cursor, wanted):
         super()._append_page(session, page, cursor, wanted)
@@ -69,7 +77,16 @@ class VodListBrowser(ChannelBrowser):
         complete = base.complete and base.status in ('ready', 'empty', 'selected')
         return ListView(**vars(base), items=tuple(session.vods) if complete else (),
                         page=session.position // 5, page_count=(len(session.vods)+4)//5 if complete else 0,
-                        grid=getattr(session, 'grid', False), group=getattr(session, 'group', 0))
+                        grid=getattr(session, 'grid', False), group=getattr(session, 'group', 0),
+                        live_vod_ids=frozenset(v.id for v in session.vods
+                            if time.monotonic()-getattr(session, 'live_checked_at', 0) < TTL
+                            and match_stream(v.stream_id, getattr(session, 'live_stream_id', None)) is True))
+
+    async def _refresh_live(self, http, session):
+        stream_id = await current_stream(http, session.channel.id)
+        if self._live(session):
+            session.live_stream_id = stream_id
+            session.live_checked_at = time.monotonic()
 
     async def handle_callback(self, http, owner, data, chat, message):
         match = _CALLBACK.fullmatch(data or '')
@@ -82,6 +99,9 @@ class VodListBrowser(ChannelBrowser):
         if not isinstance(checked, ListView) or not checked.complete:
             return checked
         session = self._sessions[token]
+        await self._refresh_live(http, session)
+        if not self.is_current(checked):
+            return BrowseView('stale')
         if session.status == 'selected' and action != 'back':
             return BrowseView('stale')
         pages = checked.page_count
@@ -137,7 +157,10 @@ def build_list(view):
         rows.append([button(BACK_TO_LIST, 'back')])
     else:
         for n in range(view.page*5, min(len(view.items), (view.page+1)*5)):
-            rows.append([button(_fmt_dt_utc(view.items[n].created_at), 'info', n)])
+            label = _fmt_dt_utc(view.items[n].created_at)
+            if view.items[n].id in view.live_vod_ids:
+                label += ' 🔴 (LIVE)'
+            rows.append([button(label, 'info', n)])
         nav = []
         if view.page:
             nav.append(button('⬅️', 'prev'))
