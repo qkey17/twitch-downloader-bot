@@ -67,6 +67,7 @@ async def download_and_send(
             "created_at": meta.created_at,
             "thumbnail_preview_url": meta.thumbnail_preview_url,
             "thumbnail_full_url": meta.thumbnail_full_url,
+            "captured_during_live": getattr(meta, 'is_live', None),
         }
 
         out_dir = Path(OUT_DIR)
@@ -149,6 +150,8 @@ async def download_and_send(
             raise_if_cancelled(context, operation_id)
             await progress(spool.messages, spool.unique_users, done=True)
             raise_if_cancelled(context, operation_id)
+
+        meta_dict['chat_capture_finished_at'] = datetime.now().astimezone().isoformat()
 
         sent_files: List[Dict[str, str]] = []
         html_result_ref: Optional[str] = None

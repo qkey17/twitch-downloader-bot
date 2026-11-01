@@ -1,5 +1,6 @@
 """One active history message per user; optional metadata outside UI lock."""
 import asyncio
+from src.live_capture import generation_capture
 from telegram import InlineKeyboardMarkup
 from src.ui.callbacks import CallbackReply
 from src.ui.ui_labels import STALE_ACTION_NOTICE
@@ -34,7 +35,7 @@ async def _show_history(context, state, items, page, total_items, request):
         from src.ui.html_file_action import keyboard as file_keyboard, lookup
         ready = lookup(item.get('vod_id'))
         if ready:
-            selected = dict(item, html_url=ready['html_ref'])
+            selected = dict(item, html_url=ready['html_ref'], captured_during_live=generation_capture(ready))
             selected_cards, _ = build_history_page([selected], page=0, per_page=1)
             text, selected_keyboard = selected_cards[0]
             keyboard = InlineKeyboardMarkup(list(selected_keyboard.inline_keyboard) + list(nav.inline_keyboard if nav else ()))

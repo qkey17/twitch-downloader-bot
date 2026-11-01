@@ -95,11 +95,12 @@ async def close_info(session, card=None):
     return True
 
 
-def information_text(channel, title, duration, created_at):
+def information_text(channel, title, duration, created_at, *, is_live=False):
     """Shared Telegram information layout; caller supplies known values only."""
     return (f'🟣 {html.escape(channel or "—")}\n'
             f'🎬 {html.escape(title or "Без названия")}\n'
-            f'⏱ {duration}\n🗓 {_fmt_dt_utc(created_at)}')
+            f'⏱ {duration}\n🗓 {_fmt_dt_utc(created_at)}'
+            + ('\n🔴 LIVE — трансляция ещё идёт. Чат может быть неполным.' if is_live else ''))
 
 
 async def show_info(browser, session, source, request, *, bot):
@@ -114,7 +115,8 @@ async def show_info(browser, session, source, request, *, bot):
     session.revision += 1  # Dates/Back from the source screen are now obsolete.
     view = browser._view(session)
     vod = view.items[request.index]
-    text = information_text(view.channel.display_name[:80], vod.title, _duration(vod.duration), vod.created_at)
+    text = information_text(view.channel.display_name[:80], vod.title, _duration(vod.duration), vod.created_at,
+                            is_live=vod.id in view.live_vod_ids)
     nonce = secrets.token_hex(8)
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(CREATE_CHAT, callback_data=f'ui:vi:{session.token}:{nonce}:process')],

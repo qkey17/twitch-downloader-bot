@@ -147,6 +147,7 @@ async def build_html_result(
             local_emotes={},
             cdn_emotes=cdn_emotes,
             badge_images=badge_images,
+            captured_during_live=getattr(meta, 'is_live', None) is True,
         )
 
         if isinstance(chat_rows, ChatSpool):

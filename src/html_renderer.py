@@ -15,6 +15,7 @@ def render_viewer_html(
     local_emotes: dict | None = None,
     cdn_emotes: dict | None = None,
     badge_images: dict | None = None,
+    captured_during_live: bool = False,
 ) -> str:
     BASE_DIR = Path(__file__).resolve().parent
     template_path = BASE_DIR / "viewer_template.html"
@@ -33,6 +34,7 @@ def render_viewer_html(
             "local_emotes": local_emotes or {},
             "cdn_emotes": cdn_emotes or {},
             "badge_images": badge_images or {},
+            **({'captured_during_live': True} if captured_during_live is True else {}),
         },
         "rows": chat_rows,
     }
@@ -44,7 +46,7 @@ def render_viewer_html(
 def write_viewer_html(output, chat_rows, title, channel, vod_url, created_at=None,
                       thumbnail_preview_url=None, thumbnail_full_url=None, mode="online",
                       channel_id=None, local_emotes=None, cdn_emotes=None, badge_images=None,
-                      cancel_check=None):
+                      cancel_check=None, captured_during_live=False):
     """Write the same template/payload incrementally, with one row in memory."""
     template = Path(__file__).with_name("viewer_template.html").read_text(encoding="utf-8")
     prefix, marker, suffix = template.partition("{{CHAT_DATA_JSON}}")
@@ -55,6 +57,7 @@ def write_viewer_html(output, chat_rows, title, channel, vod_url, created_at=Non
         "thumbnail_preview_url": thumbnail_preview_url, "thumbnail_full_url": thumbnail_full_url,
         "mode": mode, "channel_id": channel_id, "local_emotes": local_emotes or {},
         "cdn_emotes": cdn_emotes or {}, "badge_images": badge_images or {},
+        **({'captured_during_live': True} if captured_during_live is True else {}),
     }
     encoder = json.JSONEncoder(ensure_ascii=False)
 

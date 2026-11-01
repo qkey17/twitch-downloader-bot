@@ -35,6 +35,7 @@ class ArchiveVod:
     thumbnail_url: str
     # Raw API metadata, NOT evidence of unrestricted playback/chat access.
     viewable: str
+    stream_id: str = ''
 
 
 def _rate_limit_delay(headers) -> float | None:
@@ -155,7 +156,8 @@ async def fetch_archive_vods(
         if not isinstance(item, dict) or item.get('type') != 'archive':
             raise TwitchAPIError('Twitch Helix returned an invalid archive VOD', status=200)
         vod = ArchiveVod(*(_string(item, field, allow_empty=field in ('title', 'thumbnail_url'))
-                           for field in fields))
+                           for field in fields),
+                         stream_id=item['stream_id'] if _id(item.get('stream_id')) else '')
         if not _id(vod.id) or vod.user_id != user_id:
             raise TwitchAPIError('Twitch Helix returned an unexpected VOD identity', status=200)
         vods.append(vod)

@@ -64,6 +64,7 @@ def _make_item(meta, stats, vod_url, fmt):
         "vod_url": vod_url,
         "fmt": fmt,
         "html_url": meta.get("html_url"),
+        "captured_during_live": meta.get('captured_during_live') is True,
         **({"thumbnail_preview_url": meta["thumbnail_preview_url"]} if "thumbnail_preview_url" in meta else
            {"thumbnail_url": meta["thumbnail_url"]} if "thumbnail_url" in meta else {}),
     }

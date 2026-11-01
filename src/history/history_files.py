@@ -96,6 +96,8 @@ async def history_files_callback(update, context: ContextTypes.DEFAULT_TYPE):
             return
         item["html_url"] = ready["html_ref"]
         item['ready_result'] = ready
+        from src.live_capture import generation_capture
+        item['captured_during_live'] = generation_capture(ready)
         for key in ('thumbnail_preview_url', 'thumbnail_url'):
             if key in ready.get('meta', {}):
                 item[key] = ready['meta'][key]
