@@ -493,7 +493,10 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(2, len(history))
         self.assertTrue(all(not h.block for h in history))
         self.assertFalse(next(h for h in commands if 'history' in h.commands).block)
-        self.assertTrue(all(h.block for h in callbacks if h not in (channel[0], chat[0], info[0], *history)))
+        file_actions = [h for h in callbacks if h.callback.__name__ == 'file_callback']
+        self.assertEqual(1,len(file_actions))
+        self.assertFalse(file_actions[0].block)
+        self.assertTrue(all(h.block for h in callbacks if h not in (channel[0], chat[0], info[0], *history, *file_actions)))
         self.assertEqual(1, app.update_processor.max_concurrent_updates)
 
     async def test_html_write_does_not_block_commands_and_task_cancel_keeps_slot_until_finished(self):

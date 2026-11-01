@@ -30,6 +30,15 @@ async def _show_history(context, state, items, page, total_items, request):
                                          list(nav.inline_keyboard if nav else ()))
     else:
         text, keyboard = 'История пуста.', None
+    if item.get('fmt') == 'html_online' and state['owner'] is not None:
+        from src.ui.html_file_action import keyboard as file_keyboard, lookup
+        ready = lookup(item.get('vod_id'))
+        if ready:
+            selected = dict(item, html_url=ready['html_ref'])
+            selected_cards, _ = build_history_page([selected], page=0, per_page=1)
+            text, selected_keyboard = selected_cards[0]
+            keyboard = InlineKeyboardMarkup(list(selected_keyboard.inline_keyboard) + list(nav.inline_keyboard if nav else ()))
+        keyboard = file_keyboard(context, state['owner'], state['chat'], ready, keyboard, history_id=item.get('history_id'))
     text_shown = False
 
     def current():
@@ -42,7 +51,7 @@ async def _show_history(context, state, items, page, total_items, request):
                 return
             shown = await render_card(context.bot, state['chat'], text, keyboard, url,
                                       message_id=state['message_id'], photo=state['photo'], current=current,
-                                      keep_text=text_shown and not state['photo'])
+                                      keep_text=text_shown and not state['photo'], file_context=context)
             if shown is not None and current():
                 state.update(message_id=shown.message_id, photo=shown.photo,
                              history_id=item.get('history_id'))

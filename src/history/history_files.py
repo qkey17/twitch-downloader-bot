@@ -21,6 +21,8 @@ async def _send_file_card(context, chat_id, text, keyboard, item, owner):
         return
     record = dict(chat=chat_id, owner=owner, history_id=item.get('history_id'), message_id=None)
     data['history_file_card'] = record
+    from src.ui.html_file_action import keyboard as file_keyboard
+    keyboard = file_keyboard(context, owner, chat_id, item.get('ready_result'), keyboard, history_id=item.get('history_id'))
     await send_card(context, chat_id, text, keyboard, item,
                     current=lambda: data.get('history_file_card') is record,
                     on_sent=lambda message_id: record.update(message_id=message_id))
@@ -93,6 +95,7 @@ async def history_files_callback(update, context: ContextTypes.DEFAULT_TYPE):
             await reply.send(READY_UNAVAILABLE)
             return
         item["html_url"] = ready["html_ref"]
+        item['ready_result'] = ready
         for key in ('thumbnail_preview_url', 'thumbnail_url'):
             if key in ready.get('meta', {}):
                 item[key] = ready['meta'][key]
@@ -101,19 +104,11 @@ async def history_files_callback(update, context: ContextTypes.DEFAULT_TYPE):
         if is_local and local_published_html_status(html_url) is not True:
             await reply.send(READY_UNAVAILABLE)
             return
-        if not is_local and (not html_url or HTML_PUBLISH_MODE != "public"):
-            await reply.send("Ссылка на чат недоступна.")
-            return
 
         cards, _ = build_history_page([item], page=0, per_page=1)
         text, kb = cards[0]
 
-        if is_local:
-            kb_final = kb
-        else:
-            extra_rows = [[InlineKeyboardButton(CHAT_GENERIC, url=html_url)]]
-            merged = (kb.inline_keyboard if kb else []) + extra_rows
-            kb_final = InlineKeyboardMarkup(merged)
+        kb_final = kb
 
         if not await reply.send():
             return
