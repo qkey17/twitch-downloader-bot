@@ -94,7 +94,6 @@ class LiveAPITests(unittest.IsolatedAsyncioTestCase):
             yield (1,None,'fixture','message',[],None,[])
         async def build(**kw):
             self.assertTrue(kw['publication'].meta['captured_during_live'])
-            self.assertIn('chat_capture_finished_at',kw['publication'].meta)
             self.assertTrue(kw['meta'].is_live)
             return [],'https://example.invalid/chat.html'
         with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as folder, \

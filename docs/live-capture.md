@@ -15,7 +15,7 @@ Online-статус канала, дата VOD и отсутствие thumbnail
 ошибка во время проверки могут оставить LIVE неизвестным.
 
 Worker сохраняет `captured_during_live` (true только при доказанном соответствии)
-и `chat_capture_finished_at` в существующем `Publication.meta` → `meta_json`.
+в существующем `Publication.meta` → `meta_json`.
 HTML получает тот же строгий boolean. Warning — статический текст с textContent,
 Twitch-строки продолжают экранироваться существующим JSON serializer.
 История указывает на cache slot и показывает метаданные выбранного текущего ready

@@ -151,8 +151,6 @@ async def download_and_send(
             await progress(spool.messages, spool.unique_users, done=True)
             raise_if_cancelled(context, operation_id)
 
-        meta_dict['chat_capture_finished_at'] = datetime.now().astimezone().isoformat()
-
         sent_files: List[Dict[str, str]] = []
         html_result_ref: Optional[str] = None
 
