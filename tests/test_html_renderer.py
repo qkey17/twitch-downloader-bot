@@ -97,6 +97,15 @@ class HtmlRendererSerializationTests(unittest.TestCase):
             "badge_images": {"subscriber/1": "https://cdn.example/badge.png"},
         })
 
+    def test_optional_duration_is_verified_seconds_without_changing_rows_or_format(self):
+        for seconds in (1,21088,435088,2**53-1):
+            payload=json.loads(self._serialized_payload(duration_seconds=seconds))
+            self.assertEqual(seconds,payload['meta']['duration_seconds'])
+            self.assertEqual('tcd-compact-v1',payload['format'])
+            self.assertEqual([],payload['rows'])
+        for bad in (None,0,-1,True,1.5,'5h51m28s','<script>',2**53):
+            with self.subTest(value=bad):
+                self.assertNotIn('duration_seconds',json.loads(self._serialized_payload(duration_seconds=bad))['meta'])
 
 if __name__ == "__main__":
     unittest.main()

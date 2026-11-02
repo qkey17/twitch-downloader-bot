@@ -57,14 +57,14 @@ test('PNG selection keeps only range/indices, decoding one requested row at a ti
 });
 
 function sliderContext(count=10000){
-  const events={},frames=[],attributes={},times=[{},{}],percents=[{},{}];let mounted=0,activeBuilders=0,maxBuilders=0;
-  const ctx=vm.createContext({count,FILTER_TOKEN:0,FILTERING:false,windowBusy:false,CHUNK:800,averageHeight:40,stableAnchor:null,scrollIntent:0,resizeAnchor:null,
+  const events={},frames=[],attributes={},times=[{style:{}},{style:{}}],percents=[{},{}];let mounted=0,activeBuilders=0,maxBuilders=0;
+  const ctx=vm.createContext({count,filtered:null,meta:{duration_seconds:21088},FILTER_TOKEN:0,FILTERING:false,windowBusy:false,CHUNK:800,averageHeight:40,stableAnchor:null,scrollIntent:0,resizeAnchor:null,
     MOBILE_MQ:{matches:true,addEventListener(){}},clampNumber:(n,a,b)=>Math.min(b,Math.max(a,n)),
     rowCount:()=>ctx.count,rowAt:i=>({t:ctx.time ?? '01 : 42 : 15'}),
     requestAnimationFrame:fn=>{frames.push(fn);return frames.length},yieldViewer:async()=>{},
-    elScrubber:{style:{setProperty(k,v){attributes[k]=v}},setAttribute(k,v){attributes[k]=v},
-      querySelectorAll:s=>s==='.scrub-time'?times:percents,
-      querySelector:()=>({getBoundingClientRect:()=>({left:0,width:300})}),
+    elScrubber:{clientWidth:300,getBoundingClientRect:()=>({width:300}),classList:{add(){},remove(){}},style:{setProperty(k,v){attributes[k]=v}},setAttribute(k,v){attributes[k]=v},
+      querySelectorAll:s=>s==='.scrub-times'?times:percents,
+      querySelector:()=>({style:{},getBoundingClientRect:()=>({left:0,width:180})}),
       addEventListener:(name,fn)=>events[name]=fn,hasPointerCapture:()=>false,releasePointerCapture(){},setPointerCapture(){}},
     elList:{getBoundingClientRect:()=>({top:0}),querySelector:s=>{mounted=+s.match(/\d+/)[0];return {getBoundingClientRect:()=>({top:75,bottom:100})}}},
     getComputedStyle:()=>({paddingTop:'75'}),heightBefore:()=>0,viewportInset:()=>75,innerHeight:900,
@@ -72,7 +72,7 @@ function sliderContext(count=10000){
     visibleAnchor:()=>({id:mounted,top:75,inset:75}),scheduleWindow(){},
     showWindow:async b=>{activeBuilders++;maxBuilders=Math.max(maxBuilders,activeBuilders);await new Promise(r=>setTimeout(r,1));activeBuilders--}
   });
-  vm.runInContext(part('/* Logical-index mobile navigation.', '/* Selection endpoints belong')+`;globalThis.slider={scrubTarget,scrubPercent,scrubTime,setScrubIndex,requestScrub,resetScrubber,sync:scheduleScrubSync,get state(){return {index:scrubIndex,active:scrubActive(),running:scrubRunning,pending:scrubPending,gesture:scrubGesture}}}`,ctx);
+  vm.runInContext(part('/* Logical-index mobile navigation.', '/* Selection endpoints belong')+`;globalThis.slider={scrubTarget,scrubPercent,scrubTime,durationTime,setScrubIndex,requestScrub,resetScrubber,sync:scheduleScrubSync,get state(){return {index:scrubIndex,active:scrubActive(),running:scrubRunning,pending:scrubPending,gesture:scrubGesture}}}`,ctx);
   return {ctx,slider:ctx.slider,events,attributes,times,percents,get maxBuilders(){return maxBuilders},
     async drain(){for(let i=0;i<100;i++){frames.splice(0).forEach(fn=>fn());await new Promise(r=>setTimeout(r,2));if(!frames.length && !ctx.slider.state.active)return;}throw Error('Slider did not settle');}};
 }
@@ -88,10 +88,10 @@ test('logical slider clamps endpoints, rounds indexes and handles empty/single s
 });
 test('slider text and ARIA describe the filtered logical row, neutral when empty',()=>{
   const h=sliderContext(3);h.slider.setScrubIndex(1);
-  assert.equal(h.attributes['aria-valuenow'],'50');assert.equal(h.times[0].textContent,'01:42:15');
-  assert.equal(h.percents[1].textContent,'50%');assert.equal(h.attributes['aria-valuetext'],'01:42:15, 50%, сообщение 2 из 3');
-  h.ctx.count=0;h.slider.setScrubIndex(0);assert.equal(h.attributes['aria-disabled'],'true');assert.equal(h.times[0].textContent,'—');
-  h.ctx.count=1;h.ctx.time='invalid';h.slider.setScrubIndex(99);assert.equal(h.slider.state.index,0);assert.equal(h.times[1].textContent,'—');
+  assert.equal(h.attributes['aria-valuenow'],'50');assert.equal(h.times[0].textContent,'01:42:15 / 05:51:28');
+  assert.equal(h.attributes['aria-valuetext'],'01:42:15 / 05:51:28');
+  h.ctx.count=0;h.slider.setScrubIndex(0);assert.equal(h.attributes['aria-disabled'],'true');assert.equal(h.times[0].textContent,'— / 05:51:28');
+  h.ctx.count=1;h.ctx.time='invalid';h.slider.setScrubIndex(99);assert.equal(h.slider.state.index,0);assert.equal(h.times[1].textContent,'— / 05:51:28');
 });
 test('rapid requests coalesce to latest index with one serial builder',async()=>{
   const h=sliderContext(100000);for(let i=0;i<500;i++)h.slider.requestScrub(i*173);
@@ -125,4 +125,26 @@ test('chosen visible row near the clamped bottom remains stable until actual scr
   const h=sliderContext(20);h.ctx.window.scrollY=1;h.ctx.document.documentElement.scrollHeight=900;
   h.slider.requestScrub(18);await h.drain();assert.equal(h.slider.state.index,18);
   h.ctx.window.scrollY=2;h.slider.sync();await h.drain();assert.equal(h.slider.state.index,19);
+});
+
+test('duration and timestamps normalize unlimited hours without inventing unknown values',()=>{
+  const {slider:s}=sliderContext();assert.equal(s.durationTime(435088),'120:51:28');
+  assert.equal(s.scrubTime('105 : 42 : 15'),'105:42:15');assert.equal(s.scrubTime('5:02:03'),'05:02:03');
+  for(const bad of [null,undefined,true,'5h',-1,NaN,Infinity,3.4,0])assert.equal(s.durationTime(bad),'—');
+});
+test('physical end uses full duration only without filters, restores time after scrolling up',()=>{
+  const h=sliderContext(20);h.ctx.document.documentElement.scrollHeight=1000;h.ctx.window.scrollY=100;
+  h.slider.setScrubIndex(18);assert.equal(h.times[0].textContent,'05:51:28 / 05:51:28');
+  h.ctx.window.scrollY=95;h.slider.setScrubIndex(18);assert.equal(h.times[0].textContent,'01:42:15 / 05:51:28');
+  h.ctx.filtered=[1,2];h.ctx.window.scrollY=100;h.slider.setScrubIndex(1);assert.equal(h.times[0].textContent,'01:42:15 / 05:51:28');
+  h.ctx.meta.duration_seconds=null;h.slider.setScrubIndex(1);assert.equal(h.times[0].textContent,'01:42:15 / —');
+});
+test('relative gesture starts anywhere without jumping and clamps movement from the original position',async()=>{
+  const h=sliderContext(10001),e={pointerId:1,button:0,isPrimary:true,clientX:50,preventDefault(){},stopPropagation(){}};
+  h.slider.setScrubIndex(8000);h.events.pointerdown(e);assert.equal(h.slider.state.index,8000);
+  h.events.pointerup({...e,type:'pointerup'});assert.equal(h.slider.state.pending,null);assert.equal(h.slider.state.index,8000);
+  h.events.pointerdown(e);h.events.pointermove({...e,clientX:77.8});assert.equal(h.slider.state.index,9000);
+  h.events.pointermove({...e,clientX:150});assert.equal(h.slider.state.index,10000);
+  h.events.pointermove({...e,clientX:22.2});assert.equal(h.slider.state.index,7000);
+  h.events.lostpointercapture({...e,type:'lostpointercapture'});await h.drain();assert.equal(h.slider.state.index,7000);
 });

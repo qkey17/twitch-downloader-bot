@@ -20,7 +20,7 @@ async def run(args):
     for count in sorted(set(args.sizes+([0,1,2,10000] if args.scrubber else []))):
         rows=list(synthetic_rows(count))
         for mode in ('online','offline'):
-            page=render_viewer_html(rows,'Synthetic title','Synthetic channel','https://www.twitch.tv/videos/123',created_at='2026-10-29T14:28:00Z',mode=mode,local_emotes={'Kappa':pixel},badge_images={'subscriber/1':pixel,'subscriber/2':pixel},captured_during_live=True)
+            page=render_viewer_html(rows,'Synthetic title','Synthetic channel','https://www.twitch.tv/videos/123',created_at='2026-10-29T14:28:00Z',mode=mode,local_emotes={'Kappa':pixel},badge_images={'subscriber/1':pixel,'subscriber/2':pixel},captured_during_live=True,**(dict(duration_seconds=435088) if args.scrubber else {}))
             new_data=re.search(r'<script id="chat-data" type="application/json">(.*?)</script>',page,re.S).group(1)
             old_data=new_data if args.scrubber else json.dumps(dict(meta=json.loads(new_data)['meta'],rows=rows),ensure_ascii=False).replace('<','\\u003c')
             for version,html in [('new',page),('base',baseline.replace('{{CHAT_DATA_JSON}}',old_data))]:
