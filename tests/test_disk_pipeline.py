@@ -139,6 +139,7 @@ class DiskPipelineTestCase(unittest.IsolatedAsyncioTestCase):
              patch.object(worker_html, "fetch_twitch_channel_badge_map", AsyncMock(return_value={"subscriber/1": "channel"})):
             await self.run_chat(self.source(1))
         payload, _ = self.payload()
+        self.assertEqual(30, payload["meta"]["duration_seconds"])
         self.assertEqual({"Kappa": "channel", "25": "by-id"}, payload["meta"]["cdn_emotes"])
         self.assertEqual({"subscriber/1": "channel"}, payload["meta"]["badge_images"])
 

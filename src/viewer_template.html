@@ -685,7 +685,7 @@ html{overflow-anchor:none;}
   header .live-capture-warning{order:2;}
   header .controls{order:3;}
   header .panel-actions{order:4;}
-  header.is-compact .live-capture-warning{display:none;}
+
 
   header.is-expanded .panel-stats{
     display:grid;
@@ -727,40 +727,12 @@ html{overflow-anchor:none;}
     flex-direction:column;
     gap: var(--control-gap);
     align-items:stretch;
-    transition:transform .24s ease, box-shadow .2s ease;
-    will-change:transform;
-    touch-action: none;
+    touch-action:auto;
     padding-bottom: 32px;
   }
 
-    header::after{
-    content:"";
-    position:absolute;
-    left:50%;
-    bottom:14px;
-    transform:translateX(-50%);
 
-    width:46px;
-    height:4px;
 
-    border-radius:999px;
-    background:rgba(255,255,255,.18);
-  }
-
-  header.is-expanded{
-    transform:translateY(0);
-  }
-
-  header.is-compact .panel-top,
-  header.is-compact .panel-stats{
-    opacity:0;
-    transform:translateY(-8px);
-    pointer-events:none;
-  }
-
-  header.is-compact .controls{
-  margin-top: calc(var(--control-gap) * 1.5);
-}
 
   header.is-expanded .panel-top,
   header.is-expanded .panel-stats{
@@ -857,36 +829,37 @@ html{overflow-anchor:none;}
     gap:6px;
   }
 
-  header.is-dragging{
-  transition:none !important;
-  }
+
 
 }
 .live-capture-warning{margin:8px 0;padding:8px 10px;border:1px solid #a74444;border-radius:8px;background:rgba(180,45,45,.12);font-size:13px;line-height:1.4;overflow-wrap:anywhere;}
 .live-capture-warning[hidden]{display:none;}
 
-/* One mobile-only control; the native document scrollbar remains unchanged. */
+/* Desktop wrappers are boxless, preserving the original sidebar geometry. */
+.panel-details,.panel-details-content{display:contents;}
 .fast-scrubber,.panel-handle{display:none;}
 @media(max-width:900px){
-  header{padding-bottom:0;}
-  header::after{display:none;}
-  header.is-compact{gap:0;padding:8px 12px 0;}
-  header.is-compact > :not(.fast-scrubber):not(.panel-handle){display:none;}
+  header,header.is-compact{padding:8px 24px 0;gap:0;touch-action:auto;will-change:auto;}
+  /* Keep the full-width band beside the protruding tab free of chat text. */
+  header::after{content:"";display:block;position:absolute;top:100%;left:0;right:112px;width:auto;height:38px;border-radius:0;transform:none;background:#1f1f23;}
+  .panel-details{display:block;order:0;height:0;opacity:0;overflow:hidden;transition:opacity .24s ease-out;}
+  .panel-details-content{display:flex;flex-direction:column;gap:var(--control-gap);padding-bottom:8px;}
   .fast-scrubber{display:flex;align-items:center;position:relative;order:5;height:44px;min-height:44px;width:100%;min-width:0;touch-action:none;user-select:none;-webkit-user-select:none;cursor:ew-resize;outline-offset:0;}
   .fast-scrubber:focus-visible{outline:2px solid #b3adff;border-radius:8px;}
   .fast-scrubber[aria-disabled="true"]{cursor:default;}
   .scrub-track{position:relative;width:100%;height:28px;border-radius:7px;background:#a0a3b7;overflow:hidden;}
   .scrub-fill{position:absolute;inset:0 auto 0 0;width:var(--scrub-progress,0%);background:#30313e;}
-  .scrub-label{position:absolute;inset:0;display:grid;grid-template-columns:minmax(0,1fr) 10px minmax(0,1fr);column-gap:5px;align-items:center;font:500 12px/1.2 var(--sans);font-variant-numeric:tabular-nums;color:#20212b;pointer-events:none;}
+  .scrub-label{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;white-space:nowrap;font:500 12px/1.2 var(--sans);font-variant-numeric:tabular-nums;color:#20212b;pointer-events:none;}
   .scrub-label-on-fill{color:#e1e3ed;clip-path:inset(0 calc(100% - var(--scrub-progress,0%)) 0 0);}
-  .scrub-time{justify-self:end;white-space:nowrap;}
-  .scrub-dot{justify-self:center;}
-  .scrub-percent{justify-self:start;white-space:nowrap;}
-  .scrub-thumb{position:absolute;top:0;bottom:0;left:calc(7px + var(--scrub-progress,0%) - 14px * var(--scrub-ratio,0));width:14px;transform:translateX(-50%);border-radius:5px;border:1px solid #454655;background:#d4d6e2;pointer-events:none;}
-  .panel-handle{display:block;order:6;position:relative;width:100%;height:22px;min-height:22px;padding:0;margin:0;border:0;background:none;box-shadow:none;touch-action:none;}
-  .panel-handle::after{content:"";position:absolute;left:50%;top:9px;transform:translateX(-50%);width:46px;height:4px;border-radius:999px;background:rgba(255,255,255,.18);}
-  #list,.chat:has(header.is-expanded) #list{padding-top:var(--mobile-header-height,74px);}
+  .scrub-thumb{position:absolute;top:4px;height:36px;left:calc(11px + var(--scrub-progress,0%) - 22px * var(--scrub-ratio,0));width:22px;transform:translateX(-50%);border-radius:11px;border:1px solid #626575;background:rgba(205,209,230,.16);pointer-events:none;}
+  .fast-scrubber.is-held .scrub-thumb{border-color:#c3c6d5;background:rgba(205,209,230,.22);}
+  .panel-handle{display:block;position:absolute;top:calc(100% - 1px);right:0;width:112px;height:34px;min-height:34px;padding:0 8px;margin:0;border:1px solid var(--border);border-top:0;border-radius:0 0 10px 10px;background:#18181b;box-shadow:none;color:#d5d5de;font:500 12px var(--sans);touch-action:manipulation;}
+  .panel-handle::before{content:"";position:absolute;inset:-5px 0;}
+  .panel-handle:active{background:#2a2a35;}
+  .panel-handle:focus-visible{outline:2px solid #b3adff;outline-offset:1px;}
+  #list,.chat:has(header.is-expanded) #list{padding-top:var(--mobile-header-height,91px);}
 }
+@media(prefers-reduced-motion:reduce){.panel-details{transition:none;}}
 </style>
 
 </head>
@@ -895,6 +868,7 @@ html{overflow-anchor:none;}
   <div class="chat">
 
     <header>
+      <div class="panel-details" id="panelDetails"><div class="panel-details-content">
       <div class="panel-top">
         <div class="vod-card" id="vodCard" tabindex="0" role="button" aria-label="Открыть VOD">
           <div class="vod-card-media">
@@ -934,15 +908,16 @@ html{overflow-anchor:none;}
   </div>
 </div>
       <div id="liveCaptureWarning" class="live-capture-warning" role="note" hidden></div>
+      </div></div>
       <div id="fastScrubber" class="fast-scrubber" role="slider" tabindex="0" aria-label="Позиция в чате" aria-orientation="horizontal" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="Нет сообщений" aria-disabled="true">
         <div class="scrub-track">
           <div class="scrub-fill"></div>
-          <div class="scrub-label" aria-hidden="true"><span class="scrub-time">—</span><span class="scrub-dot">·</span><span class="scrub-percent">0%</span></div>
-          <div class="scrub-label scrub-label-on-fill" aria-hidden="true"><span class="scrub-time">—</span><span class="scrub-dot">·</span><span class="scrub-percent">0%</span></div>
-          <div class="scrub-thumb"></div>
+          <div class="scrub-label" aria-hidden="true"><span class="scrub-times">— / —</span></div>
+          <div class="scrub-label scrub-label-on-fill" aria-hidden="true"><span class="scrub-times">— / —</span></div>
         </div>
+        <div class="scrub-thumb"></div>
       </div>
-      <button class="panel-handle" type="button" aria-label="Развернуть панель" aria-expanded="false"></button>
+      <button class="panel-handle" type="button" aria-label="Развернуть панель" aria-expanded="false" aria-controls="panelDetails">Развернуть ↓</button>
     </header>
 
     <div id="list"></div>
@@ -1007,8 +982,10 @@ const MOBILE_MQ = window.matchMedia("(max-width: 900px)");
 const elHeader=document.querySelector("header");
 const elScrubber=document.getElementById("fastScrubber");
 const elPanelHandle=document.querySelector(".panel-handle");
-let onPanelLayout=()=>()=>{};
-let suppressHandleClick=false;
+let onPanelLayout=()=>()=>{},onPanelFrame=()=>{};
+const elPanelDetails=document.getElementById("panelDetails");
+const elPanelContent=elPanelDetails.firstElementChild;
+let panelAnimating=false,panelFrame=0,panelRevision=0;
 const elVodCard=document.getElementById("vodCard");
 const elVodPreviewImg=document.getElementById("vodPreviewImg");
 const elVodHeading=document.querySelector(".vod-heading");
@@ -1067,175 +1044,56 @@ function clampNumber(value, min, max){
 }
 
 
-const MOBILE_PANEL_EXPANDED = 260;
-const MOBILE_PANEL_VISIBLE = 140;
-const MOBILE_PANEL_OFFSET = MOBILE_PANEL_VISIBLE - MOBILE_PANEL_EXPANDED; // negative
-let PANEL_DRAG = null;
-let PANEL_OFFSET = MOBILE_MQ.matches ? MOBILE_PANEL_OFFSET : 0;
-
-function clampPanelOffset(v){
-  return Math.max(MOBILE_PANEL_OFFSET, Math.min(0, v));
-}
-
-function applyPanelOffset(value, animate=true){
-  PANEL_OFFSET = clampPanelOffset(value);
-  if(!MOBILE_MQ.matches){
-    elHeader.style.transform = "";
-    return;
-  }
-  elHeader.style.transition = animate ? "transform .24s ease, box-shadow .2s ease" : "none";
-  // State is collapsed in layout, not translated off-screen. Offset only tracks the swipe threshold.
-  elHeader.style.transform = "";
-}
-
 function syncPanelState(expanded, animate=true){
-  const settle=onPanelLayout();
-  PANEL_EXPANDED = !!expanded;
-  if(!elHeader) return;
-  elHeader.classList.toggle("is-expanded", PANEL_EXPANDED);
-  elHeader.classList.toggle("is-compact", !PANEL_EXPANDED);
-  elPanelHandle.setAttribute("aria-expanded",String(PANEL_EXPANDED));
-  elPanelHandle.setAttribute("aria-label",PANEL_EXPANDED ? "Свернуть панель" : "Развернуть панель");
-  requestAnimationFrame(settle);
-
-  if(MOBILE_MQ.matches){
-    applyPanelOffset(PANEL_EXPANDED ? 0 : MOBILE_PANEL_OFFSET, animate);
-  }else{
-    elHeader.style.transform = "";
-  }
-}
-
-syncPanelState(PANEL_EXPANDED, false);
-
-if("ResizeObserver" in window){
-  new ResizeObserver(()=>{
-    elList.style.setProperty("--mobile-expanded-height", elHeader.getBoundingClientRect().height + "px");
-    elList.style.setProperty("--mobile-header-height", elHeader.getBoundingClientRect().height + "px");
-  }).observe(elHeader);
-}
-
-elHeader.addEventListener("pointerdown", (e)=>{
-  if(!MOBILE_MQ.matches || e.target.closest("#fastScrubber,input,.meta-buttons,.vod-card")) return;
-
-  suppressHandleClick=false;
-  const isInput = e.target.closest("input");
-
-  PANEL_DRAG = {
-    pointerId: e.pointerId,
-    startY: e.clientY,
-    startOffset: PANEL_OFFSET,
-    fromInput: !!isInput,
-    moved: false
+  const settle=onPanelLayout(),revision=++panelRevision;
+  cancelAnimationFrame(panelFrame);
+  const mobile=MOBILE_MQ.matches;
+  const motion=mobile && animate && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const current=elPanelDetails.getBoundingClientRect().height;
+  PANEL_EXPANDED=!!expanded;
+  // Keep expanded content geometry while it fades/collapses, then hide it.
+  const layoutExpanded=PANEL_EXPANDED || (motion && current>0);
+  elHeader.classList.toggle('is-expanded',layoutExpanded);
+  elHeader.classList.toggle('is-compact',!layoutExpanded);
+  elPanelHandle.setAttribute('aria-expanded',String(PANEL_EXPANDED));
+  elPanelHandle.textContent=PANEL_EXPANDED ? 'Свернуть ↑' : 'Развернуть ↓';
+  elPanelHandle.setAttribute('aria-label',PANEL_EXPANDED ? 'Свернуть панель' : 'Развернуть панель');
+  elPanelDetails.inert=mobile && !PANEL_EXPANDED;
+  elPanelDetails.setAttribute('aria-hidden',String(mobile && !PANEL_EXPANDED));
+  elPanelDetails.style.transition=motion ? '' : 'none';
+  elPanelDetails.style.height=mobile ? current+'px' : '';
+  panelAnimating=motion;
+  elPanelDetails.style.opacity=mobile ? (PANEL_EXPANDED ? '1' : '0') : '';
+  const finish=()=>{
+    if(revision!==panelRevision) return;
+    panelAnimating=false;
+    elHeader.classList.toggle('is-expanded',PANEL_EXPANDED);
+    elHeader.classList.toggle('is-compact',!PANEL_EXPANDED);
+    if(mobile) elPanelDetails.style.height=PANEL_EXPANDED ? 'auto' : '0px';
+    updatePanelGeometry();settle();
   };
-
-  elHeader.style.transition = "none";
-  elHeader.classList.add("is-dragging");
-});
-
-elHeader.addEventListener("pointermove", (e)=>{
-  if(!PANEL_DRAG || e.pointerId !== PANEL_DRAG.pointerId) return;
-
-  const dy = e.clientY - PANEL_DRAG.startY;
-
-  if(Math.abs(dy) < 5) return;
-  PANEL_DRAG.moved=true;
-
-  if(!elHeader.hasPointerCapture(e.pointerId)){
-    elHeader.setPointerCapture(e.pointerId);
-  }
-
-  e.preventDefault();
-
-  applyPanelOffset(
-    PANEL_DRAG.startOffset + dy,
-    false
-  );
-});
-
-elHeader.addEventListener("pointerup", (e)=>{
-  if(!PANEL_DRAG || e.pointerId !== PANEL_DRAG.pointerId) return;
-
-  if(elHeader.hasPointerCapture(e.pointerId)) elHeader.releasePointerCapture(e.pointerId);
-
-  const threshold = MOBILE_PANEL_OFFSET * 0.6;
-  const shouldExpand = PANEL_OFFSET > threshold;
-
-  suppressHandleClick=PANEL_DRAG.moved;
-  PANEL_DRAG = null;
-  elHeader.classList.remove("is-dragging");
-
-  syncPanelState(shouldExpand, true);
-});
-
-elHeader.addEventListener("pointercancel", (e)=>{
-  if(!PANEL_DRAG || e.pointerId !== PANEL_DRAG.pointerId) return;
-
-  if(elHeader.hasPointerCapture(e.pointerId)) elHeader.releasePointerCapture(e.pointerId);
-
-  PANEL_DRAG = null;
-  elHeader.classList.remove("is-dragging");
-});
-
-let TOUCH_DRAG = null;
-
-elHeader.addEventListener("touchstart", (e)=>{
-  if("PointerEvent" in window || !MOBILE_MQ.matches || e.target.closest("#fastScrubber,input,.meta-buttons,.vod-card")) return;
-
-  suppressHandleClick=false;
-  const t = e.touches[0];
-
-  TOUCH_DRAG = {
-    startY: t.clientY,
-    startOffset: PANEL_OFFSET,
-    fromInput: !!e.target.closest("input"),
-    moved: false
-  };
-}, { passive: true });
-
-elHeader.addEventListener("touchmove", (e)=>{
-  if(!TOUCH_DRAG) return;
-
-  const t = e.touches[0];
-  const dy = t.clientY - TOUCH_DRAG.startY;
-
-if(Math.abs(dy) < 5) return;
-
-TOUCH_DRAG.moved = true;
-
-  e.preventDefault();
-
-  applyPanelOffset(
-    TOUCH_DRAG.startOffset + dy,
-    false
-  );
-}, { passive: false });
-
-elHeader.addEventListener("touchend", ()=>{
-  if(!TOUCH_DRAG) return;
-
-  const threshold = MOBILE_PANEL_OFFSET * 0.6;
-  const shouldExpand = PANEL_OFFSET > threshold;
-
-  suppressHandleClick=TOUCH_DRAG.moved;
-  TOUCH_DRAG = null;
-  syncPanelState(shouldExpand, true);
-});
-
-elHeader.addEventListener("touchcancel", ()=>{
-  TOUCH_DRAG = null;
-});
-
-window.addEventListener("resize", ()=>{
-  requestAnimationFrame(fitVodTitle);
-  syncPanelState(PANEL_EXPANDED, false);
-});
-
-elPanelHandle.addEventListener('click',e=>{
-  e.stopPropagation();
-  if(suppressHandleClick && e.detail!==0){suppressHandleClick=false;return;}
-  suppressHandleClick=false;
-  syncPanelState(!PANEL_EXPANDED,true);
-});
+  if(motion){
+    const started=performance.now();
+    const frame=now=>{
+      if(revision!==panelRevision) return;
+      const progress=Math.min(1,(now-started)/240),eased=1-Math.pow(1-progress,3);
+      const target=PANEL_EXPANDED ? elPanelContent.getBoundingClientRect().height : 0;
+      elPanelDetails.style.height=(current+(target-current)*eased)+'px';
+      // Height, list padding and anchor correction are one pre-paint transaction.
+      updatePanelGeometry();
+      if(progress<1) panelFrame=requestAnimationFrame(frame);else finish();
+    };
+    panelFrame=requestAnimationFrame(frame);
+  }else requestAnimationFrame(finish);
+}
+syncPanelState(PANEL_EXPANDED,false);
+function updatePanelGeometry(){
+  elList.style.setProperty('--mobile-header-height',(viewportInset()+1)+'px');
+  onPanelFrame();
+}
+new ResizeObserver(updatePanelGeometry).observe(elHeader);
+window.addEventListener('resize',()=>{requestAnimationFrame(fitVodTitle);syncPanelState(PANEL_EXPANDED,false);});
+elPanelHandle.addEventListener('click',e=>{e.stopPropagation();syncPanelState(!PANEL_EXPANDED,true);});
 let vodOverlay = null;
 let vodOverlayToken = 0;
 
@@ -1639,7 +1497,7 @@ function updateSpaces(){
   topSpace.style.height=heightBefore(windowStart)+'px';
   bottomSpace.style.height=(heightBefore(blockCount())-heightBefore(windowEnd))+'px';
 }
-function viewportInset(){return MOBILE_MQ.matches ? Math.max(0,elHeader.getBoundingClientRect().bottom) : 0;}
+function viewportInset(){return MOBILE_MQ.matches ? Math.max(0,elHeader.getBoundingClientRect().bottom,elPanelHandle.getBoundingClientRect().bottom)+5 : 0;}
 function visibleAnchor(){
   const inset=viewportInset();
   for(const node of blockNodes.values()){
@@ -1803,16 +1661,17 @@ window.addEventListener('resize',()=>{
   if(!windowBusy) measureBlocks(resizeAnchor || visibleAnchor());
   resizeTimer=setTimeout(()=>{
     if(!windowBusy) measureBlocks(resizeAnchor || visibleAnchor());
-    resizeAnchor=null;scheduleWindow();
+    if(!panelAnimating) resizeAnchor=null;scheduleWindow();scheduleScrubSync();
   },120);
 });
+onPanelFrame=()=>{if(resizeAnchor && !windowBusy) measureBlocks(resizeAnchor);};
 onPanelLayout=()=>{
   if(!MOBILE_MQ.matches) return ()=>{};
   if(!resizeAnchor && window.scrollY>0) resizeAnchor=(scrubSettled && Math.abs(window.scrollY-scrubSettled.y)<1 ? scrubSettled.anchor : null) || stableAnchor || visibleAnchor();
   clearTimeout(resizeTimer);
   return ()=>{
     if(!windowBusy) measureBlocks(resizeAnchor || visibleAnchor());
-    resizeTimer=setTimeout(()=>{if(!windowBusy) measureBlocks(resizeAnchor || visibleAnchor());resizeAnchor=null;scheduleWindow();scheduleScrubSync();},120);
+    resizeAnchor=null;scheduleWindow();scheduleScrubSync();
   };
 };
 elQ.addEventListener('input',applyFilters);
@@ -1831,19 +1690,41 @@ const scrubPercent=(index,count)=>count>1 ? 100*index/(count-1) : 0;
 const scrubTarget=(fraction,count)=>count>1 ? Math.round(clampNumber(fraction,0,1)*(count-1)) : 0;
 function scrubTime(value){
   if(typeof value!=='string') return '—';
-  const time=value.trim().replace(/\s*:\s*/g,':');
-  return /^\d{1,6}:[0-5]\d:[0-5]\d$/.test(time) ? time : '—';
+  const match=/^(\d+):([0-5]\d):([0-5]\d)$/.exec(value.trim().replace(/\s*:\s*/g,':'));
+  return match ? match[1].replace(/^0+(?=\d)/,'').padStart(2,'0')+':'+match[2]+':'+match[3] : '—';
+}
+function durationTime(seconds){
+  if(!Number.isSafeInteger(seconds) || seconds<=0) return '—';
+  return String(Math.floor(seconds/3600)).padStart(2,'0')+':'+String(Math.floor(seconds/60)%60).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0');
+}
+let scrubAtEnd=false,scrubLabelSignature='';
+function physicalChatEnd(){
+  const gap=document.documentElement.scrollHeight-innerHeight-window.scrollY;
+  scrubAtEnd=gap<=(scrubAtEnd ? 3 : 1);
+  return scrubAtEnd && filtered===null && rowCount()>0;
+}
+function fitScrubLabel(){
+  const span=elScrubber.querySelector('.scrub-times');
+  if(!MOBILE_MQ.matches || !span) return;
+  const available=elScrubber.clientWidth-8,signature=available+'|'+span.textContent;
+  if(signature===scrubLabelSignature) return;
+  scrubLabelSignature=signature;
+  span.style.fontSize='12px';
+  const size=Math.min(12,12*available/Math.max(1,span.getBoundingClientRect().width));
+  for(const node of elScrubber.querySelectorAll('.scrub-times')) node.style.fontSize=size+'px';
 }
 function setScrubIndex(index){
   const count=rowCount();scrubIndex=clampNumber(index,0,Math.max(0,count-1));
-  const percent=scrubPercent(scrubIndex,count),rounded=Math.round(percent);
-  const time=count ? scrubTime(rowAt(scrubIndex).t) : '—';
+  const percent=scrubPercent(scrubIndex,count),duration=durationTime(meta.duration_seconds);
+  let time=count ? scrubTime(rowAt(scrubIndex).t) : '—';
+  if(!scrubGesture && !scrubRunning && !FILTERING && physicalChatEnd() && duration!=='—') time=duration;
+  const label=time+' / '+duration;
   elScrubber.style.setProperty('--scrub-progress',percent.toFixed(4)+'%');
   elScrubber.style.setProperty('--scrub-ratio',String(percent/100));
-  for(const node of elScrubber.querySelectorAll('.scrub-time')) if(node.textContent!==time) node.textContent=time;
-  for(const node of elScrubber.querySelectorAll('.scrub-percent')) if(node.textContent!==rounded+'%') node.textContent=rounded+'%';
-  elScrubber.setAttribute('aria-valuenow',String(rounded));
-  elScrubber.setAttribute('aria-valuetext',count ? `${time}, ${rounded}%, сообщение ${scrubIndex+1} из ${count}` : 'Нет сообщений');
+  for(const node of elScrubber.querySelectorAll('.scrub-times')) if(node.textContent!==label) node.textContent=label;
+  fitScrubLabel();
+  elScrubber.setAttribute('aria-valuenow',String(Math.round(percent)));
+  elScrubber.setAttribute('aria-valuetext',label);
   elScrubber.setAttribute('aria-disabled',String(FILTERING || count<2));
 }
 function scheduleScrubSync(){
@@ -1868,7 +1749,7 @@ function rememberScrubPosition(){
   scrubSettled={index:scrubIndex,epoch:FILTER_TOKEN,y:window.scrollY,anchor:rect ? {id:scrubIndex,top:rect.top,inset:viewportInset()} : null};
 }
 function resetScrubber(){
-  scrubRevision++;scrubPending=null;scrubSettled=null;
+  scrubRevision++;scrubPending=null;scrubSettled=null;elScrubber.classList.remove('is-held');
   const gesture=scrubGesture;scrubGesture=null;
   if(gesture && elScrubber.hasPointerCapture?.(gesture.id)) elScrubber.releasePointerCapture(gesture.id);
   setScrubIndex(0);scheduleScrubSync();
@@ -1915,23 +1796,23 @@ async function runScrubber(){
   }
 }
 function pointerScrub(x){
-  const rect=elScrubber.querySelector('.scrub-track').getBoundingClientRect();
-  requestScrub(scrubTarget((x-rect.left-7-(scrubGesture?.offset||0))/Math.max(1,rect.width-14),rowCount()));
+  if(!scrubGesture) return;
+  if(!scrubGesture.moved && Math.abs(x-scrubGesture.x)<2) return;
+  scrubGesture.moved=true;
+  const width=Math.max(1,elScrubber.getBoundingClientRect().width-22);
+  const fraction=scrubGesture.fraction+(x-scrubGesture.x)/width;
+  requestScrub(scrubTarget(fraction,rowCount()));
 }
 function finishScrub(event){
   if(!scrubGesture || event.pointerId!==scrubGesture.id) return;
   if(event.type==='pointerup') pointerScrub(event.clientX);
-  const gesture=scrubGesture;scrubGesture=null;
+  const gesture=scrubGesture;scrubGesture=null;elScrubber.classList.remove('is-held');
   if(elScrubber.hasPointerCapture(gesture.id)) elScrubber.releasePointerCapture(gesture.id);
-  // Cancel/lost-capture also settle the last selected logical position.
-  requestScrub(scrubIndex);scheduleScrubSync();
+  if(gesture.moved) requestScrub(scrubIndex);scheduleScrubSync();
 }
 function beginScrub(x,id){
-  const rect=elScrubber.querySelector('.scrub-track').getBoundingClientRect();
-  const thumb=elScrubber.querySelector('.scrub-thumb').getBoundingClientRect();
-  const grab=Math.abs(x-(thumb.left+thumb.width/2))<=14;
-  scrubGesture={id,offset:grab ? x-rect.left-7-(rect.width-14)*scrubPercent(scrubIndex,rowCount())/100 : 0};
-  pointerScrub(x);
+  scrubGesture={id,x,fraction:scrubPercent(scrubIndex,rowCount())/100};
+  elScrubber.classList.add('is-held');
 }
 elScrubber.addEventListener('pointerdown',event=>{
   if(!MOBILE_MQ.matches || FILTERING || rowCount()<2 || event.button!==0 || event.isPrimary===false || scrubGesture) return;
@@ -1963,7 +1844,7 @@ elScrubber.addEventListener('touchmove',event=>{
 },{passive:false});
 for(const type of ['touchend','touchcancel']) elScrubber.addEventListener(type,event=>{
   event.stopPropagation();if(scrubGesture?.id!=='touch') return;
-  scrubGesture=null;requestScrub(scrubIndex);scheduleScrubSync();
+  const moved=scrubGesture.moved;scrubGesture=null;elScrubber.classList.remove('is-held');if(moved) requestScrub(scrubIndex);scheduleScrubSync();
 });
 MOBILE_MQ.addEventListener('change',()=>{resetScrubber();scheduleScrubSync();});
 
@@ -2290,11 +2171,6 @@ function openSnapshotOverlay(rowsToClone){
   overlay.appendChild(panel);
 
   overlay.addEventListener("click", ()=>{
-    if(elHeader){
-      PANEL_DRAG = null;
-      elHeader.classList.remove("is-dragging");
-    }
-
     overlay.remove();
     SNAPSHOT_OVERLAY = null;
     SNAPSHOT_PREVIEW_IMG = null;
@@ -2314,11 +2190,6 @@ elExportBtn.addEventListener("pointerup", async (e)=>{
   e.stopPropagation();
   e.preventDefault();
 
-  if(elHeader.hasPointerCapture(e.pointerId)){
-  elHeader.releasePointerCapture(e.pointerId);
-  }
-  PANEL_DRAG = null;
-  elHeader.classList.remove("is-dragging");
 
   await new Promise(r => setTimeout(r, 30)); // ← ДОБАВИТЬ
 

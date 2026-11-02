@@ -146,18 +146,14 @@ class ViewerPreviewLayoutTests(unittest.TestCase):
         self.assertEqual('100%', image.get('height'))
         self.assertEqual('cover', image.get('object-fit'))
 
-    def test_mobile_compact_panel_still_hides_and_disables_preview(self):
-        compact = self.properties('header.is-compact .panel-top')
-        expanded = self.properties('header.is-expanded .panel-top')
-        self.assertEqual('0', compact.get('opacity'))
-        self.assertEqual('none', compact.get('pointer-events'))
-        self.assertEqual('1', expanded.get('opacity'))
-        self.assertEqual('none', expanded.get('transform'))
+    def test_mobile_compact_panel_uses_a_clipped_measured_section(self):
+        self.assertEqual('hidden',self.properties('.panel-details')['overflow'])
+        self.assertEqual('0',self.properties('.panel-details')['height'])
+        self.assertEqual('contents',self.responsive_properties('.panel-details',1440)['display'])
 
     def test_mobile_live_warning_and_expanded_metadata_are_scoped(self):
         for width in (320,390,900):
-            compact=self.responsive_properties('header.is-compact .live-capture-warning',width)
-            self.assertEqual('none',compact['display'])
+            self.assertEqual('hidden',self.responsive_properties('.panel-details',width)['overflow'])
             self.assertEqual('grid',self.responsive_properties('header.is-expanded .panel-stats',width)['display'])
             channel=self.responsive_properties('header.is-expanded #mobileChannel',width)
             self.assertEqual(('1 / -1','normal','anywhere'),(channel['grid-column'],channel['white-space'],channel['overflow-wrap']))
@@ -170,19 +166,18 @@ class ViewerPreviewLayoutTests(unittest.TestCase):
         for width in (320,390,900):
             self.assertEqual('flex',self.responsive_properties('.fast-scrubber',width)['display'])
             self.assertEqual('44px',self.responsive_properties('.fast-scrubber',width)['min-height'])
-            self.assertEqual('none',self.responsive_properties('header.is-compact > :not(.fast-scrubber):not(.panel-handle)',width)['display'])
             self.assertEqual('0',self.responsive_properties('header.is-compact',width)['gap'])
             self.assertEqual('block',self.responsive_properties('.panel-handle',width)['display'])
-            self.assertEqual('none',self.responsive_properties('header::after',width)['display'])
+            self.assertEqual('block',self.responsive_properties('header::after',width)['display'])
+            self.assertEqual('38px',self.responsive_properties('header::after',width)['height'])
         for width in (901,1440):
             self.assertEqual('none',self.responsive_properties('.fast-scrubber',width)['display'])
             self.assertEqual('none',self.responsive_properties('.panel-handle',width)['display'])
 
-    def test_scrubber_label_uses_equal_columns_and_clipped_second_layer(self):
+    def test_scrubber_label_centers_the_whole_time_line_and_clips_contrast_layer(self):
         label=self.properties('.scrub-label')
-        self.assertEqual('minmax(0,1fr) 10px minmax(0,1fr)',label['grid-template-columns'])
-        self.assertEqual('end',self.properties('.scrub-time')['justify-self'])
-        self.assertEqual('start',self.properties('.scrub-percent')['justify-self'])
+        self.assertEqual('center',label['justify-content'])
+        self.assertEqual('nowrap',label['white-space'])
         self.assertIn('--scrub-progress',self.properties('.scrub-label-on-fill')['clip-path'])
         self.assertNotEqual(label['color'],self.properties('.scrub-label-on-fill')['color'])
         self.assertEqual('none',self.properties('.scrub-thumb')['pointer-events'])

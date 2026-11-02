@@ -18,6 +18,7 @@ def render_viewer_html(
     cdn_emotes: dict | None = None,
     badge_images: dict | None = None,
     captured_during_live: bool = False,
+    duration_seconds: int | None = None,
 ) -> str:
     # The compatibility API shares the exact streaming encoder; it does not build
     # a second complete array of compact rows alongside chat_rows.
@@ -25,14 +26,14 @@ def render_viewer_html(
     write_viewer_html(output, chat_rows, title, channel, vod_url, created_at,
                       thumbnail_preview_url, thumbnail_full_url, mode, channel_id,
                       local_emotes, cdn_emotes, badge_images,
-                      captured_during_live=captured_during_live)
+                      captured_during_live=captured_during_live, duration_seconds=duration_seconds)
     return output.getvalue()
 
 
 def write_viewer_html(output, chat_rows, title, channel, vod_url, created_at=None,
                       thumbnail_preview_url=None, thumbnail_full_url=None, mode="online",
                       channel_id=None, local_emotes=None, cdn_emotes=None, badge_images=None,
-                      cancel_check=None, captured_during_live=False):
+                      cancel_check=None, captured_during_live=False, duration_seconds=None):
     """Write the same template/payload incrementally, with one row in memory."""
     template = Path(__file__).with_name("viewer_template.html").read_text(encoding="utf-8")
     prefix, marker, suffix = template.partition("{{CHAT_DATA_JSON}}")
@@ -45,6 +46,8 @@ def write_viewer_html(output, chat_rows, title, channel, vod_url, created_at=Non
         "cdn_emotes": cdn_emotes or {}, "badge_images": badge_images or {},
         **({'captured_during_live': True} if captured_during_live is True else {}),
     }
+    if type(duration_seconds) is int and 0 < duration_seconds <= 2**53-1:
+        meta['duration_seconds'] = duration_seconds
     encoder = json.JSONEncoder(ensure_ascii=False, separators=(',', ':'))
     compact = CompactRows()
 

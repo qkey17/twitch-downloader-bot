@@ -140,6 +140,7 @@ async def build_html_result(
             channel=(meta.channel or "—"),
             vod_url=vod_url,
             created_at=meta.created_at,
+            duration_seconds=getattr(meta, "length_seconds", None),
             thumbnail_preview_url=meta.thumbnail_preview_url,
             thumbnail_full_url = meta.thumbnail_full_url,
             mode="online",
