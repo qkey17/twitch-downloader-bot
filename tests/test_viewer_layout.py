@@ -166,6 +166,35 @@ class ViewerPreviewLayoutTests(unittest.TestCase):
         for selector in ['header.is-compact .live-capture-warning','header.is-expanded .panel-stats','header.is-expanded #mobileChannel']:
             self.assertEqual({},self.responsive_properties(selector,1440))
 
+    def test_scrubber_and_real_handle_are_mobile_only(self):
+        for width in (320,390,900):
+            self.assertEqual('flex',self.responsive_properties('.fast-scrubber',width)['display'])
+            self.assertEqual('44px',self.responsive_properties('.fast-scrubber',width)['min-height'])
+            self.assertEqual('none',self.responsive_properties('header.is-compact > :not(.fast-scrubber):not(.panel-handle)',width)['display'])
+            self.assertEqual('0',self.responsive_properties('header.is-compact',width)['gap'])
+            self.assertEqual('block',self.responsive_properties('.panel-handle',width)['display'])
+            self.assertEqual('none',self.responsive_properties('header::after',width)['display'])
+        for width in (901,1440):
+            self.assertEqual('none',self.responsive_properties('.fast-scrubber',width)['display'])
+            self.assertEqual('none',self.responsive_properties('.panel-handle',width)['display'])
+
+    def test_scrubber_label_uses_equal_columns_and_clipped_second_layer(self):
+        label=self.properties('.scrub-label')
+        self.assertEqual('minmax(0,1fr) 10px minmax(0,1fr)',label['grid-template-columns'])
+        self.assertEqual('end',self.properties('.scrub-time')['justify-self'])
+        self.assertEqual('start',self.properties('.scrub-percent')['justify-self'])
+        self.assertIn('--scrub-progress',self.properties('.scrub-label-on-fill')['clip-path'])
+        self.assertNotEqual(label['color'],self.properties('.scrub-label-on-fill')['color'])
+        self.assertEqual('none',self.properties('.scrub-thumb')['pointer-events'])
+        def luminance(color):
+            rgb=[int(color[i:i+2],16)/255 for i in (1,3,5)]
+            linear=[v/12.92 if v<=.04045 else ((v+.055)/1.055)**2.4 for v in rgb]
+            return sum(v*w for v,w in zip(linear,(.2126,.7152,.0722)))
+        for text,bg in [(label['color'],self.properties('.scrub-track')['background']),
+                        (self.properties('.scrub-label-on-fill')['color'],self.properties('.scrub-fill')['background'])]:
+            a,b=sorted((luminance(text),luminance(bg)))
+            self.assertGreaterEqual((b+.05)/(a+.05),4.5)
+
 
 if __name__ == '__main__':
     unittest.main()

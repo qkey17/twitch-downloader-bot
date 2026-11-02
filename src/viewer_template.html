@@ -864,6 +864,29 @@ html{overflow-anchor:none;}
 }
 .live-capture-warning{margin:8px 0;padding:8px 10px;border:1px solid #a74444;border-radius:8px;background:rgba(180,45,45,.12);font-size:13px;line-height:1.4;overflow-wrap:anywhere;}
 .live-capture-warning[hidden]{display:none;}
+
+/* One mobile-only control; the native document scrollbar remains unchanged. */
+.fast-scrubber,.panel-handle{display:none;}
+@media(max-width:900px){
+  header{padding-bottom:0;}
+  header::after{display:none;}
+  header.is-compact{gap:0;padding:8px 12px 0;}
+  header.is-compact > :not(.fast-scrubber):not(.panel-handle){display:none;}
+  .fast-scrubber{display:flex;align-items:center;position:relative;order:5;height:44px;min-height:44px;width:100%;min-width:0;touch-action:none;user-select:none;-webkit-user-select:none;cursor:ew-resize;outline-offset:0;}
+  .fast-scrubber:focus-visible{outline:2px solid #b3adff;border-radius:8px;}
+  .fast-scrubber[aria-disabled="true"]{cursor:default;}
+  .scrub-track{position:relative;width:100%;height:28px;border-radius:7px;background:#a0a3b7;overflow:hidden;}
+  .scrub-fill{position:absolute;inset:0 auto 0 0;width:var(--scrub-progress,0%);background:#30313e;}
+  .scrub-label{position:absolute;inset:0;display:grid;grid-template-columns:minmax(0,1fr) 10px minmax(0,1fr);column-gap:5px;align-items:center;font:500 12px/1.2 var(--sans);font-variant-numeric:tabular-nums;color:#20212b;pointer-events:none;}
+  .scrub-label-on-fill{color:#e1e3ed;clip-path:inset(0 calc(100% - var(--scrub-progress,0%)) 0 0);}
+  .scrub-time{justify-self:end;white-space:nowrap;}
+  .scrub-dot{justify-self:center;}
+  .scrub-percent{justify-self:start;white-space:nowrap;}
+  .scrub-thumb{position:absolute;top:0;bottom:0;left:calc(7px + var(--scrub-progress,0%) - 14px * var(--scrub-ratio,0));width:14px;transform:translateX(-50%);border-radius:5px;border:1px solid #454655;background:#d4d6e2;pointer-events:none;}
+  .panel-handle{display:block;order:6;position:relative;width:100%;height:22px;min-height:22px;padding:0;margin:0;border:0;background:none;box-shadow:none;touch-action:none;}
+  .panel-handle::after{content:"";position:absolute;left:50%;top:9px;transform:translateX(-50%);width:46px;height:4px;border-radius:999px;background:rgba(255,255,255,.18);}
+  #list,.chat:has(header.is-expanded) #list{padding-top:var(--mobile-header-height,74px);}
+}
 </style>
 
 </head>
@@ -911,6 +934,15 @@ html{overflow-anchor:none;}
   </div>
 </div>
       <div id="liveCaptureWarning" class="live-capture-warning" role="note" hidden></div>
+      <div id="fastScrubber" class="fast-scrubber" role="slider" tabindex="0" aria-label="Позиция в чате" aria-orientation="horizontal" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="Нет сообщений" aria-disabled="true">
+        <div class="scrub-track">
+          <div class="scrub-fill"></div>
+          <div class="scrub-label" aria-hidden="true"><span class="scrub-time">—</span><span class="scrub-dot">·</span><span class="scrub-percent">0%</span></div>
+          <div class="scrub-label scrub-label-on-fill" aria-hidden="true"><span class="scrub-time">—</span><span class="scrub-dot">·</span><span class="scrub-percent">0%</span></div>
+          <div class="scrub-thumb"></div>
+        </div>
+      </div>
+      <button class="panel-handle" type="button" aria-label="Развернуть панель" aria-expanded="false"></button>
     </header>
 
     <div id="list"></div>
@@ -973,6 +1005,10 @@ const elToggleTime=document.getElementById("toggleTime");
 const elExportBtn=document.getElementById("exportBtn");
 const MOBILE_MQ = window.matchMedia("(max-width: 900px)");
 const elHeader=document.querySelector("header");
+const elScrubber=document.getElementById("fastScrubber");
+const elPanelHandle=document.querySelector(".panel-handle");
+let onPanelLayout=()=>()=>{};
+let suppressHandleClick=false;
 const elVodCard=document.getElementById("vodCard");
 const elVodPreviewImg=document.getElementById("vodPreviewImg");
 const elVodHeading=document.querySelector(".vod-heading");
@@ -1048,14 +1084,19 @@ function applyPanelOffset(value, animate=true){
     return;
   }
   elHeader.style.transition = animate ? "transform .24s ease, box-shadow .2s ease" : "none";
-  elHeader.style.transform = `translateY(${PANEL_OFFSET}px)`;
+  // State is collapsed in layout, not translated off-screen. Offset only tracks the swipe threshold.
+  elHeader.style.transform = "";
 }
 
 function syncPanelState(expanded, animate=true){
+  const settle=onPanelLayout();
   PANEL_EXPANDED = !!expanded;
   if(!elHeader) return;
   elHeader.classList.toggle("is-expanded", PANEL_EXPANDED);
   elHeader.classList.toggle("is-compact", !PANEL_EXPANDED);
+  elPanelHandle.setAttribute("aria-expanded",String(PANEL_EXPANDED));
+  elPanelHandle.setAttribute("aria-label",PANEL_EXPANDED ? "Свернуть панель" : "Развернуть панель");
+  requestAnimationFrame(settle);
 
   if(MOBILE_MQ.matches){
     applyPanelOffset(PANEL_EXPANDED ? 0 : MOBILE_PANEL_OFFSET, animate);
@@ -1069,12 +1110,14 @@ syncPanelState(PANEL_EXPANDED, false);
 if("ResizeObserver" in window){
   new ResizeObserver(()=>{
     elList.style.setProperty("--mobile-expanded-height", elHeader.getBoundingClientRect().height + "px");
+    elList.style.setProperty("--mobile-header-height", elHeader.getBoundingClientRect().height + "px");
   }).observe(elHeader);
 }
 
 elHeader.addEventListener("pointerdown", (e)=>{
-  if(!MOBILE_MQ.matches) return;
+  if(!MOBILE_MQ.matches || e.target.closest("#fastScrubber,input,.meta-buttons,.vod-card")) return;
 
+  suppressHandleClick=false;
   const isInput = e.target.closest("input");
 
   PANEL_DRAG = {
@@ -1095,8 +1138,8 @@ elHeader.addEventListener("pointermove", (e)=>{
   const dy = e.clientY - PANEL_DRAG.startY;
 
   if(Math.abs(dy) < 5) return;
+  PANEL_DRAG.moved=true;
 
-  // ← ДОБАВЬ ЭТО
   if(!elHeader.hasPointerCapture(e.pointerId)){
     elHeader.setPointerCapture(e.pointerId);
   }
@@ -1112,11 +1155,12 @@ elHeader.addEventListener("pointermove", (e)=>{
 elHeader.addEventListener("pointerup", (e)=>{
   if(!PANEL_DRAG || e.pointerId !== PANEL_DRAG.pointerId) return;
 
-  elHeader.releasePointerCapture(e.pointerId);
+  if(elHeader.hasPointerCapture(e.pointerId)) elHeader.releasePointerCapture(e.pointerId);
 
   const threshold = MOBILE_PANEL_OFFSET * 0.6;
   const shouldExpand = PANEL_OFFSET > threshold;
 
+  suppressHandleClick=PANEL_DRAG.moved;
   PANEL_DRAG = null;
   elHeader.classList.remove("is-dragging");
 
@@ -1126,7 +1170,7 @@ elHeader.addEventListener("pointerup", (e)=>{
 elHeader.addEventListener("pointercancel", (e)=>{
   if(!PANEL_DRAG || e.pointerId !== PANEL_DRAG.pointerId) return;
 
-  elHeader.releasePointerCapture(e.pointerId);
+  if(elHeader.hasPointerCapture(e.pointerId)) elHeader.releasePointerCapture(e.pointerId);
 
   PANEL_DRAG = null;
   elHeader.classList.remove("is-dragging");
@@ -1135,8 +1179,9 @@ elHeader.addEventListener("pointercancel", (e)=>{
 let TOUCH_DRAG = null;
 
 elHeader.addEventListener("touchstart", (e)=>{
-  if(!MOBILE_MQ.matches) return;
+  if("PointerEvent" in window || !MOBILE_MQ.matches || e.target.closest("#fastScrubber,input,.meta-buttons,.vod-card")) return;
 
+  suppressHandleClick=false;
   const t = e.touches[0];
 
   TOUCH_DRAG = {
@@ -1155,11 +1200,9 @@ elHeader.addEventListener("touchmove", (e)=>{
 
 if(Math.abs(dy) < 5) return;
 
-if(TOUCH_DRAG.fromInput && !TOUCH_DRAG.moved){
-  TOUCH_DRAG.moved = true;
-}
+TOUCH_DRAG.moved = true;
 
-  e.preventDefault(); // ← КЛЮЧЕВОЕ
+  e.preventDefault();
 
   applyPanelOffset(
     TOUCH_DRAG.startOffset + dy,
@@ -1173,6 +1216,7 @@ elHeader.addEventListener("touchend", ()=>{
   const threshold = MOBILE_PANEL_OFFSET * 0.6;
   const shouldExpand = PANEL_OFFSET > threshold;
 
+  suppressHandleClick=TOUCH_DRAG.moved;
   TOUCH_DRAG = null;
   syncPanelState(shouldExpand, true);
 });
@@ -1186,6 +1230,12 @@ window.addEventListener("resize", ()=>{
   syncPanelState(PANEL_EXPANDED, false);
 });
 
+elPanelHandle.addEventListener('click',e=>{
+  e.stopPropagation();
+  if(suppressHandleClick && e.detail!==0){suppressHandleClick=false;return;}
+  suppressHandleClick=false;
+  syncPanelState(!PANEL_EXPANDED,true);
+});
 let vodOverlay = null;
 let vodOverlayToken = 0;
 
@@ -1551,6 +1601,7 @@ function createRowElement(r, includeTime, rowIndex, ownerDocument=document){
    estimate until visited; every visited block keeps its exact height. */
 let filtered = null;
 let FILTER_TOKEN = 0;
+let FILTERING = false;
 let EMOTES = new Map();
 let EMOTES_READY = false;
 const WINDOW_BLOCKS = 3;
@@ -1588,13 +1639,15 @@ function updateSpaces(){
   topSpace.style.height=heightBefore(windowStart)+'px';
   bottomSpace.style.height=(heightBefore(blockCount())-heightBefore(windowEnd))+'px';
 }
+function viewportInset(){return MOBILE_MQ.matches ? Math.max(0,elHeader.getBoundingClientRect().bottom) : 0;}
 function visibleAnchor(){
+  const inset=viewportInset();
   for(const node of blockNodes.values()){
-    if(node.getBoundingClientRect().bottom<=0) continue;
+    if(node.getBoundingClientRect().bottom<=inset) continue;
     for(const row of node.children){
       const rect=row.getBoundingClientRect();
       if(rect.top>=innerHeight) return null;
-      if(rect.bottom>0) return {id:Number(row.dataset.id),top:rect.top};
+      if(rect.bottom>inset+0.5) return {id:Number(row.dataset.id),top:rect.top,inset};
     }
   }
   return null;
@@ -1602,9 +1655,16 @@ function visibleAnchor(){
 function restoreAnchor(anchor){
   if(!anchor) return;
   const node=elList.querySelector(`.row[data-id="${anchor.id}"]`);
-  if(node) window.scrollBy(0,node.getBoundingClientRect().top-anchor.top);
+  if(node){
+    const rect=node.getBoundingClientRect();
+    // A row can become shorter after wrapping changes; keep at least one pixel visible.
+    const previous=anchor.top-(anchor.inset||0);
+    const relative=MOBILE_MQ.matches ? clampNumber(previous,1-rect.height,Math.max(0,innerHeight-viewportInset()-Math.min(rect.height,44))) : previous;
+    window.scrollBy(0,rect.top-viewportInset()-relative);
+  }
 }
 function measureBlocks(anchor=resizeAnchor || stableAnchor || visibleAnchor()){
+  const keepScrub=scrubSettled && (resizeAnchor || Math.abs(window.scrollY-scrubSettled.y)<1);
   let total=0,count=0;
   for(const [b,node] of blockNodes){
     if(node.dataset.pending) continue;
@@ -1613,6 +1673,8 @@ function measureBlocks(anchor=resizeAnchor || stableAnchor || visibleAnchor()){
   }
   if(count) averageHeight=total/count;
   updateSpaces();restoreAnchor(anchor);stableAnchor=visibleAnchor();
+  if(keepScrub) rememberScrubPosition();
+  scheduleScrubSync();
 }
 const blockObserver=new ResizeObserver(()=>{
   if(!windowBusy) {measureBlocks();scheduleWindow();}
@@ -1680,7 +1742,7 @@ function scheduleWindow(){
   if(windowFrame) return;
   windowFrame=requestAnimationFrame(()=>{
     windowFrame=0;
-    if(!windowBusy && !resizeAnchor) showWindow(targetBlock());
+    if(!windowBusy && !resizeAnchor && !scrubActive()) showWindow(targetBlock());
   });
 }
 async function ensureEmotesLoaded(){
@@ -1697,6 +1759,7 @@ function matches(r,q,u){
 }
 async function applyFilters(){
   const token=++FILTER_TOKEN;
+  FILTERING=true;resetScrubber();
   const q=(elQ.value||'').trim().toLowerCase();
   const u=(elU.value||'').trim().toLowerCase();
   let result=null;
@@ -1712,7 +1775,7 @@ async function applyFilters(){
     }
     result=indices.subarray(0,found);
   }
-  filtered=result;stableAnchor=null;selectionRange=null;projectedSelection=null;selectionGesture=null;
+  filtered=result;FILTERING=false;resetScrubber();stableAnchor=null;selectionRange=null;projectedSelection=null;selectionGesture=null;
   window.getSelection()?.removeAllRanges();
   heights=[];windowStart=windowEnd=0;
   elStat.textContent=`💬 ${rowCount()} / ${rows.length}`;
@@ -1720,7 +1783,7 @@ async function applyFilters(){
   await showWindow(0,true);
   ensureEmotesLoaded();
 }
-document.addEventListener('scroll',()=>{if(!windowBusy && !resizeAnchor) stableAnchor=visibleAnchor();scheduleWindow();},{passive:true});
+document.addEventListener('scroll',()=>{if(!windowBusy && !resizeAnchor) stableAnchor=visibleAnchor();scheduleWindow();scheduleScrubSync();},{passive:true});
 let listWidth=elList.clientWidth;
 let listPadding=getComputedStyle(elList).paddingTop;
 const listObserver=new ResizeObserver(()=>{
@@ -1743,6 +1806,15 @@ window.addEventListener('resize',()=>{
     resizeAnchor=null;scheduleWindow();
   },120);
 });
+onPanelLayout=()=>{
+  if(!MOBILE_MQ.matches) return ()=>{};
+  if(!resizeAnchor && window.scrollY>0) resizeAnchor=(scrubSettled && Math.abs(window.scrollY-scrubSettled.y)<1 ? scrubSettled.anchor : null) || stableAnchor || visibleAnchor();
+  clearTimeout(resizeTimer);
+  return ()=>{
+    if(!windowBusy) measureBlocks(resizeAnchor || visibleAnchor());
+    resizeTimer=setTimeout(()=>{if(!windowBusy) measureBlocks(resizeAnchor || visibleAnchor());resizeAnchor=null;scheduleWindow();scheduleScrubSync();},120);
+  };
+};
 elQ.addEventListener('input',applyFilters);
 elU.addEventListener('input',applyFilters);
 elToggleTime.addEventListener('click',async e=>{
@@ -1750,6 +1822,150 @@ elToggleTime.addEventListener('click',async e=>{
   SHOW_TIME=!SHOW_TIME;updateMainTimeButton();heights=[];
   await showWindow(targetBlock(),true);
 });
+
+/* Logical-index mobile navigation. At most one builder and one pending target. */
+let scrubIndex=0, scrubGesture=null, scrubPending=null, scrubRunning=false, scrubSettled=null;
+let scrubRevision=0, scrubFrame=0, scrubSyncFrame=0;
+const scrubActive=()=>!!scrubGesture || scrubRunning || scrubPending!==null;
+const scrubPercent=(index,count)=>count>1 ? 100*index/(count-1) : 0;
+const scrubTarget=(fraction,count)=>count>1 ? Math.round(clampNumber(fraction,0,1)*(count-1)) : 0;
+function scrubTime(value){
+  if(typeof value!=='string') return '—';
+  const time=value.trim().replace(/\s*:\s*/g,':');
+  return /^\d{1,6}:[0-5]\d:[0-5]\d$/.test(time) ? time : '—';
+}
+function setScrubIndex(index){
+  const count=rowCount();scrubIndex=clampNumber(index,0,Math.max(0,count-1));
+  const percent=scrubPercent(scrubIndex,count),rounded=Math.round(percent);
+  const time=count ? scrubTime(rowAt(scrubIndex).t) : '—';
+  elScrubber.style.setProperty('--scrub-progress',percent.toFixed(4)+'%');
+  elScrubber.style.setProperty('--scrub-ratio',String(percent/100));
+  for(const node of elScrubber.querySelectorAll('.scrub-time')) if(node.textContent!==time) node.textContent=time;
+  for(const node of elScrubber.querySelectorAll('.scrub-percent')) if(node.textContent!==rounded+'%') node.textContent=rounded+'%';
+  elScrubber.setAttribute('aria-valuenow',String(rounded));
+  elScrubber.setAttribute('aria-valuetext',count ? `${time}, ${rounded}%, сообщение ${scrubIndex+1} из ${count}` : 'Нет сообщений');
+  elScrubber.setAttribute('aria-disabled',String(FILTERING || count<2));
+}
+function scheduleScrubSync(){
+  if(!MOBILE_MQ.matches || scrubSyncFrame) return;
+  scrubSyncFrame=requestAnimationFrame(()=>{
+    scrubSyncFrame=0;
+    if(!MOBILE_MQ.matches || scrubActive() || FILTERING || windowBusy || resizeAnchor) return;
+    // Near the end (or in a short list) the viewport cannot top-align every row.
+    // Keep the chosen visible row until actual scrolling/input changes the view.
+    if(scrubSettled && scrubSettled.epoch===FILTER_TOKEN && Math.abs(window.scrollY-scrubSettled.y)<1){
+      const rect=elList.querySelector(`.row[data-id="${scrubSettled.index}"]`)?.getBoundingClientRect();
+      if(rect && rect.bottom>viewportInset() && rect.top<innerHeight){setScrubIndex(scrubSettled.index);return;}
+    }
+    scrubSettled=null;
+    const count=rowCount(),anchor=visibleAnchor();
+    const atEnd=window.scrollY>0 && window.scrollY+innerHeight>=document.documentElement.scrollHeight-2;
+    setScrubIndex(atEnd && count ? count-1 : anchor?.id || 0);
+  });
+}
+function rememberScrubPosition(){
+  const rect=elList.querySelector(`.row[data-id="${scrubIndex}"]`)?.getBoundingClientRect();
+  scrubSettled={index:scrubIndex,epoch:FILTER_TOKEN,y:window.scrollY,anchor:rect ? {id:scrubIndex,top:rect.top,inset:viewportInset()} : null};
+}
+function resetScrubber(){
+  scrubRevision++;scrubPending=null;scrubSettled=null;
+  const gesture=scrubGesture;scrubGesture=null;
+  if(gesture && elScrubber.hasPointerCapture?.(gesture.id)) elScrubber.releasePointerCapture(gesture.id);
+  setScrubIndex(0);scheduleScrubSync();
+}
+function requestScrub(index){
+  if(!MOBILE_MQ.matches || FILTERING || rowCount()<2) return;
+  const request={index:clampNumber(index,0,rowCount()-1),epoch:FILTER_TOKEN,revision:++scrubRevision};
+  scrubPending=request;scrubSettled=null;setScrubIndex(request.index);
+  if(scrubFrame || scrubRunning) return;
+  scrubFrame=requestAnimationFrame(()=>{scrubFrame=0;runScrubber();});
+}
+async function runScrubber(){
+  if(scrubRunning) return;
+  scrubRunning=true;elScrubber.setAttribute('aria-busy','true');
+  try{
+    while(scrubPending){
+      const request=scrubPending;scrubPending=null;
+      const current=()=>request.revision===scrubRevision && request.epoch===FILTER_TOKEN && !FILTERING && MOBILE_MQ.matches;
+      while(windowBusy && current()) await yieldViewer();
+      if(!current()) continue;
+      const block=Math.floor(request.index/CHUNK);
+      const origin=elList.getBoundingClientRect().top+window.scrollY+parseFloat(getComputedStyle(elList).paddingTop);
+      // Height estimates only seed the viewport. The final position comes from
+      // the actual mounted row, never from scrollY/document-height percentage.
+      window.scrollTo(0,Math.max(0,origin+heightBefore(block)+(request.index%CHUNK)*averageHeight-viewportInset()));
+      await showWindow(block);
+      if(!current()) continue;
+      for(let pass=0;pass<3;pass++){
+        const node=elList.querySelector(`.row[data-id="${request.index}"]`);
+        if(!node) break;
+        window.scrollBy(0,node.getBoundingClientRect().top-viewportInset());
+        stableAnchor=visibleAnchor();
+        await new Promise(requestAnimationFrame);
+        if(!current()) break;
+      }
+      if(current()){
+        setScrubIndex(request.index);
+        rememberScrubPosition();
+      }
+    }
+  }finally{
+    scrubRunning=false;elScrubber.setAttribute('aria-busy','false');
+    scheduleScrubSync();scheduleWindow();
+  }
+}
+function pointerScrub(x){
+  const rect=elScrubber.querySelector('.scrub-track').getBoundingClientRect();
+  requestScrub(scrubTarget((x-rect.left-7-(scrubGesture?.offset||0))/Math.max(1,rect.width-14),rowCount()));
+}
+function finishScrub(event){
+  if(!scrubGesture || event.pointerId!==scrubGesture.id) return;
+  if(event.type==='pointerup') pointerScrub(event.clientX);
+  const gesture=scrubGesture;scrubGesture=null;
+  if(elScrubber.hasPointerCapture(gesture.id)) elScrubber.releasePointerCapture(gesture.id);
+  // Cancel/lost-capture also settle the last selected logical position.
+  requestScrub(scrubIndex);scheduleScrubSync();
+}
+function beginScrub(x,id){
+  const rect=elScrubber.querySelector('.scrub-track').getBoundingClientRect();
+  const thumb=elScrubber.querySelector('.scrub-thumb').getBoundingClientRect();
+  const grab=Math.abs(x-(thumb.left+thumb.width/2))<=14;
+  scrubGesture={id,offset:grab ? x-rect.left-7-(rect.width-14)*scrubPercent(scrubIndex,rowCount())/100 : 0};
+  pointerScrub(x);
+}
+elScrubber.addEventListener('pointerdown',event=>{
+  if(!MOBILE_MQ.matches || FILTERING || rowCount()<2 || event.button!==0 || event.isPrimary===false || scrubGesture) return;
+  event.preventDefault();event.stopPropagation();
+  beginScrub(event.clientX,event.pointerId);elScrubber.setPointerCapture(event.pointerId);
+});
+elScrubber.addEventListener('pointermove',event=>{
+  if(!scrubGesture || event.pointerId!==scrubGesture.id) return;
+  event.preventDefault();event.stopPropagation();pointerScrub(event.clientX);
+});
+for(const type of ['pointerup','pointercancel','lostpointercapture']) elScrubber.addEventListener(type,event=>{
+  if(!scrubGesture || event.pointerId!==scrubGesture.id) return;
+  event.stopPropagation();finishScrub(event);
+});
+elScrubber.addEventListener('keydown',event=>{
+  const step=Math.max(1,Math.round((rowCount()-1)/10));
+  const targets={ArrowLeft:scrubIndex-1,ArrowDown:scrubIndex-1,ArrowRight:scrubIndex+1,ArrowUp:scrubIndex+1,PageDown:scrubIndex+step,PageUp:scrubIndex-step,Home:0,End:rowCount()-1};
+  if(!Object.prototype.hasOwnProperty.call(targets,event.key)) return;
+  event.preventDefault();event.stopPropagation();requestScrub(targets[event.key]);
+});
+// Touch fallback for engines without Pointer Events; suppression stays local.
+elScrubber.addEventListener('touchstart',event=>{
+  event.stopPropagation();if('PointerEvent' in window || !MOBILE_MQ.matches || FILTERING || rowCount()<2 || scrubGesture || event.touches.length!==1) return;
+  event.preventDefault();beginScrub(event.touches[0].clientX,'touch');
+},{passive:false});
+elScrubber.addEventListener('touchmove',event=>{
+  event.stopPropagation();if(scrubGesture?.id!=='touch') return;
+  event.preventDefault();pointerScrub(event.touches[0].clientX);
+},{passive:false});
+for(const type of ['touchend','touchcancel']) elScrubber.addEventListener(type,event=>{
+  event.stopPropagation();if(scrubGesture?.id!=='touch') return;
+  scrubGesture=null;requestScrub(scrubIndex);scheduleScrubSync();
+});
+MOBILE_MQ.addEventListener('change',()=>{resetScrubber();scheduleScrubSync();});
 
 /* Selection endpoints belong to logical rows, not ephemeral DOM nodes. A native
    range is projected onto its visible intersection; PNG uses the full range. */
