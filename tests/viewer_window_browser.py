@@ -16,17 +16,22 @@ from viewer_fixtures import synthetic_rows
 async def run(args):
     out=Path(args.output);out.mkdir(parents=True,exist_ok=True)
     controls=getattr(args,'controls',False)
+    notices=getattr(args,'notices',False)
     baseline=subprocess.check_output(['git','show',args.baseline+':src/viewer_template.html'],cwd=ROOT).decode('utf-8')
     pixel='data:image/svg+xml;base64,'+base64.b64encode(b'<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"><rect width="22" height="22" fill="purple"/></svg>').decode()
     for count in sorted(set(args.sizes+([0,1,2,10000] if args.scrubber else [])+([10000,100000] if args.panel else [])+([10000] if controls else []))):
         rows=list(synthetic_rows(count))
+        if notices:
+            from notice_fixtures import mixed_rows
+            rows=list(mixed_rows(count,synthetic_rows))
         for mode in ('online','offline'):
             page=render_viewer_html(rows,'Synthetic title','Synthetic channel','https://www.twitch.tv/videos/123',created_at='2026-10-29T14:28:00Z',mode=mode,local_emotes={'Kappa':pixel},badge_images={'subscriber/1':pixel,'subscriber/2':pixel},captured_during_live=True,**(dict(duration_seconds=435088) if args.scrubber or args.panel or controls else {}))
             new_data=re.search(r'<script id="chat-data" type="application/json">(.*?)</script>',page,re.S).group(1)
             old_data=new_data if args.scrubber or args.panel or controls else json.dumps(dict(meta=json.loads(new_data)['meta'],rows=rows),ensure_ascii=False).replace('<','\\u003c')
             for version,html in [('new',page),('base',baseline.replace('{{CHAT_DATA_JSON}}',old_data))]:
                 # Test-only instrumentation: same decoder/renderer, no production metrics globals.
-                html=html.replace('applyFilters();\n</script>','applyFilters().then(()=>{window.viewerMetrics.ready_ms=performance.now()});\n</script>')
+                if not notices:
+                    html=html.replace('applyFilters();\n</script>','applyFilters().then(()=>{window.viewerMetrics.ready_ms=performance.now()});\n</script>')
                 (out/f'{version}-{count}-{mode}.html').write_text(html,encoding='utf-8')
             size_file=out/f'sizes-{count}-{mode}.json'
             size_file.write_text(json.dumps(dict(new_html_bytes=len(page.encode()),base_html_bytes=len(baseline.replace('{{CHAT_DATA_JSON}}',old_data).encode()),new_json_bytes=len(new_data.encode()),base_json_bytes=len(old_data.encode()))),encoding='utf-8')
@@ -74,6 +79,9 @@ async def run(args):
                 version_info=await call('Browser.getVersion');(out/'browser-version.json').write_text(json.dumps(version_info,indent=2),encoding='utf-8')
                 await call('Page.enable');await call('Runtime.enable');await call('Fetch.enable',dict(patterns=[dict(urlPattern='http*')]))
                 await call('Page.addScriptToEvaluateOnNewDocument',dict(source="""
+window.noticePeak=0;
+new MutationObserver(()=>{window.noticePeak=Math.max(window.noticePeak,document.querySelectorAll('#list .row').length)}).observe(document,{childList:true,subtree:true});
+""" if notices else """
 if(window===top){
 window.longTasks=[];
 new PerformanceObserver(l=>longTasks.push(...l.getEntries().map(e=>e.duration))).observe({type:'longtask',buffered:true});
@@ -98,6 +106,10 @@ function sample(){
                 if controls:
                     from viewer_panel_cases import visual_checks
                     await visual_checks(call,evaluate,wait,out,errors,requests)
+                    return
+                if notices:
+                    from viewer_notice_cases import check_notices
+                    await check_notices(call,evaluate,wait,out,args,errors,requests)
                     return
                 if args.panel:
                     from viewer_panel_cases import check_panel
@@ -246,4 +258,5 @@ if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--output',required=True);parser.add_argument('--baseline',default='1a089003b84fdb12c13d419aef16c01d53d8df83');parser.add_argument('--chrome',default=r'C:\Program Files\Google\Chrome\Application\chrome.exe');parser.add_argument('--sizes',nargs='+',type=int,default=[10000,25000,100000]);parser.add_argument('--widths',nargs='+',type=int,default=[320,390,1440]);parser.add_argument('--scrubber',action='store_true',help='Logical navigation and gesture regressions, without performance matrix')
     parser.add_argument('--panel',action='store_true',help='Focused mobile panel visual checks and animation profile')
     parser.add_argument('--controls',action='store_true',help='Mobile control row, mode switches and endpoint gestures; no profiling')
+    parser.add_argument('--notices',action='store_true',help='Conservative notice rendering/search/copy/PNG in mixed virtual chat; no profiling')
     asyncio.run(run(parser.parse_args()),loop_factory=asyncio.SelectorEventLoop)

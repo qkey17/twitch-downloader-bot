@@ -2,6 +2,7 @@ import io
 import json
 from pathlib import Path
 from src.viewer_data import CompactRows, FORMAT
+from src.viewer_notices import prepare_notice
 
 
 def render_viewer_html(
@@ -77,7 +78,7 @@ def write_viewer_html(output, chat_rows, title, channel, vod_url, created_at=Non
         for row in iterator:
             if not first:
                 write(',')
-            write_json(compact.encode(row))
+            write_json(compact.encode(prepare_notice(row)))
             first = False
         write('],"users":')
         write_json(compact.users.values, streaming=True)

@@ -51,6 +51,32 @@ test('off-window copy projects the same text as rows without images',()=>{
   ctx.SHOW_TIME=false;assert.equal(ctx.selectionText(r),'User: safe & text');
 });
 
+test('notice projection preserves system, original author/comment and emotes without time duplication',()=>{
+  const ctx=vm.createContext({SHOW_TIME:true,LOCAL_EMOTES:{Kappa:'local.png'},CDN_EMOTES:{},EMOTES:new Map()});
+  vm.runInContext(part('function noticeForRow(', 'function appendUserMessage(')+part('function catalogEmoteUrl(', 'function renderTextWithEmotes(')+part('function selectionText(', "document.addEventListener('copy'"),ctx);
+  const system='ObjectPrototype__proto__ watched 5 consecutive streams and sparked a watch streak!';
+  const comment=' 日本 🎮 Kappa & <script>bad()</script>';
+  const r={t:'00 : 01 : 02',user:'original',text:system+comment,notice:{v:1,kind:'watch_streak',system,comment}};
+  assert.equal(ctx.selectionText(r),'00:01:02'+system+'\noriginal: 日本 🎮  & <script>bad()</script>');
+  r.notice.comment_fragments=[{text:' 日本 🎮 '},{text:'Kappa',emoteID:'25'},{text:' & <script>bad()</script>'}];
+  assert.equal(ctx.selectionText(r),'00:01:02'+system+'\noriginal: 日本 🎮  & <script>bad()</script>');
+  ctx.SHOW_TIME=false;assert.ok(ctx.selectionText(r).startsWith(system+'\noriginal:'));
+  r.text=system;r.notice.comment='';r.notice.comment_fragments=[];
+  assert.equal(ctx.selectionText(r),system);
+  r.notice.comment=' \t';r.text=system+' \t';delete r.notice.comment_fragments;
+  assert.equal(ctx.selectionText(r),system);
+});
+
+test('malformed notice extensions fall back to the complete ordinary row',()=>{
+  const ctx=vm.createContext({SHOW_TIME:false,LOCAL_EMOTES:{},CDN_EMOTES:{},EMOTES:new Map()});
+  vm.runInContext(part('function noticeForRow(', 'function appendUserMessage(')+part('function catalogEmoteUrl(', 'function renderTextWithEmotes(')+part('function selectionText(', "document.addEventListener('copy'"),ctx);
+  for(const notice of [{v:2}, {v:1,kind:'__proto__',system:'original',comment:''},
+    {v:1,kind:'gift',system:'wrong',comment:''}, {v:1,kind:'gift',system:'original',comment:'',comment_fragments:[null]}]){
+    const r={user:'author',text:'original',notice};
+    assert.equal(ctx.noticeForRow(r),null);assert.equal(ctx.selectionText(r),'author:original');
+  }
+});
+
 test('PNG selection keeps only range/indices, decoding one requested row at a time',()=>{
   let decoded=0;
   const ctx=vm.createContext({rows:['a','b','c'],filtered:[2,0],decodeMessage:r=>{decoded++;return r}});
