@@ -1,5 +1,7 @@
+import io
 import json
 from pathlib import Path
+from src.viewer_data import CompactRows, FORMAT
 
 
 def render_viewer_html(
@@ -17,30 +19,14 @@ def render_viewer_html(
     badge_images: dict | None = None,
     captured_during_live: bool = False,
 ) -> str:
-    BASE_DIR = Path(__file__).resolve().parent
-    template_path = BASE_DIR / "viewer_template.html"
-    template = template_path.read_text(encoding="utf-8")
-
-    payload = {
-        "meta": {
-            "title": title,
-            "channel": channel,
-            "vod_url": vod_url,
-            "created_at": created_at,
-            "thumbnail_preview_url": thumbnail_preview_url,
-            "thumbnail_full_url": thumbnail_full_url,
-            "mode": mode,
-            "channel_id": channel_id,
-            "local_emotes": local_emotes or {},
-            "cdn_emotes": cdn_emotes or {},
-            "badge_images": badge_images or {},
-            **({'captured_during_live': True} if captured_during_live is True else {}),
-        },
-        "rows": chat_rows,
-    }
-
-    data_json = json.dumps(payload, ensure_ascii=False).replace("<", "\\u003c")
-    return template.replace("{{CHAT_DATA_JSON}}", data_json)
+    # The compatibility API shares the exact streaming encoder; it does not build
+    # a second complete array of compact rows alongside chat_rows.
+    output = io.StringIO()
+    write_viewer_html(output, chat_rows, title, channel, vod_url, created_at,
+                      thumbnail_preview_url, thumbnail_full_url, mode, channel_id,
+                      local_emotes, cdn_emotes, badge_images,
+                      captured_during_live=captured_during_live)
+    return output.getvalue()
 
 
 def write_viewer_html(output, chat_rows, title, channel, vod_url, created_at=None,
@@ -59,7 +45,8 @@ def write_viewer_html(output, chat_rows, title, channel, vod_url, created_at=Non
         "cdn_emotes": cdn_emotes or {}, "badge_images": badge_images or {},
         **({'captured_during_live': True} if captured_during_live is True else {}),
     }
-    encoder = json.JSONEncoder(ensure_ascii=False)
+    encoder = json.JSONEncoder(ensure_ascii=False, separators=(',', ':'))
+    compact = CompactRows()
 
     def write(text):
         if cancel_check is not None and cancel_check():
@@ -68,23 +55,32 @@ def write_viewer_html(output, chat_rows, title, channel, vod_url, created_at=Non
         if written != len(text):
             raise OSError("Incomplete HTML write")
 
-    def write_json(value):
-        for chunk in encoder.iterencode(value):
+    def write_json(value, *, streaming=False):
+        # One message can be encoded at once. Metadata may contain a large
+        # offline image catalog, so never materialize that whole JSON string.
+        chunks = encoder.iterencode(value) if streaming else (encoder.encode(value),)
+        for chunk in chunks:
             write(chunk.replace("<", "\\u003c"))
 
     iterator = iter(chat_rows)
     try:
         write(prefix)
-        write('{"meta": ')
-        write_json(meta)
-        write(', "rows": [')
+        write('{"format":')
+        write_json(FORMAT)
+        write(',"meta":')
+        write_json(meta, streaming=True)
+        write(',"rows":[')
         first = True
         for row in iterator:
             if not first:
-                write(', ')
-            write_json(row)
+                write(',')
+            write_json(compact.encode(row))
             first = False
-        write(']}')
+        write('],"users":')
+        write_json(compact.users.values, streaming=True)
+        write(',"badges":')
+        write_json(compact.badges.values, streaming=True)
+        write('}')
         write(suffix)
     finally:
         close = getattr(iterator, "close", None)
