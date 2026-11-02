@@ -1,3 +1,4 @@
+from src.viewer_data import decode_row
 import asyncio
 import errno
 import json
@@ -79,7 +80,9 @@ class DiskPipelineTestCase(unittest.IsolatedAsyncioTestCase):
         path = self.root / "out" / cache["html_url"].removeprefix("local:")
         html = path.read_text(encoding="utf-8")
         data = html.split('<script id="chat-data" type="application/json">', 1)[1].split('</script>', 1)[0]
-        return json.loads(data), cache
+        payload = json.loads(data)
+        payload["rows"] = [decode_row(payload, r) for r in payload["rows"]]
+        return payload, cache
 
     async def test_one_row_and_multiple_batches_preserve_all_fields_and_stats(self):
         for count in (1, 3, 4, 10):
@@ -244,7 +247,7 @@ class DiskPipelineTestCase(unittest.IsolatedAsyncioTestCase):
         def writer(output, *args, **kwargs):
             class Output:
                 def write(self, text):
-                    if '"rows": [' in text:
+                    if '"rows":[' in text.replace(' ', ''):
                         started.set()
                         if not release.wait(5):
                             raise AssertionError("test did not release writer")

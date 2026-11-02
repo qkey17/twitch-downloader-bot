@@ -1,3 +1,4 @@
+from src.viewer_data import decode_row
 import errno
 import io
 import json
@@ -164,7 +165,7 @@ class SpoolAndStreamingTestCase(unittest.TestCase):
                 with self.assertRaises(sqlite3.DatabaseError):
                     tuple(spool.iter_rows())
 
-    def test_stream_matches_old_html_byte_for_byte_and_json_round_trip(self):
+    def test_stream_matches_in_memory_encoder_and_json_round_trip(self):
         for count in (0, 1, 3, 12):
             with self.subTest(count=count):
                 spool = self.spool()
@@ -181,7 +182,7 @@ class SpoolAndStreamingTestCase(unittest.TestCase):
                 parser.feed(html)
                 self.assertEqual(1, len(parser.blocks))
                 self.assertNotIn("<", parser.blocks[0])
-                self.assertEqual(tuple(rows(count)), tuple(json.loads(parser.blocks[0])["rows"]))
+                self.assertEqual(tuple(rows(count)), tuple(decode_row(json.loads(parser.blocks[0]), r) for r in json.loads(parser.blocks[0])["rows"]))
                 self.assertEqual(options["title"], json.loads(parser.blocks[0])["meta"]["title"])
 
     def test_stream_never_collects_rows_or_queries_length(self):

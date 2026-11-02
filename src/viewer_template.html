@@ -933,6 +933,26 @@ if(meta.captured_during_live === true){
   warning.hidden = false;
 }
 const rows = DATA.rows || [];
+const COMPACT_DATA = DATA.format === 'tcd-compact-v1';
+// No rows.map(decode): data stays compact for its entire lifetime. Search reads
+// scalar fields directly; only rendered/exported messages need temporary objects.
+function messageUser(record){
+  if(!COMPACT_DATA) return record.user;
+  return (typeof record[1]==='number' ? DATA.users[record[1]] : record[1])[0];
+}
+function messageText(record){return COMPACT_DATA ? record[2] : record.text;}
+function decodeMessage(record){
+  if(!COMPACT_DATA) return record;
+  const user=typeof record[1]==='number' ? DATA.users[record[1]] : record[1];
+  const badges=typeof record[4]==='number' ? DATA.badges[record[4]] : record[4][0];
+  const mask=record.length>5 ? record[5] : 63;
+  if(mask===63 && record.length<7) return {t:record[0],user:user[0],text:record[2],fragments:record[3],color:user[1],badges};
+  const values=[record[0],user[0],record[2],record[3],user[1],badges];
+  const keys=['t','user','text','fragments','color','badges'];
+  const result=record.length>6 ? {...record[6]} : {};
+  for(let i=0;i<keys.length;i++) if(mask & (1<<i)) result[keys[i]]=values[i];
+  return result;
+}
 
 const MODE = meta.mode || "online";
 const LOCAL_EMOTES = meta.local_emotes || {};
@@ -1548,7 +1568,7 @@ for(const type of ['wheel','touchmove','pointerdown','keydown']){
 let selectionRange = null, projectedSelection = null, selectionGesture = null;
 const yieldViewer = () => globalThis.scheduler?.yield ? scheduler.yield() : new Promise(resolve=>setTimeout(resolve,0));
 const rowCount = () => filtered === null ? rows.length : filtered.length;
-const rowAt = i => rows[filtered === null ? i : filtered[i]];
+const rowAt = i => decodeMessage(rows[filtered === null ? i : filtered[i]]);
 const blockCount = () => Math.ceil(rowCount()/CHUNK);
 const blockLength = b => Math.min(CHUNK,rowCount()-b*CHUNK);
 const topSpace = document.createElement('div');
@@ -1629,14 +1649,22 @@ async function showWindow(block, force=false){
   for(let b=start;b<end;b++){
     if(!blockNodes.get(b).dataset.pending) continue;
     const node=document.createElement('div');
+    let early=false;
+    const reserved=heights[b] ?? blockLength(b)*averageHeight;
     // Build detached in small tasks, so typing/scrolling can cancel old work.
     for(let i=b*CHUNK;i<Math.min((b+1)*CHUNK,rowCount());){
       const until=Math.min(i+100,(b+1)*CHUNK,rowCount());
       for(;i<until;i++) node.appendChild(createRowElement(rowAt(i),SHOW_TIME,i));
-      await yieldViewer();
+      if(b===0 && i===100 && start===0){
+        node.style.minHeight=reserved+'px';
+        blockNodes.get(b).replaceWith(node);blockNodes.set(b,node);early=true;
+        // A real frame lets the first messages paint before filling 2400 rows.
+        await new Promise(requestAnimationFrame);
+      }else await yieldViewer();
       if(token!==windowToken) return;
     }
-    blockNodes.get(b).replaceWith(node);blockNodes.set(b,node);
+    if(!early){blockNodes.get(b).replaceWith(node);blockNodes.set(b,node);}
+    node.style.minHeight='';
     // Keep map traversal in document order even when restoring earlier blocks.
     const ordered=[...blockNodes].sort((a,b)=>a[0]-b[0]);blockNodes.clear();
     for(const entry of ordered) blockNodes.set(...entry);
@@ -1664,8 +1692,8 @@ async function ensureEmotesLoaded(){
   await showWindow(block,true);
 }
 function matches(r,q,u){
-  return (!u || String(r.user||'').toLowerCase().includes(u)) &&
-         (!q || String(r.text||'').toLowerCase().includes(q));
+  return (!u || String(messageUser(r)||'').toLowerCase().includes(u)) &&
+         (!q || String(messageText(r)||'').toLowerCase().includes(q));
 }
 async function applyFilters(){
   const token=++FILTER_TOKEN;
@@ -1845,8 +1873,9 @@ document.addEventListener('copy',event=>{
   const inert=document.implementation.createHTMLDocument('');
   const rich=inert.createElement('div');
   for(let i=a.id;i<=f.id;i++){
-    let line=selectionText(rowAt(i));
-    rich.appendChild(createRowElement(rowAt(i),SHOW_TIME,i,inert));
+    const item=rowAt(i);
+    let line=selectionText(item);
+    rich.appendChild(createRowElement(item,SHOW_TIME,i,inert));
     if(i===f.id) line=line.slice(0,f.offset);
     if(i===a.id) line=line.slice(a.offset);
     text.push(line);
@@ -1869,6 +1898,10 @@ let SNAPSHOT_PREVIEW_IMG = null;
 let SNAPSHOT_TIME_BTN = null;
 let SNAPSHOT_DATE_BTN = null;
 
+function snapshotRows(from,to){
+  const indices=filtered;
+  return {length:to-from+1,at:i=>decodeMessage(rows[indices===null ? from+i : indices[from+i]])};
+}
 async function buildSnapshotWrap(rowsToUse, includeTime, includeDate){
   const wrap = document.createElement("div");
   wrap.className = "export-wrap";
@@ -1877,7 +1910,7 @@ async function buildSnapshotWrap(rowsToUse, includeTime, includeDate){
   }
 
   for(let idx=0;idx<rowsToUse.length;idx++){
-    wrap.appendChild(createRowElement(rowsToUse[idx],includeTime,idx));
+    wrap.appendChild(createRowElement(rowsToUse.at(idx),includeTime,idx));
     if(idx%100===99) await yieldViewer();
   }
 
@@ -2077,7 +2110,7 @@ elExportBtn.addEventListener("pointerup", async (e)=>{
   if(!selectionRange){alert("Выделите текст сообщений");return;}
   const from=Math.min(selectionRange.anchor.id,selectionRange.focus.id);
   const to=Math.max(selectionRange.anchor.id,selectionRange.focus.id);
-  const rowsToClone=Array.from({length:to-from+1},(_,i)=>rowAt(from+i));
+  const rowsToClone=snapshotRows(from,to);
   selectionRange=null;projectedSelection=null;
   window.getSelection()?.removeAllRanges();
   openSnapshotOverlay(rowsToClone);

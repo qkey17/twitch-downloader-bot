@@ -1,3 +1,4 @@
+from src.viewer_data import decode_row
 import json
 import unittest
 
@@ -33,6 +34,7 @@ class HtmlRendererSerializationTests(unittest.TestCase):
 
         self.assertNotIn("<", serialized)
         parsed = json.loads(serialized)
+        parsed["rows"] = [decode_row(parsed, r) for r in parsed["rows"]]
         self.assertEqual(parsed["meta"]["title"], values[0])
         self.assertEqual(parsed["rows"][0]["user"], values[1])
         self.assertEqual(parsed["rows"][0]["text"], values[2])
@@ -47,11 +49,12 @@ class HtmlRendererSerializationTests(unittest.TestCase):
         )
 
         parsed = json.loads(serialized)
+        parsed["rows"] = [decode_row(parsed, r) for r in parsed["rows"]]
         self.assertEqual(parsed["meta"]["title"], value)
         self.assertEqual(parsed["rows"][0]["text"], value)
         self.assertEqual(parsed["meta"]["cdn_emotes"], {"🎮&": "https://cdn.example/emote?a=1&b=2"})
 
-    def test_ordinary_payload_keeps_its_json_structure_and_semantics(self):
+    def test_compact_payload_keeps_ordinary_message_semantics(self):
         rows = [{
             "t": "00:01:02",
             "user": "viewer",
@@ -76,7 +79,9 @@ class HtmlRendererSerializationTests(unittest.TestCase):
             badge_images={"subscriber/1": "https://cdn.example/badge.png"},
         ))
 
-        self.assertEqual(set(parsed), {"meta", "rows"})
+        self.assertEqual(set(parsed), {"format", "meta", "rows", "users", "badges"})
+        self.assertEqual(parsed["format"], "tcd-compact-v1")
+        parsed["rows"] = [decode_row(parsed, r) for r in parsed["rows"]]
         self.assertEqual(parsed["rows"], rows)
         self.assertEqual(parsed["meta"], {
             "title": "Vod title",
