@@ -485,8 +485,12 @@ button, .vod-card{
     0 14px 34px rgba(0,0,0,.28);
 }
 
+/* Measured rows, not the browser's fallback anchor, own document positioning. */
+html{overflow-anchor:none;}
+
 /* message list */
 #list{
+  overflow-anchor:none; /* Measured windows own scroll anchoring. */
   width:100%;
   max-width:390px;
   margin-left:auto;
@@ -929,10 +933,6 @@ if(meta.captured_during_live === true){
   warning.hidden = false;
 }
 const rows = DATA.rows || [];
-for(const r of rows){
-  r._u = (r.user || "").toLowerCase();
-  r._t = (r.text || "").toLowerCase();
-}
 
 const MODE = meta.mode || "online";
 const LOCAL_EMOTES = meta.local_emotes || {};
@@ -1358,6 +1358,7 @@ function colorForUser(name){
   return DEFAULT_COLORS[(first + last) % DEFAULT_COLORS.length];
 }
 function renderBadges(el, badges){
+  const document=el.ownerDocument || globalThis.document;
   if(!Array.isArray(badges) || badges.length === 0) return false;
 
   let rendered = false;
@@ -1421,6 +1422,7 @@ function catalogEmoteUrl(catalog, name){
 }
 
 function renderTextWithEmotes(el,text,emotes){
+  const document=el.ownerDocument || globalThis.document;
   const parts = String(text||"").split(/(\s+)/);
   for(const p of parts){
   const clean = p.replace(/[\u200B-\u200D\uFEFF]/g,'').replace(/[\r\n\t]/g,'');
@@ -1438,6 +1440,7 @@ function renderTextWithEmotes(el,text,emotes){
 }
 
 function renderFragmentsWithEmotes(el, fragments, emotes){
+  const document=el.ownerDocument || globalThis.document;
   if(!Array.isArray(fragments) || fragments.length === 0){
     return false;
   }
@@ -1483,7 +1486,8 @@ function renderFragmentsWithEmotes(el, fragments, emotes){
 }
 
 const CHUNK = 800;
-function createRowElement(r, includeTime, rowIndex){
+function createRowElement(r, includeTime, rowIndex, ownerDocument=document){
+  const document=ownerDocument;
   const rowEl = document.createElement("div");
   if(rowIndex !== undefined && rowIndex !== null){
     rowEl.dataset.id = String(rowIndex);
@@ -1522,69 +1526,341 @@ function createRowElement(r, includeTime, rowIndex){
 }
 
 
-/* Rows are appended in chunks so huge chats do not freeze the page. */
-let filtered = rows;
-let rendered = 0;
+/* Only indices are filtered; the original payload is never copied or decorated.
+   Block heights are measured, not assumed uniform. Unknown blocks use a running
+   estimate until visited; every visited block keeps its exact height. */
+let filtered = null;
+let FILTER_TOKEN = 0;
 let EMOTES = new Map();
 let EMOTES_READY = false;
+const WINDOW_BLOCKS = 3;
+const blockNodes = new Map();
+let heights = [];
+let averageHeight = 40;
+let windowStart = 0, windowEnd = 0, windowToken = 0;
+let windowBusy = false, windowFrame = 0;
+let stableAnchor = null;
+let resizeAnchor = null, resizeTimer = null;
+let scrollIntent = 0;
+for(const type of ['wheel','touchmove','pointerdown','keydown']){
+  window.addEventListener(type,()=>{scrollIntent++;resizeAnchor=null;clearTimeout(resizeTimer);},{passive:true,capture:true});
+}
+let selectionRange = null, projectedSelection = null, selectionGesture = null;
+const yieldViewer = () => globalThis.scheduler?.yield ? scheduler.yield() : new Promise(resolve=>setTimeout(resolve,0));
+const rowCount = () => filtered === null ? rows.length : filtered.length;
+const rowAt = i => rows[filtered === null ? i : filtered[i]];
+const blockCount = () => Math.ceil(rowCount()/CHUNK);
+const blockLength = b => Math.min(CHUNK,rowCount()-b*CHUNK);
+const topSpace = document.createElement('div');
+const bottomSpace = document.createElement('div');
+for(const node of [topSpace,bottomSpace]){
+  node.setAttribute('aria-hidden','true');
+  node.style.pointerEvents='none';
+}
+elList.append(topSpace,bottomSpace);
 
+function heightBefore(block){
+  let total=0;
+  for(let b=0;b<block;b++) total+=heights[b] ?? blockLength(b)*averageHeight;
+  return total;
+}
+function updateSpaces(){
+  topSpace.style.height=heightBefore(windowStart)+'px';
+  bottomSpace.style.height=(heightBefore(blockCount())-heightBefore(windowEnd))+'px';
+}
+function visibleAnchor(){
+  for(const node of blockNodes.values()){
+    if(node.getBoundingClientRect().bottom<=0) continue;
+    for(const row of node.children){
+      const rect=row.getBoundingClientRect();
+      if(rect.top>=innerHeight) return null;
+      if(rect.bottom>0) return {id:Number(row.dataset.id),top:rect.top};
+    }
+  }
+  return null;
+}
+function restoreAnchor(anchor){
+  if(!anchor) return;
+  const node=elList.querySelector(`.row[data-id="${anchor.id}"]`);
+  if(node) window.scrollBy(0,node.getBoundingClientRect().top-anchor.top);
+}
+function measureBlocks(anchor=resizeAnchor || stableAnchor || visibleAnchor()){
+  let total=0,count=0;
+  for(const [b,node] of blockNodes){
+    if(node.dataset.pending) continue;
+    heights[b]=node.getBoundingClientRect().height;
+    total+=heights[b];count+=blockLength(b);
+  }
+  if(count) averageHeight=total/count;
+  updateSpaces();restoreAnchor(anchor);stableAnchor=visibleAnchor();
+}
+const blockObserver=new ResizeObserver(()=>{
+  if(!windowBusy) {measureBlocks();scheduleWindow();}
+});
+function targetBlock(){
+  const start=elList.getBoundingClientRect().top+window.scrollY+parseFloat(getComputedStyle(elList).paddingTop);
+  const y=Math.max(0,window.scrollY-start);
+  let b=0;
+  while(b<blockCount()-1 && heightBefore(b+1)<=y) b++;
+  return b;
+}
+async function showWindow(block, force=false){
+  const count=blockCount();
+  const start=Math.max(0,Math.min(block-1,count-WINDOW_BLOCKS));
+  const end=Math.min(count,start+WINDOW_BLOCKS);
+  if(!force && start===windowStart && end===windowEnd) return;
+  const token=++windowToken;
+  windowBusy=true;
+  rememberSelection();
+  const anchor=visibleAnchor(),intent=scrollIntent;
+  for(const [b,node] of blockNodes){
+    if(force || b<start || b>=end){blockObserver.unobserve(node);node.remove();blockNodes.delete(b);}
+  }
+  windowStart=start;windowEnd=end;updateSpaces();
+  // Reserve space before yielding. The browser must never clamp scrollY while
+  // a replacement block is being built (especially near the end of the chat).
+  for(let b=start;b<end;b++){
+    if(blockNodes.has(b)) continue;
+    const placeholder=document.createElement('div');placeholder.dataset.pending='true';
+    placeholder.style.height=(heights[b] ?? blockLength(b)*averageHeight)+'px';
+    const next=[...blockNodes].filter(([key])=>key>b).sort((a,b)=>a[0]-b[0])[0]?.[1] || bottomSpace;
+    elList.insertBefore(placeholder,next);blockNodes.set(b,placeholder);
+  }
+  for(let b=start;b<end;b++){
+    if(!blockNodes.get(b).dataset.pending) continue;
+    const node=document.createElement('div');
+    // Build detached in small tasks, so typing/scrolling can cancel old work.
+    for(let i=b*CHUNK;i<Math.min((b+1)*CHUNK,rowCount());){
+      const until=Math.min(i+100,(b+1)*CHUNK,rowCount());
+      for(;i<until;i++) node.appendChild(createRowElement(rowAt(i),SHOW_TIME,i));
+      await yieldViewer();
+      if(token!==windowToken) return;
+    }
+    blockNodes.get(b).replaceWith(node);blockNodes.set(b,node);
+    // Keep map traversal in document order even when restoring earlier blocks.
+    const ordered=[...blockNodes].sort((a,b)=>a[0]-b[0]);blockNodes.clear();
+    for(const entry of ordered) blockNodes.set(...entry);
+    heights[b]=node.getBoundingClientRect().height;
+    updateSpaces();if(intent===scrollIntent) restoreAnchor(anchor);
+    blockObserver.observe(node);
+  }
+  windowBusy=false;
+  const retained=anchor && elList.querySelector(`.row[data-id="${anchor.id}"]`) ? anchor : visibleAnchor();
+  measureBlocks(intent===scrollIntent ? retained : visibleAnchor());projectSelection();scheduleWindow();
+}
+function scheduleWindow(){
+  if(windowFrame) return;
+  windowFrame=requestAnimationFrame(()=>{
+    windowFrame=0;
+    if(!windowBusy && !resizeAnchor) showWindow(targetBlock());
+  });
+}
 async function ensureEmotesLoaded(){
   if(EMOTES_READY) return;
-  EMOTES_READY = true;
-  if(MODE !== "online") return;
-  if(!TWITCH_CHANNEL_ID) return;
-  try{
-    EMOTES = await fetch7tvEmotes(TWITCH_CHANNEL_ID);
-    if(rendered>0){ elList.innerHTML=""; rendered=0; renderMore(); }
-  }catch(e){ EMOTES = new Map(); }
+  EMOTES_READY=true;
+  if(MODE!=="online" || !TWITCH_CHANNEL_ID) return;
+  EMOTES=await fetch7tvEmotes(TWITCH_CHANNEL_ID);
+  const block=targetBlock();heights=[];
+  await showWindow(block,true);
 }
-
 function matches(r,q,u){
-  if(u){ if(r._u.indexOf(u)===-1) return false; }
-  if(q){ if(r._t.indexOf(q)===-1) return false; }
-  return true;
+  return (!u || String(r.user||'').toLowerCase().includes(u)) &&
+         (!q || String(r.text||'').toLowerCase().includes(q));
 }
-
 async function applyFilters(){
-  ensureEmotesLoaded();
-  const q=(elQ.value||"").trim().toLowerCase();
-  const u=(elU.value||"").trim().toLowerCase();
-  filtered = rows.filter(r=>matches(r,q,u));
-  elStat.textContent = `💬 ${filtered.length} / ${rows.length}`;
-  elList.innerHTML=""; rendered=0; renderMore();
-}
-
-function renderMore(){
-  const end = Math.min(rendered+CHUNK, filtered.length);
-  const frag = document.createDocumentFragment();
-  for(let i=rendered;i<end;i++){
-    frag.appendChild(createRowElement(filtered[i], SHOW_TIME, i));
+  const token=++FILTER_TOKEN;
+  const q=(elQ.value||'').trim().toLowerCase();
+  const u=(elU.value||'').trim().toLowerCase();
+  let result=null;
+  if(q || u){
+    const indices=new Uint32Array(rows.length);
+    let found=0;
+    for(let i=0;i<rows.length;){
+      const deadline=performance.now()+6;
+      do {if(matches(rows[i],q,u)) indices[found++]=i; i++;}
+      while(i<rows.length && performance.now()<deadline);
+      await yieldViewer();
+      if(token!==FILTER_TOKEN) return;
+    }
+    result=indices.subarray(0,found);
   }
-  elList.appendChild(frag);
-  rendered=end;
+  filtered=result;stableAnchor=null;selectionRange=null;projectedSelection=null;selectionGesture=null;
+  window.getSelection()?.removeAllRanges();
+  heights=[];windowStart=windowEnd=0;
+  elStat.textContent=`💬 ${rowCount()} / ${rows.length}`;
+  window.scrollTo(0,0);
+  await showWindow(0,true);
+  ensureEmotesLoaded();
 }
-
-document.addEventListener("scroll",()=>{
-  if(window._scrollThrottle) return;
-  window._scrollThrottle = setTimeout(()=>{ window._scrollThrottle = null;
-    const nearBottom = window.innerHeight + window.scrollY > document.body.offsetHeight - 1200;
-    if(nearBottom && rendered < filtered.length) renderMore();
-  },80);
+document.addEventListener('scroll',()=>{if(!windowBusy && !resizeAnchor) stableAnchor=visibleAnchor();scheduleWindow();},{passive:true});
+let listWidth=elList.clientWidth;
+let listPadding=getComputedStyle(elList).paddingTop;
+const listObserver=new ResizeObserver(()=>{
+  const padding=getComputedStyle(elList).paddingTop;
+  if(elList.clientWidth===listWidth && padding===listPadding) return;
+  if(elList.clientWidth!==listWidth) heights=[];
+  listWidth=elList.clientWidth;listPadding=padding;
+  if(!windowBusy) measureBlocks(resizeAnchor || stableAnchor);
+  scheduleWindow();
+});
+listObserver.observe(elList,{box:'border-box'});
+window.addEventListener('resize',()=>{
+  // Width, wrapping and the mobile header settle in different observer turns.
+  // Keep one logical anchor through the entire resize, not temporary positions.
+  if(!resizeAnchor && window.scrollY>0) resizeAnchor=stableAnchor;
+  clearTimeout(resizeTimer);
+  if(!windowBusy) measureBlocks(resizeAnchor || visibleAnchor());
+  resizeTimer=setTimeout(()=>{
+    if(!windowBusy) measureBlocks(resizeAnchor || visibleAnchor());
+    resizeAnchor=null;scheduleWindow();
+  },120);
+});
+elQ.addEventListener('input',applyFilters);
+elU.addEventListener('input',applyFilters);
+elToggleTime.addEventListener('click',async e=>{
+  e.stopPropagation();e.currentTarget.blur();
+  SHOW_TIME=!SHOW_TIME;updateMainTimeButton();heights=[];
+  await showWindow(targetBlock(),true);
 });
 
-elQ.addEventListener("input",()=>applyFilters());
-elU.addEventListener("input",()=>applyFilters());
-elToggleTime.addEventListener("click",(e)=>{
-  e.stopPropagation();
-
-  e.currentTarget.blur(); // ← ВОТ ЭТО
-
-  SHOW_TIME = !SHOW_TIME;
-  updateMainTimeButton();
-  elList.innerHTML=""; rendered=0; renderMore();
+/* Selection endpoints belong to logical rows, not ephemeral DOM nodes. A native
+   range is projected onto its visible intersection; PNG uses the full range. */
+function selectionPoint(node,offset){
+  const element=node?.nodeType===3 ? node.parentElement : node;
+  const row=element?.closest?.('#list .row');
+  if(!row) return null;
+  const range=document.createRange();range.selectNodeContents(row);range.setEnd(node,offset);
+  return {id:Number(row.dataset.id),offset:range.toString().length};
+}
+function selectionSignature(sel){
+  return sel?.rangeCount ? [sel.anchorNode,sel.anchorOffset,sel.focusNode,sel.focusOffset] : [];
+}
+function rememberSelection(){
+  const sel=window.getSelection();const sig=selectionSignature(sel);
+  if(projectedSelection && sig.length===projectedSelection.length && sig.every((v,i)=>v===projectedSelection[i])) return;
+  if(selectionGesture?.active && !elList.querySelector(`.row[data-id="${selectionGesture.anchor.id}"]`)){
+    const focus=pointAtPointer(selectionGesture.x,selectionGesture.y);
+    if(focus){selectionRange={anchor:selectionGesture.anchor,focus};projectSelection();}
+    return;
+  }
+  const anchor=selectionPoint(sel?.anchorNode,sel?.anchorOffset);
+  const focus=selectionPoint(sel?.focusNode,sel?.focusOffset);
+  if(!anchor || !focus || sel.isCollapsed){selectionRange=null;return;}
+  // A clipped native endpoint still represents its original off-window endpoint.
+  const same=(a,b)=>a && b && a.id===b.id && a.offset===b.offset;
+  const oldAnchor=projectedSelection && selectionPoint(projectedSelection[0],projectedSelection[1]);
+  const oldFocus=projectedSelection && selectionPoint(projectedSelection[2],projectedSelection[3]);
+  selectionRange={anchor:same(anchor,oldAnchor)&&selectionRange ? selectionRange.anchor : anchor,
+                  focus:same(focus,oldFocus)&&selectionRange ? selectionRange.focus : focus};
+}
+function domPoint(point){
+  const first=windowStart*CHUNK,last=Math.min(windowEnd*CHUNK,rowCount())-1;
+  const id=Math.max(first,Math.min(last,point.id));
+  const row=elList.querySelector(`.row[data-id="${id}"]`);
+  if(!row) return null;
+  let offset=point.id<first ? 0 : point.id>last ? row.textContent.length : point.offset;
+  return textPoint(row,offset);
+}
+function textPoint(row,offset){
+  const walker=row.ownerDocument.createTreeWalker(row,NodeFilter.SHOW_TEXT);
+  let node;
+  while(node=walker.nextNode()){
+    if(offset<=node.length) return [node,offset];
+    offset-=node.length;
+  }
+  return [row,row.childNodes.length];
+}
+function projectSelection(){
+  if(!selectionRange) return;
+  const sel=window.getSelection();const {anchor,focus}=selectionRange;
+  const a=domPoint(anchor),f=domPoint(focus);
+  if(a && f) sel.setBaseAndExtent(...a,...f);
+  projectedSelection=selectionSignature(sel);
+}
+document.addEventListener('selectionchange',()=>{if(!windowBusy) rememberSelection();});
+function pointAtPointer(x,y){
+  const outside=y<0 || y>=innerHeight;
+  const cy=Math.max(0,Math.min(innerHeight-1,y));
+  let point;
+  if(document.caretPositionFromPoint){
+    const p=document.caretPositionFromPoint(x,cy);
+    point=p && selectionPoint(p.offsetNode,p.offset);
+  }else{
+    const range=document.caretRangeFromPoint?.(x,cy);
+    point=range && selectionPoint(range.startContainer,range.startOffset);
+  }
+  if(point || !outside) return point;
+  const visible=[...elList.querySelectorAll('.row')].filter(n=>{
+    const r=n.getBoundingClientRect();return r.bottom>0 && r.top<innerHeight;
+  });
+  const row=y<0 ? visible[0] : visible.at(-1);
+  return row && selectionPoint(row,y<0 ? 0 : row.childNodes.length);
+}
+elList.addEventListener('pointerdown',e=>{
+  if(e.pointerType!=='mouse' || e.button!==0) return;
+  const anchor=e.shiftKey && selectionRange ? selectionRange.anchor : pointAtPointer(e.clientX,e.clientY);
+  if(!e.shiftKey){selectionRange=null;projectedSelection=null;}
+  selectionGesture=anchor ? {anchor,x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY,active:false} : null;
+});
+window.addEventListener('pointermove',e=>{
+  if(!selectionGesture || !(e.buttons&1)) return;
+  const gesture=selectionGesture;gesture.x=e.clientX;gesture.y=e.clientY;
+  if(Math.abs(e.clientX-gesture.startX)+Math.abs(e.clientY-gesture.startY)>3) gesture.active=true;
+  if(gesture.active && !elList.querySelector(`.row[data-id="${gesture.anchor.id}"]`)){
+    const focus=pointAtPointer(e.clientX,e.clientY);
+    if(focus){selectionRange={anchor:gesture.anchor,focus};projectSelection();}
+  }
+});
+window.addEventListener('pointerup',()=>{rememberSelection();selectionGesture=null;});
+window.addEventListener('pointercancel',()=>{selectionGesture=null;});
+// Native copy cannot see evicted nodes. Recreate only their textual projection;
+// no DOM or image requests are needed. Preserve partial endpoint text offsets.
+function selectionText(r){
+  const plain=text=>String(text||'').split(/(\s+)/).filter(p=>{
+    const clean=p.replace(/[\u200B-\u200D\uFEFF]/g,'').replace(/[\r\n\t]/g,'');
+    return !catalogEmoteUrl(LOCAL_EMOTES,clean) && !catalogEmoteUrl(CDN_EMOTES,clean) && !EMOTES.has(clean);
+  }).join('');
+  let message='';
+  if(Array.isArray(r.fragments) && r.fragments.length){
+    let rendered=false;
+    for(const f of r.fragments){
+      if(!f || typeof f!=='object') continue;
+      const raw=String(f.text||''),clean=raw.replace(/[\u200B-\u200D\uFEFF]/g,'').replace(/[\r\n\t]/g,'').trim();
+      if(f.emoteID || f.emote?.emoteID || f.emote?.id || clean && (catalogEmoteUrl(LOCAL_EMOTES,clean) || catalogEmoteUrl(CDN_EMOTES,clean))){rendered=true;continue;}
+      if(raw){message+=plain(raw);rendered=true;}
+    }
+    if(!rendered) message=plain(r.text);
+  }else message=plain(r.text);
+  return (SHOW_TIME ? String(r.t||'00:00:00').replace(/\s*:\s*/g,':') : '')+(r.user||'—')+':'+message;
+}
+document.addEventListener('copy',event=>{
+  rememberSelection();
+  if(!selectionRange || !event.clipboardData) return;
+  let {anchor:a,focus:f}=selectionRange;
+  if(a.id>f.id || a.id===f.id && a.offset>f.offset) [a,f]=[f,a];
+  if(a.id>=windowStart*CHUNK && f.id<windowEnd*CHUNK) return;
+  const text=[];
+  // A document without a browsing context keeps rich clipboard content inert:
+  // image URLs are serialized, never fetched for off-window clipboard rows.
+  const inert=document.implementation.createHTMLDocument('');
+  const rich=inert.createElement('div');
+  for(let i=a.id;i<=f.id;i++){
+    let line=selectionText(rowAt(i));
+    rich.appendChild(createRowElement(rowAt(i),SHOW_TIME,i,inert));
+    if(i===f.id) line=line.slice(0,f.offset);
+    if(i===a.id) line=line.slice(a.offset);
+    text.push(line);
+  }
+  const range=inert.createRange();
+  range.setStart(...textPoint(rich.firstChild,a.offset));
+  range.setEnd(...textPoint(rich.lastChild,f.offset));
+  const selected=inert.createElement('div');selected.appendChild(range.cloneContents());
+  event.clipboardData.setData('text/html',selected.innerHTML);
+  event.clipboardData.setData('text/plain',text.join('\n'));event.preventDefault();
 });
 
-/* Snapshot overlay: clone visible rows and render a fresh PNG every toggle. */
+
+/* Snapshot overlay: render the selected logical rows afresh for every toggle. */
 let SNAPSHOT_TIME_ENABLED = SHOW_TIME;
 let SNAPSHOT_DATE_ENABLED = false;
 let SNAPSHOT_RENDER_TOKEN = 0;
@@ -1593,16 +1869,17 @@ let SNAPSHOT_PREVIEW_IMG = null;
 let SNAPSHOT_TIME_BTN = null;
 let SNAPSHOT_DATE_BTN = null;
 
-function buildSnapshotWrap(rowsToUse, includeTime, includeDate){
+async function buildSnapshotWrap(rowsToUse, includeTime, includeDate){
   const wrap = document.createElement("div");
   wrap.className = "export-wrap";
   if(!includeTime){
     wrap.classList.add("snapshot-hide-time");
   }
 
-  rowsToUse.forEach((r, idx)=>{
-    wrap.appendChild(createRowElement(r, includeTime, idx));
-  });
+  for(let idx=0;idx<rowsToUse.length;idx++){
+    wrap.appendChild(createRowElement(rowsToUse[idx],includeTime,idx));
+    if(idx%100===99) await yieldViewer();
+  }
 
   if(includeDate){
     const metaRow = document.createElement("div");
@@ -1630,7 +1907,7 @@ async function waitImages(root){
 }
 
 async function createSnapshotDataUrl(rowsToClone, includeTime, includeDate){
-  const wrap = buildSnapshotWrap(rowsToClone, includeTime, includeDate);
+  const wrap = await buildSnapshotWrap(rowsToClone, includeTime, includeDate);
   document.body.appendChild(wrap);
   await new Promise(r=>setTimeout(r,50));
   await waitImages(wrap);
@@ -1796,35 +2073,13 @@ elExportBtn.addEventListener("pointerup", async (e)=>{
 
   await new Promise(r => setTimeout(r, 30)); // ← ДОБАВИТЬ
 
-  const sel = window.getSelection();
-
-  if(!sel || sel.rangeCount===0 || sel.toString().trim()===""){
-    alert("Выделите текст сообщений");
-    return;
-  }
-
-  const range = sel.getRangeAt(0).cloneRange();
-
-  let node = range.startContainer;
-  if(node.nodeType===3) node=node.parentNode;
-  const startRow = node.closest(".row");
-  if(!startRow) return;
-
-  node = range.endContainer;
-  if(node.nodeType===3) node=node.parentNode;
-  const endRow = node.closest(".row");
-  if(!endRow) return;
-
-  const startIndex = Number(startRow.dataset.id);
-  const endIndex   = Number(endRow.dataset.id);
-  if(Number.isNaN(startIndex)||Number.isNaN(endIndex)) return;
-
-  const from = Math.min(startIndex,endIndex);
-  const to   = Math.max(startIndex,endIndex);
-
-  sel.removeAllRanges();
-
-  const rowsToClone = filtered.slice(from, to + 1);
+  rememberSelection();
+  if(!selectionRange){alert("Выделите текст сообщений");return;}
+  const from=Math.min(selectionRange.anchor.id,selectionRange.focus.id);
+  const to=Math.max(selectionRange.anchor.id,selectionRange.focus.id);
+  const rowsToClone=Array.from({length:to-from+1},(_,i)=>rowAt(from+i));
+  selectionRange=null;projectedSelection=null;
+  window.getSelection()?.removeAllRanges();
   openSnapshotOverlay(rowsToClone);
 });
 
