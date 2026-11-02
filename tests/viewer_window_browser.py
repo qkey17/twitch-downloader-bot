@@ -17,12 +17,12 @@ async def run(args):
     out=Path(args.output);out.mkdir(parents=True,exist_ok=True)
     baseline=subprocess.check_output(['git','show',args.baseline+':src/viewer_template.html'],cwd=ROOT).decode('utf-8')
     pixel='data:image/svg+xml;base64,'+base64.b64encode(b'<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"><rect width="22" height="22" fill="purple"/></svg>').decode()
-    for count in args.sizes:
+    for count in sorted(set(args.sizes+([0,1,2,10000] if args.scrubber else []))):
         rows=list(synthetic_rows(count))
         for mode in ('online','offline'):
             page=render_viewer_html(rows,'Synthetic title','Synthetic channel','https://www.twitch.tv/videos/123',created_at='2026-10-29T14:28:00Z',mode=mode,local_emotes={'Kappa':pixel},badge_images={'subscriber/1':pixel,'subscriber/2':pixel},captured_during_live=True)
             new_data=re.search(r'<script id="chat-data" type="application/json">(.*?)</script>',page,re.S).group(1)
-            old_data=json.dumps(dict(meta=json.loads(new_data)['meta'],rows=rows),ensure_ascii=False).replace('<','\\u003c')
+            old_data=new_data if args.scrubber else json.dumps(dict(meta=json.loads(new_data)['meta'],rows=rows),ensure_ascii=False).replace('<','\\u003c')
             for version,html in [('new',page),('base',baseline.replace('{{CHAT_DATA_JSON}}',old_data))]:
                 # Test-only instrumentation: same decoder/renderer, no production metrics globals.
                 html=html.replace('applyFilters();\n</script>','applyFilters().then(()=>{window.viewerMetrics.ready_ms=performance.now()});\n</script>')
@@ -94,6 +94,10 @@ function sample(){
 }requestAnimationFrame(sample);
 }
 """))
+                if args.scrubber:
+                    from viewer_scrubber_cases import check_scrubber
+                    await check_scrubber(call,evaluate,wait,out,args,errors,requests)
+                    return
                 for width in args.widths:
                     await call('Emulation.setDeviceMetricsOverride',dict(width=width,height=900,deviceScaleFactor=1,mobile=width<600))
                     for count in args.sizes:
@@ -199,7 +203,7 @@ function sample(){
                                         before_panel=await evaluate('visibleAnchor()')
                                         await evaluate('syncPanelState(true,false);true');await asyncio.sleep(.15);await wait('!windowBusy')
                                         pos_panel=await evaluate(f"[...elList.querySelectorAll('.row')].find(n=>+n.dataset.id==={before_panel['id']})?.getBoundingClientRect().top")
-                                        assert pos_panel is not None and abs(pos_panel-before_panel['top'])<3,(before_panel,pos_panel)
+                                        assert pos_panel is not None and abs(pos_panel-before_panel['top']-(await evaluate('viewportInset()'))+before_panel['inset'])<3,(before_panel,pos_panel)
                                         await evaluate('syncPanelState(false,false);true');await asyncio.sleep(.15);await wait('!windowBusy')
                                     # Resize and time toggle must retain the same visible row position.
                                     image_anchor=await evaluate('visibleAnchor()')
@@ -211,7 +215,7 @@ function sample(){
                                     await call('Emulation.setDeviceMetricsOverride',dict(width=390 if width==320 else 320,height=900,deviceScaleFactor=1,mobile=True))
                                     await asyncio.sleep(.2);await wait('!windowBusy')
                                     pos=await evaluate(f"[...elList.querySelectorAll('.row')].find(n=>+n.dataset.id==={before['id']})?.getBoundingClientRect().top")
-                                    assert pos is not None and abs(pos-before['top'])<3,(before,pos)
+                                    assert pos is not None and abs(pos-before['top']-(await evaluate('viewportInset()'))+before['inset'])<3,(before,pos)
                                     await call('Emulation.setDeviceMetricsOverride',dict(width=width,height=900,deviceScaleFactor=1,mobile=width<600));await asyncio.sleep(.2);await wait('!windowBusy')
                                     await evaluate('elToggleTime.click();true');await wait('!windowBusy')
                                     assert await evaluate("elList.querySelectorAll('.time').length")==0
@@ -230,5 +234,5 @@ function sample(){
         except subprocess.TimeoutExpired:process.kill();process.wait()
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--output',required=True);parser.add_argument('--baseline',default='1a089003b84fdb12c13d419aef16c01d53d8df83');parser.add_argument('--chrome',default=r'C:\Program Files\Google\Chrome\Application\chrome.exe');parser.add_argument('--sizes',nargs='+',type=int,default=[10000,25000,100000]);parser.add_argument('--widths',nargs='+',type=int,default=[320,390,1440])
+    parser=argparse.ArgumentParser();parser.add_argument('--output',required=True);parser.add_argument('--baseline',default='1a089003b84fdb12c13d419aef16c01d53d8df83');parser.add_argument('--chrome',default=r'C:\Program Files\Google\Chrome\Application\chrome.exe');parser.add_argument('--sizes',nargs='+',type=int,default=[10000,25000,100000]);parser.add_argument('--widths',nargs='+',type=int,default=[320,390,1440]);parser.add_argument('--scrubber',action='store_true',help='Logical navigation and gesture regressions, without performance matrix')
     asyncio.run(run(parser.parse_args()),loop_factory=asyncio.SelectorEventLoop)

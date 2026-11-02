@@ -26,13 +26,13 @@ test('search uses original full rows and case-insensitive text/user matching',()
 });
 test('new query cancels old full-chat scan before committing results',async()=>{
   let commits=0;
-  const ctx=vm.createContext({Uint32Array,performance,rows:Array.from({length:100000},(_,i)=>({user:'user',text:'row '+i})),FILTER_TOKEN:0,selectionGesture:{active:true},elQ:{value:'row'},elU:{value:''},elStat:{},window:{getSelection:()=>({removeAllRanges(){}}),scrollTo(){}},yieldViewer:()=>new Promise(r=>setTimeout(r,0)),showWindow:async()=>{commits++},ensureEmotesLoaded(){}});
+  const ctx=vm.createContext({Uint32Array,performance,rows:Array.from({length:100000},(_,i)=>({user:'user',text:'row '+i})),FILTER_TOKEN:0,selectionGesture:{active:true},elQ:{value:'row'},elU:{value:''},elStat:{},window:{getSelection:()=>({removeAllRanges(){}}),scrollTo(){}},yieldViewer:()=>new Promise(r=>setTimeout(r,0)),showWindow:async()=>{commits++},resetScrubber(){},ensureEmotesLoaded(){}});
   vm.runInContext(legacyAccess+'let filtered=null;const rowCount=()=>filtered===null?rows.length:filtered.length;'+part('function matches(', "document.addEventListener('scroll'"),ctx);
   const first=ctx.applyFilters();ctx.elQ.value='row 99999';const second=ctx.applyFilters();
   await Promise.all([first,second]);assert.equal(ctx.selectionGesture,null);assert.equal(commits,1);assert.equal(ctx.elStat.textContent,'💬 1 / 100000');
 });
 test('clearing query reuses payload without a second full-length array',async()=>{
-  const rows=[{text:'hello'}];const ctx=vm.createContext({rows,elQ:{value:''},elU:{value:''},elStat:{},window:{getSelection:()=>({removeAllRanges(){}}),scrollTo(){}},showWindow:async()=>{},ensureEmotesLoaded(){}});
+  const rows=[{text:'hello'}];const ctx=vm.createContext({rows,elQ:{value:''},elU:{value:''},elStat:{},window:{getSelection:()=>({removeAllRanges(){}}),scrollTo(){}},showWindow:async()=>{},resetScrubber(){},ensureEmotesLoaded(){}});
   vm.runInContext('let filtered=null,FILTER_TOKEN=0;const rowCount=()=>filtered===null?rows.length:filtered.length;'+part('async function applyFilters(', "document.addEventListener('scroll'"),ctx);
   await ctx.applyFilters();assert.equal(vm.runInContext('filtered',ctx),null);
   assert.equal(ctx.elStat.textContent,'💬 1 / 1');
@@ -54,4 +54,75 @@ test('PNG selection keeps only range/indices, decoding one requested row at a ti
   vm.runInContext(part('function snapshotRows(', 'async function buildSnapshotWrap('),ctx);
   const selected=ctx.snapshotRows(0,1);assert.equal(decoded,0);assert.equal(selected.length,2);
   ctx.filtered=null;assert.equal(selected.at(0),'c');assert.equal(selected.at(1),'a');assert.equal(decoded,2);
+});
+
+function sliderContext(count=10000){
+  const events={},frames=[],attributes={},times=[{},{}],percents=[{},{}];let mounted=0,activeBuilders=0,maxBuilders=0;
+  const ctx=vm.createContext({count,FILTER_TOKEN:0,FILTERING:false,windowBusy:false,CHUNK:800,averageHeight:40,stableAnchor:null,scrollIntent:0,resizeAnchor:null,
+    MOBILE_MQ:{matches:true,addEventListener(){}},clampNumber:(n,a,b)=>Math.min(b,Math.max(a,n)),
+    rowCount:()=>ctx.count,rowAt:i=>({t:ctx.time ?? '01 : 42 : 15'}),
+    requestAnimationFrame:fn=>{frames.push(fn);return frames.length},yieldViewer:async()=>{},
+    elScrubber:{style:{setProperty(k,v){attributes[k]=v}},setAttribute(k,v){attributes[k]=v},
+      querySelectorAll:s=>s==='.scrub-time'?times:percents,
+      querySelector:()=>({getBoundingClientRect:()=>({left:0,width:300})}),
+      addEventListener:(name,fn)=>events[name]=fn,hasPointerCapture:()=>false,releasePointerCapture(){},setPointerCapture(){}},
+    elList:{getBoundingClientRect:()=>({top:0}),querySelector:s=>{mounted=+s.match(/\d+/)[0];return {getBoundingClientRect:()=>({top:75,bottom:100})}}},
+    getComputedStyle:()=>({paddingTop:'75'}),heightBefore:()=>0,viewportInset:()=>75,innerHeight:900,
+    document:{documentElement:{scrollHeight:100000}},window:{scrollY:0,scrollTo(){},scrollBy(){}},
+    visibleAnchor:()=>({id:mounted,top:75,inset:75}),scheduleWindow(){},
+    showWindow:async b=>{activeBuilders++;maxBuilders=Math.max(maxBuilders,activeBuilders);await new Promise(r=>setTimeout(r,1));activeBuilders--}
+  });
+  vm.runInContext(part('/* Logical-index mobile navigation.', '/* Selection endpoints belong')+`;globalThis.slider={scrubTarget,scrubPercent,scrubTime,setScrubIndex,requestScrub,resetScrubber,sync:scheduleScrubSync,get state(){return {index:scrubIndex,active:scrubActive(),running:scrubRunning,pending:scrubPending,gesture:scrubGesture}}}`,ctx);
+  return {ctx,slider:ctx.slider,events,attributes,times,percents,get maxBuilders(){return maxBuilders},
+    async drain(){for(let i=0;i<100;i++){frames.splice(0).forEach(fn=>fn());await new Promise(r=>setTimeout(r,2));if(!frames.length && !ctx.slider.state.active)return;}throw Error('Slider did not settle');}};
+}
+test('logical slider clamps endpoints, rounds indexes and handles empty/single sets',()=>{
+  const {slider:s}=sliderContext();
+  for(const n of [0,1,10000,25000,100000]){
+    assert.equal(s.scrubTarget(-1,n),0);assert.equal(s.scrubTarget(2,n),Math.max(0,n-1));
+    assert.equal(s.scrubPercent(0,n),0);if(n>1)assert.equal(s.scrubPercent(n-1,n),100);
+    assert.equal(s.scrubTarget(.63,n),n>1?Math.round(.63*(n-1)):0);
+  }
+  assert.equal(s.scrubTime('01 : 42 : 15'),'01:42:15');
+  for(const invalid of [undefined,null,12,'','2026-01-01','01:99:00','<img src=x>'])assert.equal(s.scrubTime(invalid),'—');
+});
+test('slider text and ARIA describe the filtered logical row, neutral when empty',()=>{
+  const h=sliderContext(3);h.slider.setScrubIndex(1);
+  assert.equal(h.attributes['aria-valuenow'],'50');assert.equal(h.times[0].textContent,'01:42:15');
+  assert.equal(h.percents[1].textContent,'50%');assert.equal(h.attributes['aria-valuetext'],'01:42:15, 50%, сообщение 2 из 3');
+  h.ctx.count=0;h.slider.setScrubIndex(0);assert.equal(h.attributes['aria-disabled'],'true');assert.equal(h.times[0].textContent,'—');
+  h.ctx.count=1;h.ctx.time='invalid';h.slider.setScrubIndex(99);assert.equal(h.slider.state.index,0);assert.equal(h.times[1].textContent,'—');
+});
+test('rapid requests coalesce to latest index with one serial builder',async()=>{
+  const h=sliderContext(100000);for(let i=0;i<500;i++)h.slider.requestScrub(i*173);
+  await h.drain();assert.equal(h.slider.state.index,499*173);assert.equal(h.maxBuilders,1);
+});
+test('in-flight transition is superseded and filter reset cancels old indices',async()=>{
+  const h=sliderContext();h.slider.requestScrub(9000);
+  // Begin build, then request a different final row before the builder resolves.
+  const first=h.drain();h.slider.requestScrub(100);await first;
+  assert.equal(h.slider.state.index,100);assert.equal(h.maxBuilders,1);
+  h.slider.requestScrub(8000);h.ctx.FILTER_TOKEN++;h.ctx.FILTERING=true;h.slider.resetScrubber();h.ctx.count=1;
+  await h.drain();assert.equal(h.slider.state.index,0);assert.equal(h.slider.state.active,false);
+});
+test('pointer cancellation/lost capture and keyboard have bounded final targets',async()=>{
+  const h=sliderContext(10000),e={pointerId:1,button:0,isPrimary:true,clientX:120,preventDefault(){},stopPropagation(){}};
+  h.events.pointerdown(e);assert.ok(h.slider.state.gesture);
+  h.events.pointermove({...e,clientX:260});const chosen=h.slider.state.index;
+  h.events.pointercancel({...e,type:'pointercancel'});await h.drain();assert.equal(h.slider.state.index,chosen);assert.equal(h.slider.state.gesture,null);
+  h.events.keydown({...e,key:'End'});await h.drain();assert.equal(h.slider.state.index,9999);
+  h.events.keydown({...e,key:'Home'});await h.drain();assert.equal(h.slider.state.index,0);
+  h.events.keydown({...e,key:'ArrowRight'});await h.drain();assert.equal(h.slider.state.index,1);
+});
+
+test('a release over the slider without its own gesture reaches existing selection cleanup',()=>{
+  const h=sliderContext();let stopped=false;
+  h.events.pointerup({pointerId:5,type:'pointerup',stopPropagation(){stopped=true}});
+  assert.equal(stopped,false);
+});
+
+test('chosen visible row near the clamped bottom remains stable until actual scroll',async()=>{
+  const h=sliderContext(20);h.ctx.window.scrollY=1;h.ctx.document.documentElement.scrollHeight=900;
+  h.slider.requestScrub(18);await h.drain();assert.equal(h.slider.state.index,18);
+  h.ctx.window.scrollY=2;h.slider.sync();await h.drain();assert.equal(h.slider.state.index,19);
 });
