@@ -154,7 +154,7 @@ class ViewerPreviewLayoutTests(unittest.TestCase):
     def test_mobile_live_warning_and_expanded_metadata_are_scoped(self):
         for width in (320,390,900):
             self.assertEqual('hidden',self.responsive_properties('.panel-details',width)['overflow'])
-            self.assertEqual('grid',self.responsive_properties('header.is-expanded .panel-stats',width)['display'])
+            self.assertEqual('flex',self.responsive_properties('header.is-expanded .panel-stats',width)['display'])
             channel=self.responsive_properties('header.is-expanded #mobileChannel',width)
             self.assertEqual(('1 / -1','normal','anywhere'),(channel['grid-column'],channel['white-space'],channel['overflow-wrap']))
             selectors=['header .panel-stats','header .live-capture-warning','header .controls']
@@ -167,9 +167,10 @@ class ViewerPreviewLayoutTests(unittest.TestCase):
             self.assertEqual('flex',self.responsive_properties('.fast-scrubber',width)['display'])
             self.assertEqual('44px',self.responsive_properties('.fast-scrubber',width)['min-height'])
             self.assertEqual('0',self.responsive_properties('header.is-compact',width)['gap'])
-            self.assertEqual('block',self.responsive_properties('.panel-handle',width)['display'])
-            self.assertEqual('block',self.responsive_properties('header::after',width)['display'])
-            self.assertEqual('38px',self.responsive_properties('header::after',width)['height'])
+            tab=self.responsive_properties('.panel-handle',width)
+            self.assertEqual('flex',tab['display'])
+            self.assertEqual(('152px','44px','69%'),(tab['width'],tab['height'],tab['left']))
+            self.assertEqual({},self.responsive_properties('header::after',width))
         for width in (901,1440):
             self.assertEqual('none',self.responsive_properties('.fast-scrubber',width)['display'])
             self.assertEqual('none',self.responsive_properties('.panel-handle',width)['display'])
@@ -189,6 +190,32 @@ class ViewerPreviewLayoutTests(unittest.TestCase):
                         (self.properties('.scrub-label-on-fill')['color'],self.properties('.scrub-fill')['background'])]:
             a,b=sorted((luminance(text),luminance(bg)))
             self.assertGreaterEqual((b+.05)/(a+.05),4.5)
+
+    def test_mobile_metadata_keeps_date_and_timezone_in_one_group(self):
+        for width in (320,390):
+            date=self.responsive_properties('#streamDate',width)
+            self.assertEqual(('inline-flex','6px'),(date['display'],date['gap']))
+            self.assertEqual('nowrap',self.responsive_properties('.panel-stats .meta-value',width)['white-space'])
+            self.assertEqual('wrap',self.responsive_properties('header.is-expanded .panel-stats',width)['flex-wrap'])
+        self.assertEqual({},self.responsive_properties('.panel-stats .meta-value',1440))
+
+    def test_mobile_track_has_one_clip_and_inverted_palette(self):
+        self.assertEqual('#30313e',self.properties('.scrub-track')['background'])
+        self.assertEqual('#a0a3b7',self.properties('.scrub-fill')['background'])
+        self.assertEqual('hidden',self.properties('.scrub-track')['overflow'])
+        self.assertNotIn('border',self.properties('.scrub-track'))
+        self.assertEqual('18px',self.properties('.scrub-thumb')['width'])
+        self.assertIn('rgba',self.properties('.scrub-thumb')['background'])
+
+    def test_mobile_focus_is_visible_without_glow_or_pressed_geometry_changes(self):
+        for selector in ['header .vod-card:active','header .meta-buttons button:active']:
+            props=self.responsive_properties(selector,390)
+            self.assertEqual(('none','none'),(props['transform'],props['box-shadow']))
+        for selector in ['header .vod-card:focus-visible','header .controls input:focus-visible',
+                         'header .meta-buttons button:focus-visible','.panel-handle:focus-visible']:
+            focus=self.responsive_properties(selector,390)
+            self.assertEqual(('2px solid #b3adff','0','transparent'),(focus['outline'],focus['outline-offset'],focus['border-color']))
+        self.assertEqual('visible',self.responsive_properties('header.is-expanded:not(.is-panel-animating) .panel-details',390)['overflow'])
 
 
 if __name__ == '__main__':

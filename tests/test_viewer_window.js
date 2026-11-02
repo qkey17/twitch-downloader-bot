@@ -6,6 +6,7 @@ const path=require('node:path');
 const html=fs.readFileSync(path.join(__dirname,'../src/viewer_template.html'),'utf8');
 const script=html.split('<script>')[1].split('</script>')[0];
 const legacyAccess="const COMPACT_DATA=false;"+script.slice(script.indexOf('function messageUser('),script.indexOf('const MODE ='));
+const metadataText=(element,symbol,value)=>{element.textContent=symbol+' '+value;};
 function part(start,end){return script.slice(script.indexOf(start),script.indexOf(end));}
 test('embedded JS is valid and payload is not eagerly decorated',()=>{
   new vm.Script(script);
@@ -27,12 +28,14 @@ test('search uses original full rows and case-insensitive text/user matching',()
 test('new query cancels old full-chat scan before committing results',async()=>{
   let commits=0;
   const ctx=vm.createContext({Uint32Array,performance,rows:Array.from({length:100000},(_,i)=>({user:'user',text:'row '+i})),FILTER_TOKEN:0,selectionGesture:{active:true},elQ:{value:'row'},elU:{value:''},elStat:{},window:{getSelection:()=>({removeAllRanges(){}}),scrollTo(){}},yieldViewer:()=>new Promise(r=>setTimeout(r,0)),showWindow:async()=>{commits++},resetScrubber(){},ensureEmotesLoaded(){}});
+  ctx.setMetadataGroup=metadataText;
   vm.runInContext(legacyAccess+'let filtered=null;const rowCount=()=>filtered===null?rows.length:filtered.length;'+part('function matches(', "document.addEventListener('scroll'"),ctx);
   const first=ctx.applyFilters();ctx.elQ.value='row 99999';const second=ctx.applyFilters();
   await Promise.all([first,second]);assert.equal(ctx.selectionGesture,null);assert.equal(commits,1);assert.equal(ctx.elStat.textContent,'💬 1 / 100000');
 });
 test('clearing query reuses payload without a second full-length array',async()=>{
   const rows=[{text:'hello'}];const ctx=vm.createContext({rows,elQ:{value:''},elU:{value:''},elStat:{},window:{getSelection:()=>({removeAllRanges(){}}),scrollTo(){}},showWindow:async()=>{},resetScrubber(){},ensureEmotesLoaded(){}});
+  ctx.setMetadataGroup=metadataText;
   vm.runInContext('let filtered=null,FILTER_TOKEN=0;const rowCount=()=>filtered===null?rows.length:filtered.length;'+part('async function applyFilters(', "document.addEventListener('scroll'"),ctx);
   await ctx.applyFilters();assert.equal(vm.runInContext('filtered',ctx),null);
   assert.equal(ctx.elStat.textContent,'💬 1 / 1');
@@ -58,7 +61,7 @@ test('PNG selection keeps only range/indices, decoding one requested row at a ti
 
 function sliderContext(count=10000){
   const events={},frames=[],attributes={},times=[{style:{}},{style:{}}],percents=[{},{}];let mounted=0,activeBuilders=0,maxBuilders=0;
-  const ctx=vm.createContext({count,filtered:null,meta:{duration_seconds:21088},FILTER_TOKEN:0,FILTERING:false,windowBusy:false,CHUNK:800,averageHeight:40,stableAnchor:null,scrollIntent:0,resizeAnchor:null,
+  const ctx=vm.createContext({count,filtered:null,meta:{duration_seconds:21088},FILTER_TOKEN:0,FILTERING:false,windowBusy:false,panelAnimating:false,CHUNK:800,averageHeight:40,stableAnchor:null,scrollIntent:0,resizeAnchor:null,
     MOBILE_MQ:{matches:true,addEventListener(){}},clampNumber:(n,a,b)=>Math.min(b,Math.max(a,n)),
     rowCount:()=>ctx.count,rowAt:i=>({t:ctx.time ?? '01 : 42 : 15'}),
     requestAnimationFrame:fn=>{frames.push(fn);return frames.length},yieldViewer:async()=>{},
@@ -135,9 +138,24 @@ test('duration and timestamps normalize unlimited hours without inventing unknow
 test('physical end uses full duration only without filters, restores time after scrolling up',()=>{
   const h=sliderContext(20);h.ctx.document.documentElement.scrollHeight=1000;h.ctx.window.scrollY=100;
   h.slider.setScrubIndex(18);assert.equal(h.times[0].textContent,'05:51:28 / 05:51:28');
+  assert.equal(h.attributes['--scrub-progress'],'100.0000%');assert.equal(h.slider.state.index,18);
   h.ctx.window.scrollY=95;h.slider.setScrubIndex(18);assert.equal(h.times[0].textContent,'01:42:15 / 05:51:28');
+  assert.notEqual(h.attributes['--scrub-progress'],'100.0000%');
   h.ctx.filtered=[1,2];h.ctx.window.scrollY=100;h.slider.setScrubIndex(1);assert.equal(h.times[0].textContent,'01:42:15 / 05:51:28');
   h.ctx.meta.duration_seconds=null;h.slider.setScrubIndex(1);assert.equal(h.times[0].textContent,'01:42:15 / —');
+  h.ctx.filtered=null;h.ctx.count=1;h.slider.setScrubIndex(0);
+  assert.equal(h.attributes['--scrub-progress'],'100.0000%');assert.equal(h.attributes['aria-valuenow'],'0');assert.equal(h.attributes['aria-disabled'],'true');
+});
+test('metadata groups preserve plain/export text and treat untrusted values as text',()=>{
+  const doc={createElement:()=>({setAttribute(){}}),createTextNode:text=>({textContent:text})};
+  const el={replaceChildren(...nodes){this.children=nodes;}};
+  const ctx=vm.createContext({document:doc});
+  vm.runInContext(part('function setMetadataGroup(', 'const DEFAULT_COLORS'),ctx);
+  const value='29 окт 2026 14:28 UTC <img onerror=x>';
+  ctx.setMetadataGroup(el,'📅',value);
+  assert.equal(el.children.map(n=>n.textContent).join(''),'📅 '+value);
+  assert.equal(el.children[0].className,'meta-symbol');assert.equal(el.children[2].className,'meta-value');
+  assert.equal(el.children[2].innerHTML,undefined);
 });
 test('relative gesture starts anywhere without jumping and clamps movement from the original position',async()=>{
   const h=sliderContext(10001),e={pointerId:1,button:0,isPrimary:true,clientX:50,preventDefault(){},stopPropagation(){}};
