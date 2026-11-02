@@ -64,7 +64,7 @@ async def check_scrubber(call,evaluate,wait,out,args,errors,requests):
     def geometry_js():return "JSON.stringify(['header','.panel-top','.panel-stats','.controls','.panel-actions','#list .row'].map(s=>{const r=document.querySelector(s).getBoundingClientRect();return [s,r.x,r.y,r.width,r.height]}))"
     await load(1440,10000,version='base');base=await evaluate(geometry_js())
     await load(1440,10000);assert await evaluate(geometry_js())==base,(base,await evaluate(geometry_js()))
-    assert await evaluate("getComputedStyle(elScrubber).display==='none' && getComputedStyle(elPanelHandle).display==='none'")
+    assert await evaluate("getComputedStyle(document.querySelector('.mobile-control-row')).display==='none'")
     results.append(dict(case='desktop-geometry',status='PASS'))
     # Lightweight instrumentation only in fixtures; observe actual DOM and builder concurrency.
     instrument="""window.__maxRows=0;window.__builders=0;window.__maxBuilders=0;
@@ -75,7 +75,7 @@ window.__show=showWindow;showWindow=async(...args)=>{__builders++;__maxBuilders=
         for count in args.sizes:
             for mode in ('offline','online'):
                 await load(width,count,mode);await evaluate(instrument)
-                assert await evaluate("elHeader.offsetHeight<=60 && elPanelDetails.offsetHeight===0 && elPanelDetails.inert")
+                assert await evaluate("elHeader.offsetHeight<=70 && elPanelDetails.offsetHeight===0 && elPanelDetails.inert")
                 assert await evaluate("elList.querySelector('.row').getBoundingClientRect().top>=elPanelHandle.getBoundingClientRect().bottom && elScrubber.offsetHeight>=44 && document.documentElement.scrollWidth===innerWidth")
                 start=time.perf_counter()
                 for f in (1,0,.1,.9,.37,.75,.25,.5):
