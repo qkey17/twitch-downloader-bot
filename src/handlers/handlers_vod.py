@@ -113,7 +113,7 @@ def _html_button_url(html_ref: str | None) -> str | None:
 
 
 async def _edit_progress_message_with_card(context, chat_id: int, message_id: int, item: dict, html_url: str | None = None,
-                                         *, current=lambda: True, ui_lock=None, photo=False, on_photo=None, ready=None, owner_id=None):
+                                         *, current=lambda: True, ui_lock=None, photo=False, on_photo=None, ready=None, owner_id=None, fresh=False):
     from src.ui.result_preview import resolve_preview, render_card, caption_fits, cleanup_card
     text, kb = _build_card(item)
     if not text:
@@ -131,6 +131,20 @@ async def _edit_progress_message_with_card(context, chat_id: int, message_id: in
     final_kb = InlineKeyboardMarkup([row])
     from src.ui.html_file_action import keyboard
     final_kb = keyboard(context, owner_id, chat_id, ready, final_kb)
+
+    if fresh:
+        # Previously ready HTML: send the final form once, never edit the offer
+        # or upgrade the new result from text to photo after sending it.
+        url = await resolve_preview(context, item) if current() and caption_fits(text) else None
+        async with ui_lock or nullcontext():
+            shown = await render_card(context.bot, chat_id, text, final_kb, url,
+                                      current=current, file_context=context)
+            if shown is not None and on_photo:
+                on_photo()
+        if shown is not None:
+            from src.ui.result_preview import CardMessage
+            await cleanup_card(context.bot, chat_id, CardMessage(shown.message_id, shown.photo, message_id))
+        return shown is not None
 
     # Make HTML available BEFORE any optional Twitch lookup.
     if not photo:

@@ -340,7 +340,7 @@ async def show_ready(message, context, user_id, vod_id, *, current=lambda: True,
         item['thumbnail_preview_url'] = thumbnail_url
     return await vod._edit_progress_message_with_card(context, message.chat_id, message.message_id, item, ready['html_ref'],
         current=lambda: context.user_data.get('ready_preview_request') is request and current(),
-        ready=ready, owner_id=user_id, ui_lock=ui_lock, photo=bool(getattr(message, 'photo', False)) if photo is None else photo, on_photo=on_photo)
+        ready=ready, owner_id=user_id, ui_lock=ui_lock, photo=bool(getattr(message, 'photo', False)) if photo is None else photo, on_photo=on_photo, fresh=True)
 
 
 async def legacy_open_callback(update, context):

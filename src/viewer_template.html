@@ -1313,17 +1313,19 @@ if(elVodHeading && "ResizeObserver" in window){
 }
 
 function fmtStreamStart(iso){
-  if(!iso) return null;
-  try{
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return null;
-    const y = d.getUTCFullYear();
-    const m = String(d.getUTCMonth()+1).padStart(2,"0");
-    const dd = String(d.getUTCDate()).padStart(2,"0");
-    const hh = String(d.getUTCHours()).padStart(2,"0");
-    const mm = String(d.getUTCMinutes()).padStart(2,"0");
-    return `${y}-${m}-${dd} ${hh}:${mm} UTC`;
-  }catch(e){ return null; }
+  if(typeof iso !== "string") return null;
+  iso = iso.trim();
+  const parts = /^(\d{4})-(\d{2})-(\d{2})(?:[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?)?(Z|[+-]\d{2}:?\d{2})?$/.exec(iso);
+  if(!parts) return null;
+  const [, year, month, day, hour="00", minute="00", second="00", zone="Z"] = parts;
+  const y=Number(year), m=Number(month), d=Number(day);
+  const leap=y%4===0 && (y%100!==0 || y%400===0);
+  const days=[31,leap?29:28,31,30,31,30,31,31,30,31,30,31];
+  if(y<1 || m<1 || m>12 || d<1 || d>days[m-1] || Number(hour)>23 || Number(minute)>59 || Number(second)>59) return null;
+  const date = new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}${zone}`);
+  if(Number.isNaN(date.getTime())) return null;
+  const months=["янв","фев","мар","апр","май","июн","июл","авг","сен","окт","ноя","дек"];
+  return `${date.getUTCDate()} ${months[date.getUTCMonth()]} ${String(date.getUTCFullYear()).padStart(4,"0")} ${String(date.getUTCHours()).padStart(2,"0")}:${String(date.getUTCMinutes()).padStart(2,"0")} UTC`;
 }
 const streamStart = fmtStreamStart(meta.created_at);
 if(streamStart){
@@ -1611,7 +1613,7 @@ function buildSnapshotWrap(rowsToUse, includeTime, includeDate){
     const dateIcon = document.createElement("span");
     dateIcon.textContent = "📅";
     const dateText = document.createElement("span");
-    dateText.textContent = elStreamDate.textContent || "";
+    dateText.textContent = streamStart || "—";
 
     metaRight.appendChild(dateIcon);
     metaRight.appendChild(dateText);

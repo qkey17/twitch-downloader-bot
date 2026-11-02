@@ -51,6 +51,14 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
             return await self.by_id[kw.pop('message_id')].edit_text(**{k:v for k,v in kw.items() if k != 'chat_id'})
         bot.edit_message_media = AsyncMock(side_effect=media)
         bot.send_message = AsyncMock(side_effect=send)
+        async def send_photo(**kw):
+            self.next_message_id += 1
+            msg = self.message(self.next_message_id)
+            msg.photo=[object()]
+            msg.caption, msg.keyboard=kw['caption'],kw.get('reply_markup')
+            self.events.append(('send_photo',msg.message_id))
+            return msg
+        bot.send_photo = AsyncMock(side_effect=send_photo)
         bot.edit_message_text = AsyncMock(side_effect=edit)
         bot.delete_message = AsyncMock()
         self.lookup = AsyncMock(return_value=URL)
@@ -121,7 +129,7 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
                 await self.back(message, view)
                 session = self.browser._sessions[view.session_id]
                 restored = self.by_id[session.message_id]
-                self.assertIn('VODs канала', restored.text)
+                self.assertIn('Время указано по UTC', restored.text)
                 self.assertIsNotNone(restored.keyboard)
                 self.context.bot.send_message.reset_mock()
 
@@ -227,31 +235,28 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
                 restored = await self.back(message, view)
                 self.assertNotEqual(20, restored.message_id)
 
-    async def test_photo_open_edits_media_once_and_records_history_only_on_open(self):
-        with patch.object(vod.config, 'HISTORY_ENABLED', True), patch.object(vod.db, 'add_user_history') as history:
-            message, view, choice = await self.offer()
-            history.assert_not_called()
+    async def test_photo_open_sends_once_and_records_history_only_on_open(self):
+        with patch.object(vod.config,'HISTORY_ENABLED',True),patch.object(vod.db,'add_user_history') as history:
+            message,view,choice=await self.offer()
             self.context.bot.edit_message_media.reset_mock()
-            await self.act(choice, 'open', message)
-            await self.act(choice, 'open', message)
-            await self.act(choice, 'regen', message)
-            history.assert_called_once_with(7, 1)
-        self.context.bot.edit_message_media.assert_awaited_once()
-        row = message.keyboard.inline_keyboard[0]
-        self.assertEqual([[CHAT_GENERIC], ['🔗 Ссылка на VOD']], [[b.text for b in r] for r in message.keyboard.inline_keyboard])
-        self.assertEqual(self.available['123456789']['html_ref'], row[0].url)
-        self.assertNotIn(view.session_id, self.browser._sessions)
-        self.context.bot.send_message.assert_not_awaited(); self.runner.assert_not_awaited()
+            await self.act(choice,'open',message)
+            await self.act(choice,'open',message)
+            await self.act(choice,'regen',message)
+            history.assert_called_once_with(7,1)
+        self.context.bot.send_photo.assert_awaited_once()
+        self.context.bot.edit_message_media.assert_not_awaited()
+        rows=self.context.bot.send_photo.await_args.kwargs['reply_markup'].inline_keyboard
+        self.assertEqual([[CHAT_GENERIC],['🔗 Ссылка на VOD']],[[b.text for b in r] for r in rows])
+        self.assertNotIn(view.session_id,self.browser._sessions)
+        self.context.bot.send_message.assert_not_awaited();self.runner.assert_not_awaited()
 
-    async def test_open_photo_rejection_delivers_bound_terminal_text_links(self):
-        message, view, choice = await self.offer()
-        self.context.bot.edit_message_media.side_effect = BadRequest('SECRET')
-        await self.act(choice, 'open', message)
-        new_id = self.context.bot.send_message.await_args
-        self.assertEqual(self.available['123456789']['html_ref'], new_id.kwargs['reply_markup'].inline_keyboard[0][0].url)
-        self.assertNotIn(view.session_id, self.browser._sessions)
+    async def test_open_photo_rejection_delivers_fresh_terminal_text_links(self):
+        message,view,choice=await self.offer()
+        self.context.bot.send_photo.side_effect=BadRequest('synthetic')
+        await self.act(choice,'open',message)
         self.context.bot.send_message.assert_awaited_once()
-        self.context.bot.delete_message.assert_awaited_once_with(chat_id=10, message_id=20)
+        self.context.bot.delete_message.assert_awaited_once_with(chat_id=10,message_id=20)
+        self.assertNotIn(view.session_id,self.browser._sessions)
 
     async def test_regen_photo_hands_new_progress_id_to_existing_runner_once(self):
         message, view, choice = await self.offer()
@@ -334,7 +339,7 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
             new = self.browser._sessions[latest.session_id].list_render[0]
             release.set(); await asyncio.wait_for(selecting, 1)
             self.context.bot.edit_message_media.assert_not_awaited()
-            self.assertIn('VODs канала', new.text)
+            self.assertIn('Время указано по UTC', new.text)
             self.assertTrue(self.browser.is_current(latest))
         finally:
             release.set(); await asyncio.wait_for(selecting, 1)

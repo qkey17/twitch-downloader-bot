@@ -43,7 +43,7 @@ class ListTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((count+4)//5, view.page_count)
                 text, kb = build_list(view)
                 self.assertNotIn('+', text)
-                self.assertIn(f'Доступные VODs канала: {count}', text)
+                self.assertEqual('🟣 Channel\nВремя указано по UTC' + ('\nУ канала нет опубликованных VODs.' if count==0 else ''),text)
                 self.assertEqual(1,text.count('UTC'))
                 self.assertEqual(max(1, (count+99)//100), self.fetch_vods.await_count)
                 if count:
@@ -51,7 +51,7 @@ class ListTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(min(count, 5)+(count > 5), len(rows))
                     for row in rows[:-1] if count > 5 else rows:
                         self.assertEqual(1, len(row))
-                        self.assertEqual('2026-01-02 03:04', row[0].text)
+                        self.assertEqual('2 янв 2026 03:04', row[0].text)
                         self.assertIn(':info:', row[0].callback_data)
                     if count > 5:
                         self.assertEqual(f'Стр. 1/{view.page_count}', rows[-1][0].text)
@@ -194,10 +194,10 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         await chat.chat_callback(self.update(regen, prompt, owner=8), self.context)
         self.runner.assert_not_awaited()
         await chat.chat_callback(self.update(open_data, prompt), self.context)
-        self.context.bot.edit_message_text.assert_awaited_once()
-        self.context.bot.send_message.assert_not_awaited()
+        self.context.bot.send_message.assert_awaited_once()
+        self.context.bot.edit_message_text.assert_not_awaited()
         await chat.chat_callback(self.update(open_data, prompt), self.context)
-        self.context.bot.edit_message_text.assert_awaited_once()
+        self.context.bot.send_message.assert_awaited_once()
         await chat.chat_callback(self.update(regen, prompt), self.context)
         await chat.chat_callback(self.update(regen, prompt), self.context)
         self.runner.assert_not_awaited()  # Terminal text consumes the old actions too.
@@ -233,12 +233,12 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(chat.vod.config, 'HISTORY_ENABLED', True), patch.object(chat.vod.db, 'add_user_history') as history:
             await chat.legacy_open_callback(self.update('ui:result:open:123456789'), self.context)
             history.assert_called_once_with(7, 1)
-        options = self.context.bot.edit_message_text.await_args.kwargs
+        options = self.context.bot.send_message.await_args.kwargs
         self.assertEqual('🔗 Ссылка на VOD', options['reply_markup'].inline_keyboard[-1][0].text)
         urls = [b.url for row in options['reply_markup'].inline_keyboard for b in row]
         self.assertEqual([self.ready_result()['html_ref'], 'https://www.twitch.tv/videos/123456789'], urls)
-        self.assertEqual((10, 20), (options['chat_id'], options['message_id']))
-        self.context.bot.send_message.assert_not_awaited()
+        self.assertEqual(10,options['chat_id']); self.assertNotIn('message_id',options)
+        self.context.bot.edit_message_text.assert_not_awaited()
         self.metadata.assert_not_awaited()
         self.runner.assert_not_awaited()
         self.assertNotIn('vod_pending', self.context.user_data)
@@ -255,7 +255,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         self.metadata.assert_not_awaited()
         self.runner.assert_not_awaited()
 
-    async def test_list_open_edits_current_card_without_new_message(self):
+    async def test_list_open_sends_fresh_card_without_editing_offer(self):
         self.browser = VodListBrowser()
         self.app.bot_data[channel._STORE_KEY] = self.browser
         view = await self.browser.open(self.http, 7, 'channel', 10, 20)
@@ -264,10 +264,10 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         await channel.channel_vods_callback(self.update(callback(view, 'select', 0), message), self.context)
         data = message.edit_text.await_args.kwargs['reply_markup'].inline_keyboard[0][0].callback_data
         await chat.chat_callback(self.update(data, message), self.context)
-        self.context.bot.edit_message_text.assert_awaited_once()
-        self.assertEqual(20, self.context.bot.edit_message_text.await_args.kwargs['message_id'])
+        self.context.bot.send_message.assert_awaited_once()
+        self.assertNotIn('message_id',self.context.bot.send_message.await_args.kwargs)
         message.reply_text.assert_not_awaited()
-        self.context.bot.send_message.assert_not_awaited()
+        self.context.bot.edit_message_text.assert_not_awaited()
 
     async def test_ready_disappeared_does_not_start_processing(self):
         self.ready.return_value = self.ready_result()
@@ -280,11 +280,13 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         self.runner.assert_not_awaited()
         self.context.bot.send_message.assert_not_awaited()
 
-    async def test_edit_rejected_falls_back_but_unchanged_message_does_not(self):
+    async def test_fresh_delivery_is_independent_of_offer_edit_errors(self):
         self.ready.return_value = self.ready_result()
         self.context.bot.edit_message_text.side_effect = BadRequest('Message is not modified')
         await chat.legacy_open_callback(self.update('ui:result:open:123456789'), self.context)
-        self.context.bot.send_message.assert_not_awaited()
+        self.context.bot.edit_message_text.assert_not_awaited()
+        self.context.bot.send_message.assert_awaited_once()
+        self.context.bot.send_message.reset_mock()
         self.context.bot.edit_message_text.side_effect = BadRequest('Message cannot be edited')
         await chat.legacy_open_callback(self.update('ui:result:open:123456789', self.message(21)), self.context)
         self.context.bot.send_message.assert_awaited_once()
@@ -293,7 +295,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         self.ready.return_value = self.ready_result() | {'html_ref': 'file:///private/chat.html'}
         with patch.object(chat.vod, 'HTML_PUBLISH_MODE', 'local'):
             await chat.legacy_open_callback(self.update('ui:result:open:123456789'), self.context)
-        buttons = self.context.bot.edit_message_text.await_args.kwargs['reply_markup'].inline_keyboard[0]
+        buttons = self.context.bot.send_message.await_args.kwargs['reply_markup'].inline_keyboard[0]
         self.assertEqual(['https://www.twitch.tv/videos/123456789'], [b.url for b in buttons])
 
     async def test_channel_without_html_starts_in_existing_message(self):

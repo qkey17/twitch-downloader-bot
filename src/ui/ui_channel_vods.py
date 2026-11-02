@@ -56,9 +56,7 @@ def build_channel_vod_card(view: BrowseView) -> tuple[str, InlineKeyboardMarkup 
             f'🆔 <code>{vod.id}</code>',
         ))
     if view.channel is not None:
-        lines.append(f'📚 Доступные VODs канала: {view.count_label}')
-    if view.channel is not None:
-        lines.append('Время VODs указано в UTC.')
+        lines.append('Время указано по UTC')
     if view.status != 'ready':
         lines.append(_MESSAGES.get(view.status, _MESSAGES['api_error']))
         if view.status == 'api_error' and view.reason == 'authorization':

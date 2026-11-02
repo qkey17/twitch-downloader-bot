@@ -32,6 +32,7 @@ class ReadyOfferTests(unittest.IsolatedAsyncioTestCase):
         self.card=self.message(99)
         source.reply_photo=AsyncMock(return_value=self.card)
         self.context.bot.edit_message_media=AsyncMock()
+        self.context.bot.send_photo=AsyncMock(return_value=SimpleNamespace(message_id=100))
         self.available={}
         self.ready.side_effect=lambda vod_id:self.available.get(vod_id)
         return source,view
@@ -138,7 +139,7 @@ class ReadyOfferTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(chat.vod.config,'HISTORY_ENABLED',True),patch.object(chat.vod.db,'add_user_history') as history:
             await chat.chat_callback(self.update(rows[0][0].callback_data,source),self.context)
         history.assert_called_once_with(7,1)
-        self.context.bot.edit_message_media.assert_awaited_once()
+        self.context.bot.send_photo.assert_awaited_once()
         self.assertNotIn(view.session_id,self.browser._sessions)
         self.runner.assert_not_awaited();source.reply_text.assert_not_awaited()
 
@@ -167,7 +168,7 @@ class ReadyOfferTests(unittest.IsolatedAsyncioTestCase):
             back=self.task(lists.channel_vods_callback(self.update(callback(selected,'back'),source),self.context))
             await asyncio.sleep(0);self.assertFalse(back.done())
             release.set();await asyncio.wait_for(asyncio.gather(selecting,back),1)
-            self.assertIn('VODs канала',source.edit_text.await_args.args[0])
+            self.assertIn('Время указано по UTC',source.edit_text.await_args.args[0])
             self.assertNotIn('chat_choice',self.context.user_data)
         finally:release.set();await asyncio.wait_for(selecting,1)
 
@@ -177,7 +178,7 @@ class ReadyFormattingTests(unittest.TestCase):
         ready={'meta':dict(channel='C<&>',title='T<&>',created_at='2026-01-02T03:04:00Z',length_seconds=3723),
                'stats':dict(messages=1234,unique_users=56)}
         text=ready_offer_text(ready)
-        self.assertEqual('🟣 C&lt;&amp;&gt;\n🎬 T&lt;&amp;&gt;\n⏱ 01:02:03 • 💬 1234 • 👥 56\n🗓 02 Янв 2026 03:04 UTC',text)
+        self.assertEqual('🟣 C&lt;&amp;&gt;\n🎬 T&lt;&amp;&gt;\n⏱ 01:02:03 • 💬 1234 • 👥 56\n🗓 2 янв 2026 03:04 UTC',text)
         item=ready['meta'] | ready['stats']
         self.assertIn(format_vod_summary(item),build_history_page([item],0,1)[0][0][0])
 
