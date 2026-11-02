@@ -207,6 +207,15 @@ class ViewerPreviewLayoutTests(unittest.TestCase):
         self.assertEqual('18px',self.properties('.scrub-thumb')['width'])
         self.assertIn('rgba',self.properties('.scrub-thumb')['background'])
 
+    def test_mobile_list_background_excludes_top_reserve_but_keeps_bottom_padding(self):
+        for width in (320,390):
+            paint=self.responsive_properties('#list',width)
+            self.assertEqual('transparent',paint['background-color'])
+            self.assertEqual('content-box',paint['background-origin'])
+            self.assertEqual('100% calc(100% + 40px)',paint['background-size'])
+            self.assertEqual('40px',paint['padding-bottom'])
+        self.assertNotIn('background-origin',self.responsive_properties('#list',1440))
+
     def test_mobile_focus_is_visible_without_glow_or_pressed_geometry_changes(self):
         for selector in ['header .vod-card:active','header .meta-buttons button:active']:
             props=self.responsive_properties(selector,390)

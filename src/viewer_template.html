@@ -878,7 +878,17 @@ html{overflow-anchor:none;}
   .panel-handle[aria-expanded="true"] svg{transform:rotate(180deg);}
   .panel-handle:active{background:#2a2a35;}
   .panel-handle:focus-visible{outline:2px solid #b3adff;outline-offset:0;border-color:transparent;}
-  #list{padding-top:101px;}
+  #list{
+    padding-top:101px;
+    /* Start paint at content, leaving the tab reserve as natural page background.
+       Extend through the existing 40px bottom padding (content-box clipping
+       alone would also remove that previously painted bottom area). */
+    background-color:transparent;
+    background-image:linear-gradient(#1f1f23,#1f1f23);
+    background-origin:content-box;
+    background-repeat:no-repeat;
+    background-size:100% calc(100% + 40px);
+  }
 }
 @media(max-width:900px) and (hover:hover){
   header .vod-card:hover:not(:active):not(:focus-visible),header .meta-buttons button:hover:not(:active):not(:focus-visible){border-color:#626575;background-color:#23232d;}
