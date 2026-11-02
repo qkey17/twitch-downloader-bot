@@ -157,12 +157,46 @@ test('metadata groups preserve plain/export text and treat untrusted values as t
   assert.equal(el.children[0].className,'meta-symbol');assert.equal(el.children[2].className,'meta-value');
   assert.equal(el.children[2].innerHTML,undefined);
 });
-test('relative gesture starts anywhere without jumping and clamps movement from the original position',async()=>{
+test('relative gesture starts anywhere without jumping and consumes overshoot after each relative movement',async()=>{
   const h=sliderContext(10001),e={pointerId:1,button:0,isPrimary:true,clientX:50,preventDefault(){},stopPropagation(){}};
   h.slider.setScrubIndex(8000);h.events.pointerdown(e);assert.equal(h.slider.state.index,8000);
   h.events.pointerup({...e,type:'pointerup'});assert.equal(h.slider.state.pending,null);assert.equal(h.slider.state.index,8000);
   h.events.pointerdown(e);h.events.pointermove({...e,clientX:77.8});assert.equal(h.slider.state.index,9000);
   h.events.pointermove({...e,clientX:150});assert.equal(h.slider.state.index,10000);
-  h.events.pointermove({...e,clientX:22.2});assert.equal(h.slider.state.index,7000);
-  h.events.lostpointercapture({...e,type:'lostpointercapture'});await h.drain();assert.equal(h.slider.state.index,7000);
+  h.events.pointermove({...e,clientX:22.2});assert.equal(h.slider.state.index,5403);
+  h.events.lostpointercapture({...e,type:'lostpointercapture'});await h.drain();assert.equal(h.slider.state.index,5403);
+});
+
+test('endpoint reversal immediately consumes motion in both directions without hidden overshoot',async()=>{
+  for(const right of [false,true]){
+    const h=sliderContext(10001),width=278;
+    const event=x=>({pointerId:1,button:0,isPrimary:true,clientX:x*width,preventDefault(){},stopPropagation(){}});
+    h.slider.setScrubIndex(right?8000:2000);h.events.pointerdown(event(right?.2:.8));
+    assert.equal(h.slider.state.index,right?8000:2000);
+    const moves=right?[.4,.6,.5,.4]:[.6,.4,.5,.6],expected=right?[10000,10000,9000,8000]:[0,0,1000,2000];
+    moves.forEach((x,i)=>{h.events.pointermove(event(x));assert.equal(h.slider.state.index,expected[i]);});
+    h.events.pointercancel({...event(moves.at(-1)),type:'pointercancel'});await h.drain();
+    assert.equal(h.slider.state.index,right?8000:2000);
+  }
+});
+test('media-query crossings reset mobile compact, while mobile width changes preserve intent',()=>{
+  const ctx=vm.createContext({MOBILE_MQ:{matches:true},panelMobile:true,PANEL_EXPANDED:false,calls:[]});
+  ctx.syncPanelState=(expanded,animate)=>{ctx.PANEL_EXPANDED=expanded;ctx.calls.push([expanded,animate]);};
+  vm.runInContext(part('function reconcilePanelMode()',"MOBILE_MQ.addEventListener('change'"),ctx);
+  ctx.reconcilePanelMode();assert.equal(ctx.PANEL_EXPANDED,false);
+  ctx.PANEL_EXPANDED=true;ctx.reconcilePanelMode();assert.equal(ctx.PANEL_EXPANDED,true);
+  ctx.MOBILE_MQ.matches=false;ctx.reconcilePanelMode();assert.equal(ctx.PANEL_EXPANDED,true);
+  ctx.MOBILE_MQ.matches=true;ctx.reconcilePanelMode();assert.equal(ctx.PANEL_EXPANDED,false);
+  assert.ok(ctx.calls.every(c=>c[1]===false));
+});
+
+test('sub-row movements accumulate a fractional position independently of rounded indexes',async()=>{
+  const h=sliderContext(3),e={pointerId:1,button:0,isPrimary:true,clientX:100,preventDefault(){},stopPropagation(){}};
+  h.events.pointerdown(e);h.events.pointermove({...e,clientX:103});
+  for(let i=1;i<=101;i++)h.events.pointermove({...e,clientX:103+i*.5});
+  assert.equal(h.slider.state.index,0);
+  assert.ok(Math.abs(h.slider.state.gesture.fraction-53.5/278)<1e-10);
+  for(let i=102;i<=161;i++)h.events.pointermove({...e,clientX:103+i*.5});
+  assert.equal(h.slider.state.index,1);
+  h.events.pointerup({...e,clientX:183.5,type:'pointerup'});await h.drain();assert.equal(h.slider.state.index,1);
 });
