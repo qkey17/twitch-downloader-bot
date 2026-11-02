@@ -706,7 +706,6 @@ html{overflow-anchor:none;}
     overflow-wrap:anywhere;
   }
   header.is-expanded #stat{max-width:100%;justify-self:end;text-align:right;}
-  .chat:has(header.is-expanded) #list{padding-top:var(--mobile-expanded-height,145px);}
 
   #list{
     padding-top: 145px;
@@ -839,27 +838,62 @@ html{overflow-anchor:none;}
 .panel-details,.panel-details-content{display:contents;}
 .fast-scrubber,.panel-handle{display:none;}
 @media(max-width:900px){
-  header,header.is-compact{padding:8px 24px 0;gap:0;touch-action:auto;will-change:auto;}
-  /* Keep the full-width band beside the protruding tab free of chat text. */
-  header::after{content:"";display:block;position:absolute;top:100%;left:0;right:112px;width:auto;height:38px;border-radius:0;transform:none;background:#1f1f23;}
-  .panel-details{display:block;order:0;height:0;opacity:0;overflow:hidden;transition:opacity .24s ease-out;}
+  header,header.is-compact{padding:8px 24px 0;gap:0;touch-action:auto;will-change:auto;box-shadow:none;transition:none;}
+  .panel-details{display:block;order:0;height:0;opacity:0;overflow:hidden;}
+  header.is-expanded:not(.is-panel-animating) .panel-details{overflow:visible;}
   .panel-details-content{display:flex;flex-direction:column;gap:var(--control-gap);padding-bottom:8px;}
+  /* One measured destination per transition; no per-frame DOM/anchor scans. */
+  header.is-panel-animating .panel-details{transition:height 270ms cubic-bezier(.2,0,.2,1),opacity 270ms ease-out;}
+  #list.panel-shifting{transition:padding-top 270ms cubic-bezier(.2,0,.2,1);}
+  header.is-expanded .panel-stats{display:flex;flex-wrap:wrap;justify-content:flex-start;gap:6px 16px;}
+  header.is-expanded #mobileChannel{display:inline-flex;flex-basis:100%;}
+  header.is-expanded .panel-stats > .pill:not(.panel-stats-channel){white-space:nowrap;overflow:visible;overflow-wrap:normal;}
+  header.is-expanded #stat{max-width:100%;text-align:left;}
+  .panel-stats .pill,#streamDate{display:inline-flex;align-items:center;gap:6px;}
+  .panel-stats .meta-symbol{display:inline-flex;align-items:center;justify-content:center;flex:none;width:18px;}
+  .panel-stats .meta-value{white-space:nowrap;}
+  #mobileChannel img{width:18px;height:18px;flex:none;}
+  #mobileChannel span{margin-left:0;}
+  header .vod-card,header .vod-card:hover,header .vod-card:active,
+  header .meta-buttons button,header .meta-buttons button:hover,header .meta-buttons button:active{
+    transform:none;box-shadow:none;border-color:var(--border);
+  }
+  header .vod-card,header .meta-buttons button,header .controls input{transition:background-color .12s ease,border-color .12s ease;}
+  header .vod-card:active,header .meta-buttons button:active{background-color:#30303b;border-color:#626575;}
+  header .controls input:focus{outline:none;box-shadow:none;}
+  header .vod-card:focus-visible,header .controls input:focus-visible,header .meta-buttons button:focus-visible{
+    outline:2px solid #b3adff;outline-offset:0;border-color:transparent;
+  }
   .fast-scrubber{display:flex;align-items:center;position:relative;order:5;height:44px;min-height:44px;width:100%;min-width:0;touch-action:none;user-select:none;-webkit-user-select:none;cursor:ew-resize;outline-offset:0;}
-  .fast-scrubber:focus-visible{outline:2px solid #b3adff;border-radius:8px;}
+  .fast-scrubber:focus-visible{outline:2px solid #b3adff;outline-offset:2px;border-radius:8px;}
   .fast-scrubber[aria-disabled="true"]{cursor:default;}
-  .scrub-track{position:relative;width:100%;height:28px;border-radius:7px;background:#a0a3b7;overflow:hidden;}
-  .scrub-fill{position:absolute;inset:0 auto 0 0;width:var(--scrub-progress,0%);background:#30313e;}
-  .scrub-label{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;white-space:nowrap;font:500 12px/1.2 var(--sans);font-variant-numeric:tabular-nums;color:#20212b;pointer-events:none;}
-  .scrub-label-on-fill{color:#e1e3ed;clip-path:inset(0 calc(100% - var(--scrub-progress,0%)) 0 0);}
-  .scrub-thumb{position:absolute;top:4px;height:36px;left:calc(11px + var(--scrub-progress,0%) - 22px * var(--scrub-ratio,0));width:22px;transform:translateX(-50%);border-radius:11px;border:1px solid #626575;background:rgba(205,209,230,.16);pointer-events:none;}
+  .scrub-track{position:relative;width:100%;height:28px;border-radius:7px;background:#30313e;overflow:hidden;}
+  .scrub-fill{position:absolute;inset:0 auto 0 0;width:var(--scrub-progress,0%);background:#a0a3b7;}
+  .scrub-label{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;white-space:nowrap;font:500 12px/1.2 var(--sans);font-variant-numeric:tabular-nums;color:#e1e3ed;pointer-events:none;}
+  .scrub-label-on-fill{color:#20212b;clip-path:inset(0 calc(100% - var(--scrub-progress,0%)) 0 0);}
+  .scrub-thumb{position:absolute;top:4px;height:36px;left:calc(11px + var(--scrub-progress,0%) - 22px * var(--scrub-ratio,0));width:18px;transform:translateX(-50%);border-radius:9px;border:1px solid #747888;background:rgba(205,209,230,.16);pointer-events:none;}
   .fast-scrubber.is-held .scrub-thumb{border-color:#c3c6d5;background:rgba(205,209,230,.22);}
-  .panel-handle{display:block;position:absolute;top:calc(100% - 1px);right:0;width:112px;height:34px;min-height:34px;padding:0 8px;margin:0;border:1px solid var(--border);border-top:0;border-radius:0 0 10px 10px;background:#18181b;box-shadow:none;color:#d5d5de;font:500 12px var(--sans);touch-action:manipulation;}
-  .panel-handle::before{content:"";position:absolute;inset:-5px 0;}
+  .panel-handle{display:flex;align-items:center;justify-content:center;gap:8px;position:absolute;top:calc(100% - 1px);left:69%;transform:translateX(-50%);width:152px;height:44px;min-height:44px;padding:0 10px;margin:0;border:1px solid var(--border);border-top:0;border-radius:0 0 10px 10px;background:#18181b;box-shadow:none;color:#d5d5de;font:500 14px var(--sans);touch-action:manipulation;cursor:pointer;transition:background-color .12s ease;}
+  .panel-handle svg{flex:none;}
+  .panel-handle[aria-expanded="true"] svg{transform:rotate(180deg);}
   .panel-handle:active{background:#2a2a35;}
-  .panel-handle:focus-visible{outline:2px solid #b3adff;outline-offset:1px;}
-  #list,.chat:has(header.is-expanded) #list{padding-top:var(--mobile-header-height,91px);}
+  .panel-handle:focus-visible{outline:2px solid #b3adff;outline-offset:0;border-color:transparent;}
+  #list{
+    padding-top:101px;
+    /* Start paint at content, leaving the tab reserve as natural page background.
+       Extend through the existing 40px bottom padding (content-box clipping
+       alone would also remove that previously painted bottom area). */
+    background-color:transparent;
+    background-image:linear-gradient(#1f1f23,#1f1f23);
+    background-origin:content-box;
+    background-repeat:no-repeat;
+    background-size:100% calc(100% + 40px);
+  }
 }
-@media(prefers-reduced-motion:reduce){.panel-details{transition:none;}}
+@media(max-width:900px) and (hover:hover){
+  header .vod-card:hover:not(:active):not(:focus-visible),header .meta-buttons button:hover:not(:active):not(:focus-visible){border-color:#626575;background-color:#23232d;}
+  .panel-handle:hover:not(:active){background-color:#23232d;}
+}
 </style>
 
 </head>
@@ -917,7 +951,7 @@ html{overflow-anchor:none;}
         </div>
         <div class="scrub-thumb"></div>
       </div>
-      <button class="panel-handle" type="button" aria-label="Развернуть панель" aria-expanded="false" aria-controls="panelDetails">Развернуть ↓</button>
+      <button class="panel-handle" type="button" aria-label="Развернуть панель" aria-expanded="false" aria-controls="panelDetails"><span>Развернуть</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6"/></svg></button>
     </header>
 
     <div id="list"></div>
@@ -982,10 +1016,10 @@ const MOBILE_MQ = window.matchMedia("(max-width: 900px)");
 const elHeader=document.querySelector("header");
 const elScrubber=document.getElementById("fastScrubber");
 const elPanelHandle=document.querySelector(".panel-handle");
-let onPanelLayout=()=>()=>{},onPanelFrame=()=>{};
+let onPanelLayout=()=>()=>{};
 const elPanelDetails=document.getElementById("panelDetails");
 const elPanelContent=elPanelDetails.firstElementChild;
-let panelAnimating=false,panelFrame=0,panelRevision=0;
+let panelAnimating=false,panelCleanup=()=>{};
 const elVodCard=document.getElementById("vodCard");
 const elVodPreviewImg=document.getElementById("vodPreviewImg");
 const elVodHeading=document.querySelector(".vod-heading");
@@ -1045,53 +1079,79 @@ function clampNumber(value, min, max){
 
 
 function syncPanelState(expanded, animate=true){
-  const settle=onPanelLayout(),revision=++panelRevision;
-  cancelAnimationFrame(panelFrame);
+  const settle=onPanelLayout();
+  panelCleanup();
   const mobile=MOBILE_MQ.matches;
   const motion=mobile && animate && !matchMedia('(prefers-reduced-motion: reduce)').matches;
   const current=elPanelDetails.getBoundingClientRect().height;
+  const currentPadding=parseFloat(getComputedStyle(elList).paddingTop),scrollY=window.scrollY;
+  // Freeze the interpolated height on rapid reversal before choosing a new target.
+  elHeader.classList.remove('is-panel-animating');
+  elList.classList.remove('panel-shifting');
+  elPanelDetails.style.height=mobile ? current+'px' : '';
   PANEL_EXPANDED=!!expanded;
   // Keep expanded content geometry while it fades/collapses, then hide it.
   const layoutExpanded=PANEL_EXPANDED || (motion && current>0);
   elHeader.classList.toggle('is-expanded',layoutExpanded);
   elHeader.classList.toggle('is-compact',!layoutExpanded);
   elPanelHandle.setAttribute('aria-expanded',String(PANEL_EXPANDED));
-  elPanelHandle.textContent=PANEL_EXPANDED ? 'Свернуть ↑' : 'Развернуть ↓';
+  elPanelHandle.querySelector('span').textContent=PANEL_EXPANDED ? 'Свернуть' : 'Развернуть';
   elPanelHandle.setAttribute('aria-label',PANEL_EXPANDED ? 'Свернуть панель' : 'Развернуть панель');
   elPanelDetails.inert=mobile && !PANEL_EXPANDED;
   elPanelDetails.setAttribute('aria-hidden',String(mobile && !PANEL_EXPANDED));
-  elPanelDetails.style.transition=motion ? '' : 'none';
-  elPanelDetails.style.height=mobile ? current+'px' : '';
-  panelAnimating=motion;
-  elPanelDetails.style.opacity=mobile ? (PANEL_EXPANDED ? '1' : '0') : '';
+  const target=mobile && PANEL_EXPANDED ? elPanelContent.getBoundingClientRect().height : 0;
+  const insetBase=mobile ? viewportInset()-current : 0;
+  const targetPadding=insetBase+target+1;
+  panelAnimating=motion && Math.abs(target-current)>.5;
+  let follow=()=>{},reserved=currentPadding,scrolling=false;
   const finish=()=>{
-    if(revision!==panelRevision) return;
+    panelCleanup();
+    follow(target);
+    const previousY=window.scrollY;
     panelAnimating=false;
+    elHeader.classList.remove('is-panel-animating');
+    elList.classList.remove('panel-shifting');
     elHeader.classList.toggle('is-expanded',PANEL_EXPANDED);
     elHeader.classList.toggle('is-compact',!PANEL_EXPANDED);
     if(mobile) elPanelDetails.style.height=PANEL_EXPANDED ? 'auto' : '0px';
-    updatePanelGeometry();settle();
+    updatePanelGeometry();
+    if(scrolling) window.scrollTo(0,previousY+targetPadding-reserved);
+    settle();
   };
-  if(motion){
-    const started=performance.now();
-    const frame=now=>{
-      if(revision!==panelRevision) return;
-      const progress=Math.min(1,(now-started)/240),eased=1-Math.pow(1-progress,3);
-      const target=PANEL_EXPANDED ? elPanelContent.getBoundingClientRect().height : 0;
-      elPanelDetails.style.height=(current+(target-current)*eased)+'px';
-      // Height, list padding and anchor correction are one pre-paint transaction.
-      updatePanelGeometry();
-      if(progress<1) panelFrame=requestAnimationFrame(frame);else finish();
-    };
-    panelFrame=requestAnimationFrame(frame);
-  }else requestAnimationFrame(finish);
+  if(panelAnimating){
+    // Long chats keep fixed list geometry during the transition. Native scroll
+    // compensates the header's interpolated height without repainting all rows
+    // or allocating a huge composited layer for the complete virtual window.
+    reserved=Math.max(insetBase+current+1,targetPadding);
+    elList.style.paddingTop=reserved+'px';
+    const startY=scrollY+reserved-currentPadding;
+    scrolling=startY>=0 && startY<=document.documentElement.scrollHeight-innerHeight;
+    if(scrolling){
+      window.scrollTo(0,startY);
+      follow=height=>window.scrollTo(0,startY+current-height);
+    }else elList.style.paddingTop=(insetBase+current+1)+'px';
+    void elPanelDetails.offsetHeight;
+    elHeader.classList.add('is-panel-animating');
+    if(!scrolling) elList.classList.add('panel-shifting');
+    void elPanelDetails.offsetHeight;
+    const ended=e=>{if(e.target===elPanelDetails && e.propertyName==='height') finish();};
+    const timer=setTimeout(finish,350);
+    elPanelDetails.addEventListener('transitionend',ended);
+    let frame=0;
+    const track=()=>{follow(elPanelDetails.getBoundingClientRect().height);frame=requestAnimationFrame(track);};
+    if(scrolling) frame=requestAnimationFrame(track);
+    panelCleanup=()=>{clearTimeout(timer);cancelAnimationFrame(frame);elPanelDetails.removeEventListener('transitionend',ended);panelCleanup=()=>{};};
+    if(!scrolling) elList.style.paddingTop=targetPadding+'px';
+  }
+  elPanelDetails.style.height=mobile ? target+'px' : '';
+  elPanelDetails.style.opacity=mobile ? (PANEL_EXPANDED ? '1' : '0') : '';
+  if(!panelAnimating) finish();
 }
 syncPanelState(PANEL_EXPANDED,false);
 function updatePanelGeometry(){
-  elList.style.setProperty('--mobile-header-height',(viewportInset()+1)+'px');
-  onPanelFrame();
+  if(!panelAnimating) elList.style.paddingTop=MOBILE_MQ.matches ? (viewportInset()+1)+'px' : '';
 }
-new ResizeObserver(updatePanelGeometry).observe(elHeader);
+new ResizeObserver(()=>{if(!panelAnimating) updatePanelGeometry();}).observe(elHeader);
 window.addEventListener('resize',()=>{requestAnimationFrame(fitVodTitle);syncPanelState(PANEL_EXPANDED,false);});
 elPanelHandle.addEventListener('click',e=>{e.stopPropagation();syncPanelState(!PANEL_EXPANDED,true);});
 let vodOverlay = null;
@@ -1257,7 +1317,14 @@ function fmtStreamStart(iso){
 }
 const streamStart = fmtStreamStart(meta.created_at);
 if(streamStart){
-  elStreamDate.textContent = `📅 ${streamStart}`;
+  setMetadataGroup(elStreamDate,'📅',streamStart);
+}
+function setMetadataGroup(element,symbol,value){
+  const icon=document.createElement('span'),text=document.createElement('span');
+  icon.className='meta-symbol';icon.setAttribute('aria-hidden','true');icon.textContent=symbol;
+  text.className='meta-value';text.textContent=value;
+  // A plain space keeps desktop/export text identical; flex owns mobile gaps.
+  element.replaceChildren(icon,document.createTextNode(' '),text);
 }
 
 const DEFAULT_COLORS = [
@@ -1535,7 +1602,7 @@ function measureBlocks(anchor=resizeAnchor || stableAnchor || visibleAnchor()){
   scheduleScrubSync();
 }
 const blockObserver=new ResizeObserver(()=>{
-  if(!windowBusy) {measureBlocks();scheduleWindow();}
+  if(!panelAnimating && !windowBusy) {measureBlocks();scheduleWindow();}
 });
 function targetBlock(){
   const start=elList.getBoundingClientRect().top+window.scrollY+parseFloat(getComputedStyle(elList).paddingTop);
@@ -1600,7 +1667,7 @@ function scheduleWindow(){
   if(windowFrame) return;
   windowFrame=requestAnimationFrame(()=>{
     windowFrame=0;
-    if(!windowBusy && !resizeAnchor && !scrubActive()) showWindow(targetBlock());
+    if(!panelAnimating && !windowBusy && !resizeAnchor && !scrubActive()) showWindow(targetBlock());
   });
 }
 async function ensureEmotesLoaded(){
@@ -1636,15 +1703,16 @@ async function applyFilters(){
   filtered=result;FILTERING=false;resetScrubber();stableAnchor=null;selectionRange=null;projectedSelection=null;selectionGesture=null;
   window.getSelection()?.removeAllRanges();
   heights=[];windowStart=windowEnd=0;
-  elStat.textContent=`💬 ${rowCount()} / ${rows.length}`;
+  setMetadataGroup(elStat,'💬',`${rowCount()} / ${rows.length}`);
   window.scrollTo(0,0);
   await showWindow(0,true);
   ensureEmotesLoaded();
 }
-document.addEventListener('scroll',()=>{if(!windowBusy && !resizeAnchor) stableAnchor=visibleAnchor();scheduleWindow();scheduleScrubSync();},{passive:true});
+document.addEventListener('scroll',()=>{if(!panelAnimating && !windowBusy && !resizeAnchor) stableAnchor=visibleAnchor();scheduleWindow();scheduleScrubSync();},{passive:true});
 let listWidth=elList.clientWidth;
 let listPadding=getComputedStyle(elList).paddingTop;
 const listObserver=new ResizeObserver(()=>{
+  if(panelAnimating) return;
   const padding=getComputedStyle(elList).paddingTop;
   if(elList.clientWidth===listWidth && padding===listPadding) return;
   if(elList.clientWidth!==listWidth) heights=[];
@@ -1664,7 +1732,6 @@ window.addEventListener('resize',()=>{
     if(!panelAnimating) resizeAnchor=null;scheduleWindow();scheduleScrubSync();
   },120);
 });
-onPanelFrame=()=>{if(resizeAnchor && !windowBusy) measureBlocks(resizeAnchor);};
 onPanelLayout=()=>{
   if(!MOBILE_MQ.matches) return ()=>{};
   if(!resizeAnchor && window.scrollY>0) resizeAnchor=(scrubSettled && Math.abs(window.scrollY-scrubSettled.y)<1 ? scrubSettled.anchor : null) || stableAnchor || visibleAnchor();
@@ -1715,15 +1782,16 @@ function fitScrubLabel(){
 }
 function setScrubIndex(index){
   const count=rowCount();scrubIndex=clampNumber(index,0,Math.max(0,count-1));
-  const percent=scrubPercent(scrubIndex,count),duration=durationTime(meta.duration_seconds);
+  const atEnd=!scrubGesture && !scrubRunning && !FILTERING && physicalChatEnd();
+  const percent=atEnd ? 100 : scrubPercent(scrubIndex,count),duration=durationTime(meta.duration_seconds);
   let time=count ? scrubTime(rowAt(scrubIndex).t) : '—';
-  if(!scrubGesture && !scrubRunning && !FILTERING && physicalChatEnd() && duration!=='—') time=duration;
+  if(atEnd && duration!=='—') time=duration;
   const label=time+' / '+duration;
   elScrubber.style.setProperty('--scrub-progress',percent.toFixed(4)+'%');
   elScrubber.style.setProperty('--scrub-ratio',String(percent/100));
   for(const node of elScrubber.querySelectorAll('.scrub-times')) if(node.textContent!==label) node.textContent=label;
   fitScrubLabel();
-  elScrubber.setAttribute('aria-valuenow',String(Math.round(percent)));
+  elScrubber.setAttribute('aria-valuenow',String(count>1 ? Math.round(percent) : 0));
   elScrubber.setAttribute('aria-valuetext',label);
   elScrubber.setAttribute('aria-disabled',String(FILTERING || count<2));
 }
@@ -1731,7 +1799,7 @@ function scheduleScrubSync(){
   if(!MOBILE_MQ.matches || scrubSyncFrame) return;
   scrubSyncFrame=requestAnimationFrame(()=>{
     scrubSyncFrame=0;
-    if(!MOBILE_MQ.matches || scrubActive() || FILTERING || windowBusy || resizeAnchor) return;
+    if(!MOBILE_MQ.matches || panelAnimating || scrubActive() || FILTERING || windowBusy || resizeAnchor) return;
     // Near the end (or in a short list) the viewport cannot top-align every row.
     // Keep the chosen visible row until actual scrolling/input changes the view.
     if(scrubSettled && scrubSettled.epoch===FILTER_TOKEN && Math.abs(window.scrollY-scrubSettled.y)<1){
