@@ -885,7 +885,7 @@ html{overflow-anchor:none;}
   .panel-toggle:active{background:#30303b;border-color:#626575;}
   .panel-toggle:focus-visible{outline:2px solid #b3adff;outline-offset:0;border-color:transparent;}
   #list{
-    padding-top:68px;
+    padding-top:64px;
     /* Start paint at content, leaving the panel clearance as natural page background.
        Extend through the existing 40px bottom padding (content-box clipping
        alone would also remove that previously painted bottom area). */
@@ -1579,7 +1579,7 @@ function updateSpaces(){
   topSpace.style.height=heightBefore(windowStart)+'px';
   bottomSpace.style.height=(heightBefore(blockCount())-heightBefore(windowEnd))+'px';
 }
-function viewportInset(){return MOBILE_MQ.matches ? Math.max(0,elHeader.getBoundingClientRect().bottom)+5 : 0;}
+function viewportInset(){return MOBILE_MQ.matches ? Math.max(0,elHeader.getBoundingClientRect().bottom) : 0;}
 function visibleAnchor(){
   const inset=viewportInset();
   for(const node of blockNodes.values()){

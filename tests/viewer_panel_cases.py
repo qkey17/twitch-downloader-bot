@@ -141,3 +141,49 @@ async def visual_checks(call,evaluate,wait,out,errors,requests):
         assert not errors,errors
         results.append(dict(case='control-row-geometry-modes-endpoint-reversal',width=width,status='PASS'))
     (out/'control-row-results.json').write_text(json.dumps(results,indent=2),encoding='utf-8')
+
+
+async def check_message_clearance(call,evaluate,wait,out,args,errors,requests):
+    """Focused gap/anchor regression; no gesture matrix or profiling."""
+    results=[]
+    async def settled():
+        await wait('!panelAnimating && !windowBusy && !scrubActive() && !scrubSyncFrame')
+        await asyncio.sleep(.12)
+    async def load(width,version):
+        await call('Emulation.setDeviceMetricsOverride',dict(width=width,height=900,deviceScaleFactor=1,mobile=width<900))
+        await call('Page.navigate',dict(url=(out/f'{version}-10000-offline.html').as_uri()))
+        await wait("document.readyState==='complete' && typeof panelAnimating!=='undefined' && !windowBusy")
+        await settled()
+    async def shot(name):
+        data=await call('Page.captureScreenshot',dict(format='png'))
+        (out/(name+'.png')).write_bytes(base64.b64decode(data['data']))
+    geometry="JSON.stringify(['header','.controls','.panel-actions','#list .row'].map(s=>{const r=document.querySelector(s).getBoundingClientRect();return [r.x,r.y,r.width,r.height]}))"
+    await load(1440,'base');desktop=await evaluate(geometry)
+    await load(1440,'new');assert await evaluate(geometry)==desktop
+    results.append(dict(case='desktop-unchanged',status='PASS'))
+    for width in (320,390):
+        for expanded in (False,True):
+            old_height=None
+            for version in ('base','new'):
+                await load(width,version)
+                if expanded:await evaluate('elPanelHandle.click();true');await settled()
+                state=await evaluate('({gap:elList.querySelector(".row").getBoundingClientRect().top-elHeader.getBoundingClientRect().bottom,height:elHeader.getBoundingClientRect().height})')
+                if version=='base':
+                    assert abs(state['gap']-6)<.1,state
+                    old_height=state['height']
+                else:assert 0<=state['gap']<=2 and state['height']==old_height,state
+                await shot(f'{version}-{"expanded" if expanded else "compact"}-{width}')
+            for index in (0,5000,9999,2000,0):
+                await evaluate(f'requestScrub({index});true');await settled()
+                target=await evaluate(f'(()=>{{const r=elList.querySelector(`.row[data-id="{index}"]`).getBoundingClientRect();return {{gap:r.top-elHeader.getBoundingClientRect().bottom,bottom:r.bottom,inset:viewportInset()}};}})()')
+                assert target['gap']>=-.5 and target['bottom']>target['inset'],target
+                if index in (0,5000,2000):assert target['gap']<=2,target
+            await evaluate('window.scrollBy(0,251);true');await settled()
+            anchor=await evaluate('visibleAnchor()');assert anchor
+            await evaluate('elPanelHandle.click();true');await settled()
+            after=await evaluate('visibleAnchor()')
+            assert anchor['id']==after['id'] and abs((anchor['top']-anchor['inset'])-(after['top']-after['inset']))<3,(anchor,after)
+            assert not errors,errors
+            results.append(dict(width=width,expanded=expanded,before_gap=6,after_gap=state['gap'],panel_height_unchanged=True,scroll_and_scrubber='PASS',status='PASS'))
+    (out/'clearance-results.json').write_text(json.dumps(results,indent=2),encoding='utf-8')
+    print(json.dumps(results),flush=True)

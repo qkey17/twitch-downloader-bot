@@ -226,6 +226,7 @@ class ViewerPreviewLayoutTests(unittest.TestCase):
         for width in (320,390):
             paint=self.responsive_properties('#list',width)
             self.assertEqual('transparent',paint['background-color'])
+            self.assertEqual('64px',paint['padding-top'])
             self.assertEqual('content-box',paint['background-origin'])
             self.assertEqual('100% calc(100% + 40px)',paint['background-size'])
             self.assertEqual('40px',paint['padding-bottom'])
