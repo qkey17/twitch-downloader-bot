@@ -38,6 +38,7 @@ class QueueIntegration(unittest.IsolatedAsyncioTestCase):
             await started['123456789'].wait();await started['234567890'].wait()
             jobs=list(ctx.user_data['vod_jobs'].values());a,b,c=jobs
             self.assertEqual('waiting',c.state);self.assertFalse(started[c.vod].is_set())
+            self.assertIn(c.vod,u3.message.edit_text.await_args.kwargs['text'])
             self.assertIsNot(workers[a.vod].user_data,workers[b.vod].user_data)
             self.assertEqual(a.id,workers[a.vod].user_data['download_ui']['operation'])
             u1.callback_query.data=vod.CB_PENDING_CANCEL+':'+a.id

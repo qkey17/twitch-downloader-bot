@@ -1,6 +1,7 @@
 # handlers_vod.py
 import logging
 import asyncio
+import html
 from src.resource_usage import OperationTelemetry, observe_operation, record_failure, stage
 import json
 import re
@@ -518,7 +519,8 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
     context.user_data['download_ui'] = ui
     context.shared_user_data['download_ui'] = ui
     from src.workers.worker_progress import _build_progress_card, cancel_keyboard
-    queue_text = 'Чат VOD ожидает в очереди. Обработка начнётся автоматически.'
+    queue_text = (f'Чат VOD {html.escape(str(vod_id))} ожидает в очереди.\n'
+                  'Обработка начнётся автоматически.')
     if regenerate:
         context.user_data.pop("vod_result_choice",None)
     try:
