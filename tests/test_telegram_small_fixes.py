@@ -39,7 +39,19 @@ class LiveDateTests(unittest.IsolatedAsyncioTestCase):
         view=await self.open(2)
         text,normal=lists.build_list(view)
         _,live=lists.build_list(replace(view,live_vod_ids=frozenset([view.items[0].id])))
-        self.assertEqual('2 янв 2026 03:04 🔴 (LIVE)',live.inline_keyboard[0][0].text)
+        self.assertEqual('🔴LIVE',live.inline_keyboard[0][0].text)
         self.assertEqual(normal.inline_keyboard[0][0].callback_data,live.inline_keyboard[0][0].callback_data)
         self.assertEqual(normal.inline_keyboard[1][0],live.inline_keyboard[1][0])
-        self.assertIn('Время указано по UTC',text)
+        self.assertNotIn('Время указано по UTC',text)
+
+    async def test_multiple_live_buttons_keep_distinct_vod_bindings(self):
+        view=await self.open(6)
+        _,normal=lists.build_list(view)
+        _,live=lists.build_list(replace(view,live_vod_ids=frozenset(v.id for v in view.items[:2])))
+        self.assertEqual(['🔴LIVE','🔴LIVE'],[row[0].text for row in live.inline_keyboard[:2]])
+        self.assertNotEqual(live.inline_keyboard[0][0].callback_data,live.inline_keyboard[1][0].callback_data)
+        for n in range(2):
+            self.assertEqual(normal.inline_keyboard[n][0].callback_data,live.inline_keyboard[n][0].callback_data)
+            info=await self.browser.handle_callback(self.http,7,live.inline_keyboard[n][0].callback_data,10,20)
+            self.assertEqual(n,info.index)
+        self.assertEqual(normal.inline_keyboard[2:],live.inline_keyboard[2:])

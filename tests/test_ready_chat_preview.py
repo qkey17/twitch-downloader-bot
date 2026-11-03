@@ -250,7 +250,7 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
             new = self.browser._sessions[latest.session_id].list_render[0]
             release.set(); await asyncio.wait_for(selecting, 1)
             self.assertEqual(message.message_id,self.context.bot.edit_message_media.await_args.kwargs['message_id'])
-            self.assertIn('Время указано по UTC',new.text)
+            self.assertNotIn('Время указано по UTC',new.text)
             self.assertTrue(self.browser.is_current(latest))
         finally:
             release.set(); await asyncio.wait_for(selecting, 1)

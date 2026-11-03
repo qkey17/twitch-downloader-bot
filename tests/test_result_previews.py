@@ -296,7 +296,7 @@ class ChannelResultPreviewTests(unittest.IsolatedAsyncioTestCase):
                 release.set();await asyncio.wait_for(task,1)
 
                 self.assertEqual(before,self.context.bot.edit_message_media.await_count)
-                self.assertIn('Время указано по UTC',self.context.bot.edit_message_media.await_args.kwargs['media'].caption)
+                self.assertNotIn('Время указано по UTC',self.context.bot.edit_message_media.await_args.kwargs['media'].caption)
                 source.reply_text.assert_not_awaited()
             finally:
                 release.set();await asyncio.wait_for(task,1)

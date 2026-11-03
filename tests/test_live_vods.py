@@ -122,7 +122,7 @@ class LiveAPITests(unittest.IsolatedAsyncioTestCase):
             view=await browser.open(session,7,'channel',10,20)
             self.assertEqual(frozenset({'1'}),view.live_vod_ids)
             labels=[b.text for row in build_list(view)[1].inline_keyboard for b in row]
-            self.assertEqual(1,sum('(LIVE)' in s for s in labels))
+            self.assertEqual(1,sum(s=='🔴LIVE' for s in labels))
             moved=await browser.handle_callback(session,7,callback(view,'next'),10,20)
             self.assertEqual(1,moved.page)
             self.assertEqual(1,request.await_count)
