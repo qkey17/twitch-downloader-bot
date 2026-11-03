@@ -1,7 +1,9 @@
+from src.ui.card_context import callback_context
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 from src.database import database as db
 import json
+import secrets
 from src.ui.ui_history import build_history_page
 from src.ui.ui_labels import CHAT_GENERIC, READY_UNAVAILABLE
 from src.config import HTML_PUBLISH_MODE
@@ -15,17 +17,23 @@ from src.history.history_callbacks import (
 
 
 async def _send_file_card(context, chat_id, text, keyboard, item, owner):
+    from src.ui.card_context import for_message,bind
     data = getattr(context, 'user_data', None)
     if data is None:  # Legacy internal caller, no persistent UI context.
         await send_card(context, chat_id, text, keyboard, item)
         return
+    context=for_message(context,owner,chat_id,-secrets.randbits(63),fresh=True)
+    data=context.user_data
     record = dict(chat=chat_id, owner=owner, history_id=item.get('history_id'), message_id=None)
     data['history_file_card'] = record
     from src.ui.html_file_action import keyboard as file_keyboard
     keyboard = file_keyboard(context, owner, chat_id, item.get('ready_result'), keyboard, history_id=item.get('history_id'))
+    def sent(message_id):
+        record.update(message_id=message_id)
+        bind(context,chat_id,message_id)
     await send_card(context, chat_id, text, keyboard, item,
                     current=lambda: data.get('history_file_card') is record,
-                    on_sent=lambda message_id: record.update(message_id=message_id))
+                    on_sent=sent)
 
 
 async def send_cached_files(context, chat_id: int, files: list[dict]):
@@ -37,6 +45,7 @@ async def send_cached_files(context, chat_id: int, files: list[dict]):
         )
 
 
+@callback_context
 async def history_files_callback(update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     if await _answer_if_history_disabled(q):

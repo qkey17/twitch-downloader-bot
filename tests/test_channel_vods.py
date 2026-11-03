@@ -188,14 +188,15 @@ class ChannelVodsTests(unittest.IsolatedAsyncioTestCase):
                 view = await self.open(records, cursor)
                 self.assertEqual(('api_error', 0, False), (view.status, view.loaded, view.complete))
 
-    async def test_session_capacity_absolute_expiry_and_one_channel_per_owner(self):
+    async def test_session_capacity_absolute_expiry_and_independent_messages(self):
         self.browser = ChannelBrowser(max_sessions=1, ttl=10, clock=lambda: self.now)
         first = await self.open()
         count = self.fetch_user.await_count
         self.assertEqual('capacity', (await self.open(owner=8)).status)
         self.assertEqual(count, self.fetch_user.await_count)
-        replacement = await self.open(message=21)
-        self.assertNotEqual(first.session_id, replacement.session_id)
+        self.assertEqual('capacity',(await self.open(message=21)).status)
+        replacement=await self.open()  # Explicit replacement of the same message
+        self.assertNotEqual(first.session_id,replacement.session_id)
         self.assertEqual('expired', (await self.go(first, 'select')).status)
         self.assertEqual(1, len(self.browser))
         self.now += 10

@@ -1,3 +1,4 @@
+from src.ui.card_context import callback_context
 from telegram import Update
 from telegram.ext import ContextTypes
 from src import config
@@ -26,6 +27,7 @@ async def _reply_history_not_found(update, context):
     await CallbackReply(update.callback_query).send(STALE_ACTION_NOTICE)
 
 
+@callback_context
 async def ui_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     if await _answer_if_history_disabled(q):
@@ -67,6 +69,7 @@ async def ui_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await history_page_callback(update, context)
 
 
+@callback_context
 async def history_vod_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     if await _answer_if_history_disabled(q):
@@ -105,6 +108,7 @@ async def history_vod_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await context.bot.send_message(chat_id=q.message.chat_id, text=vod_url)
 
 
+@callback_context
 async def history_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     if await _answer_if_history_disabled(q):

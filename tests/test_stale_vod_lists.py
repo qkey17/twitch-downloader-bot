@@ -1,5 +1,5 @@
 from callback_assertions import assert_stale
-"""List-only invalidation, no Telegram/Twitch or database access."""
+"""Independent bounded lists, no Telegram/Twitch or database access."""
 import asyncio
 from unittest.mock import AsyncMock, patch
 import unittest
@@ -28,34 +28,23 @@ class StaleListTests(unittest.IsolatedAsyncioTestCase):
         view = await h._open_and_show(message, self.context, owner, login)
         return message, view
 
-    async def test_replacement_preserves_rendered_text_removes_keyboard_and_keeps_new_list(self):
-        old, a = await self.open(20)
-        original = build_list(a)[0]
-        old.text = 'untrusted stale snapshot'
-        new, b = await self.open(21, 'second')
-        self.assertEqual(original+'\n'+h.STALE_LIST, old.edit_text.await_args.args[0])
-        self.assertIsNone(old.edit_text.await_args.kwargs['reply_markup'])
-        old.reply_text.assert_not_awaited()
-        calls = old.edit_text.await_count
-        await self.open(22, 'third')
-        self.assertEqual(calls, old.edit_text.await_count)
-        self.assertFalse(self.browser.is_current(b))
-        self.assertIn(h.STALE_LIST, new.edit_text.await_args.args[0])
-        self.assertEqual(1, old.edit_text.await_args.args[0].count(h.STALE_LIST))
+    async def test_new_lists_preserve_existing_text_keyboard_and_sessions(self):
+        old,a=await self.open(20);text,keyboard=old.edit_text.await_args.args[0],old.edit_text.await_args.kwargs['reply_markup']
+        await self.open(21,'second');await self.open(22,'third')
+        old.edit_text.assert_awaited_once()
+        self.assertEqual(text,old.edit_text.await_args.args[0]);self.assertIs(keyboard,old.edit_text.await_args.kwargs['reply_markup'])
+        self.assertTrue(self.browser.is_current(a))
+        current=await h.channel_vods_callback(self.update(callback(a,'pages'),old),self.context)
+        self.assertTrue(self.browser.is_current(current))
 
-    async def test_stale_and_restart_callbacks_answer_once_without_edit_even_if_busy(self):
-        old, a = await self.open(20)
-        new, b = await self.open(21)
-        self.context.user_data['vod_busy'] = True
-        before = old.edit_text.await_count
-        q = self.update(callback(a, 'pages'), old)
-        await h.channel_vods_callback(q, self.context)
-        assert_stale(self, q)
-        self.assertEqual(before, old.edit_text.await_count)
-        self.app.bot_data[h._STORE_KEY] = VodListBrowser()
-        q = self.update(callback(b, 'pages'), new)
-        await h.channel_vods_callback(q, self.context)
-        assert_stale(self, q)
+    async def test_expired_and_restart_callbacks_answer_once_without_edit_even_if_busy(self):
+        old,a=await self.open(20);new,b=await self.open(21)
+        self.now+=601;self.context.user_data['vod_busy']=True
+        before=old.edit_text.await_count
+        q=self.update(callback(a,'pages'),old);await h.channel_vods_callback(q,self.context);assert_stale(self,q)
+        self.assertEqual(before,old.edit_text.await_count)
+        self.app.bot_data[h._STORE_KEY]=VodListBrowser()
+        q=self.update(callback(b,'pages'),new);await h.channel_vods_callback(q,self.context);assert_stale(self,q)
         new.reply_text.assert_not_awaited()
 
     async def test_rejected_request_does_not_expire_valid_list(self):
@@ -82,7 +71,7 @@ class StaleListTests(unittest.IsolatedAsyncioTestCase):
         calls = message.edit_text.await_count
         await self.open(21)
         self.assertEqual(calls, message.edit_text.await_count)
-        self.assertEqual(ready_offer_text(self.ready_result()), message.edit_text.await_args.args[0])
+        self.assertEqual(ready_offer_text(self.ready_result()), message.edit_text.await_args.kwargs['text'])
 
     async def test_started_processing_and_final_card_are_not_rewritten(self):
         message, a = await self.open(20)
@@ -113,96 +102,28 @@ class StaleListTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(calls, message.edit_text.await_count)
                 self.assertEqual(text, message.edit_text.await_args.args[0])
 
-    async def test_back_restores_list_ownership_before_next_replacement(self):
-        message, a = await self.open(20)
-        self.ready.return_value = self.ready_result()
-        selected = await h.channel_vods_callback(self.update(callback(a, 'select', 0), message), self.context)
-        await h.channel_vods_callback(self.update(callback(selected.view, 'back'), message), self.context)
-        text = message.edit_text.await_args.args[0]
-        await self.open(21)
-        self.assertEqual(text+'\n'+h.STALE_LIST, message.edit_text.await_args.args[0])
+    async def test_back_restores_list_and_new_list_leaves_it_interactive(self):
+        message,a=await self.open(20);self.ready.return_value=self.ready_result()
+        selected=await h.channel_vods_callback(self.update(callback(a,'select',0),message),self.context)
+        restored=await h.channel_vods_callback(self.update(callback(selected.view,'back'),message),self.context)
+        before=message.edit_text.await_count
+        await self.open(21);self.assertEqual(before,message.edit_text.await_count)
+        self.assertTrue(self.browser.is_current(restored))
 
-    async def test_loading_another_owner_is_not_serialized_by_old_list_lock(self):
-        old, a = await self.open(20)
-        entered, release = asyncio.Event(), asyncio.Event()
-        async def slow(*args, **kwargs):
-            entered.set()
-            await release.wait()
-        old.edit_text.side_effect = slow
-        newer = self.task(self.open(21))
-        await asyncio.wait_for(entered.wait(), 1)
-        other, view = await asyncio.wait_for(self.open(22, owner=8), 1)
-        self.assertTrue(self.browser.is_current(view))
-        release.set()
-        await asyncio.wait_for(newer, 1)
-
-    async def test_new_list_is_usable_and_replaceable_while_old_edit_is_delayed(self):
-        old, a = await self.open(20)
-        entered, release = asyncio.Event(), asyncio.Event()
-        async def slow(*args, **kwargs):
-            entered.set()
-            await release.wait()
-        old.edit_text.side_effect = slow
-        new = self.message(21)
-        opening = self.task(h._open_and_show(new, self.context, 7, 'second'))
-        await asyncio.wait_for(entered.wait(), 1)
-        self.assertFalse(opening.done())
-        new.edit_text.assert_awaited_once()  # Before the old edit is released.
+    async def test_opening_new_lists_never_touches_or_waits_for_old_ui(self):
+        old,a=await self.open(20)
+        async def forbidden(*a,**kw):raise AssertionError('New list must not edit old message')
+        old.edit_text.side_effect=forbidden
+        session=self.browser._sessions[a.session_id]
+        async with h._ui_lock(session):
+            new,b=await asyncio.wait_for(self.open(21),1)
+            other,c=await asyncio.wait_for(self.open(22,owner=8),1)
+        old.edit_text.assert_awaited_once()
+        self.assertTrue(self.browser.is_current(a));self.assertTrue(self.browser.is_current(b));self.assertTrue(self.browser.is_current(c))
         self.assertIsNotNone(new.edit_text.await_args.kwargs['reply_markup'])
-        session = next(s for s in self.browser._sessions.values() if s.owner_id == 7)
-        b = self.browser._view(session)
-        q = self.update(callback(b, 'pages'), new)
-        b = await asyncio.wait_for(h.channel_vods_callback(q, self.context), 1)
-        q.callback_query.answer.assert_awaited_once()
-        stale_a = self.update(callback(a, 'select', 0), old)
-        await h.channel_vods_callback(stale_a, self.context)
-        assert_stale(self, stale_a)
-        # A third request and its selected HTML card must not wait for A either.
-        latest, c = await asyncio.wait_for(self.open(22, 'third'), 1)
-        stale_b = self.update(callback(b, 'pages'), new)
-        await h.channel_vods_callback(stale_b, self.context)
-        assert_stale(self, stale_b)
-        self.ready.return_value = self.ready_result()
-        await h.channel_vods_callback(self.update(callback(c, 'select', 0), latest), self.context)
-        before = latest.edit_text.await_count
-        release.set()
-        await asyncio.wait_for(opening, 1)
-        self.assertEqual(before, latest.edit_text.await_count)
-        self.assertEqual(ready_offer_text(self.ready_result()), latest.edit_text.await_args.args[0])
-        self.assertTrue(old.edit_text.await_args.args[0].endswith(h.STALE_LIST))
-        self.assertIsNone(old.edit_text.await_args.kwargs['reply_markup'])
 
-    async def test_old_edit_timeout_occurs_after_new_render_and_remains_bounded(self):
-        old, a = await self.open(20)
-        new = self.message(21)
-        async def stuck(*args, **kwargs):
-            new.edit_text.assert_awaited_once()
-            await asyncio.Event().wait()
-        old.edit_text.side_effect = stuck
-        real_timeout = asyncio.timeout
-        with patch.object(h.asyncio, 'timeout', side_effect=lambda seconds: real_timeout(min(seconds, 0.02))):
-            view = await asyncio.wait_for(h._open_and_show(new, self.context, 7, 'second'), 1)
-        self.assertTrue(self.browser.is_current(view))
-        self.assertIsNotNone(new.edit_text.await_args.kwargs['reply_markup'])
-        self.assertIsNone(getattr(self.browser._sessions.get(a.session_id), 'list_render', None))
 
-    async def test_cancelling_old_cleanup_leaves_new_session_usable_without_background_work(self):
-        old, a = await self.open(20)
-        entered = asyncio.Event()
-        async def stuck(*args, **kwargs):
-            entered.set()
-            await asyncio.Event().wait()
-        old.edit_text.side_effect = stuck
-        new = self.message(21)
-        opening = self.task(h._open_and_show(new, self.context, 7, 'second'))
-        await asyncio.wait_for(entered.wait(), 1)
-        new.edit_text.assert_awaited_once()
-        opening.cancel()
-        with self.assertRaises(asyncio.CancelledError):
-            await asyncio.wait_for(opening, 1)
-        latest, view = await asyncio.wait_for(self.open(22), 1)
-        self.assertTrue(self.browser.is_current(view))
-        self.assertEqual(2, old.edit_text.await_count)  # Initial render and one cleanup.
+
 
     async def test_navigation_edit_is_serialized_before_replacement(self):
         message, a = await self.open(20)
@@ -218,25 +139,18 @@ class StaleListTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0)
         release.set()
         await asyncio.wait_for(asyncio.gather(nav, newer), 2)
-        self.assertTrue(message.edit_text.await_args.args[0].endswith(h.STALE_LIST))
-        self.assertIsNone(message.edit_text.await_args.kwargs['reply_markup'])
+        self.assertNotIn(h.STALE_LIST,str(message.edit_text.await_args))
+        self.assertIsNotNone(message.edit_text.await_args.kwargs['reply_markup'])
 
-    async def test_selection_during_replacement_cannot_restore_old_content(self):
-        message, a = await self.open(20)
-        entered, release = asyncio.Event(), asyncio.Event()
+    async def test_selection_during_new_list_loading_uses_its_own_message(self):
+        message,a=await self.open(20);entered,release=asyncio.Event(),asyncio.Event()
         from src.twitch_api import videos
-        original = videos.fetch_archive_vods.return_value
-        async def slow(*args):
-            entered.set()
-            await release.wait()
-            return original
-        videos.fetch_archive_vods.side_effect = slow
-        newer = self.task(self.open(21))
-        await asyncio.wait_for(entered.wait(), 1)
-        q = self.update(callback(a, 'select', 0), message)
-        await asyncio.wait_for(h.channel_vods_callback(q, self.context), 1)
-        assert_stale(self, q)
-        release.set()
-        await asyncio.wait_for(newer, 2)
-        self.metadata.assert_not_awaited()
-        self.assertTrue(message.edit_text.await_args.args[0].endswith(h.STALE_LIST))
+        original=videos.fetch_archive_vods.return_value
+        async def slow(*args):entered.set();await release.wait();return original
+        videos.fetch_archive_vods.side_effect=slow
+        newer=self.task(self.open(21));await asyncio.wait_for(entered.wait(),1)
+        q=self.update(callback(a,'select',0),message)
+        await asyncio.wait_for(h.channel_vods_callback(q,self.context),1)
+        q.callback_query.answer.assert_awaited_once_with()
+        self.metadata.assert_awaited_once();release.set();await newer
+        self.assertNotIn(h.STALE_LIST,str(message.edit_text.await_args))

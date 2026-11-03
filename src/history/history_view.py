@@ -1,5 +1,6 @@
-"""One active history message per user; optional metadata outside UI lock."""
+"""Independent history messages; optional metadata outside the card's UI lock."""
 import asyncio
+import secrets
 from src.live_capture import generation_capture
 from telegram import InlineKeyboardMarkup
 from src.ui.callbacks import CallbackReply
@@ -54,6 +55,8 @@ async def _show_history(context, state, items, page, total_items, request):
                                       message_id=state['message_id'], photo=state['photo'], current=current,
                                       keep_text=text_shown and not state['photo'], file_context=context)
             if shown is not None and current():
+                from src.ui.card_context import bind
+                bind(context,state['chat'],shown.message_id)
                 state.update(message_id=shown.message_id, photo=shown.photo,
                              history_id=item.get('history_id'))
                 text_shown = not shown.photo
@@ -69,6 +72,9 @@ async def _show_history(context, state, items, page, total_items, request):
 
 
 async def _send_history_cards(chat_id, context, items, page, total_items=None, *, owner_id=None):
+    from src.ui.card_context import for_message
+    if owner_id is not None:
+        context=for_message(context,owner_id,chat_id,-secrets.randbits(63),fresh=True)
     state = dict(chat=chat_id, owner=owner_id, message_id=None, photo=False,
                  request=object(), lock=asyncio.Lock())
     context.user_data['history_view'] = state

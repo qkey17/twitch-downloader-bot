@@ -193,6 +193,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         open_data, regen = [r[0].callback_data for r in kb.inline_keyboard]
         await chat.chat_callback(self.update(regen, prompt, owner=8), self.context)
         self.runner.assert_not_awaited()
+        self.context.bot.edit_message_text.reset_mock()
         await chat.chat_callback(self.update(open_data, prompt), self.context)
         self.context.bot.send_message.assert_awaited_once()
         self.context.bot.edit_message_text.assert_not_awaited()
@@ -263,6 +264,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         message = self.message()
         await channel.channel_vods_callback(self.update(callback(view, 'select', 0), message), self.context)
         data = message.edit_text.await_args.kwargs['reply_markup'].inline_keyboard[0][0].callback_data
+        self.context.bot.edit_message_text.reset_mock()
         await chat.chat_callback(self.update(data, message), self.context)
         self.context.bot.send_message.assert_awaited_once()
         self.assertNotIn('message_id',self.context.bot.send_message.await_args.kwargs)
@@ -342,7 +344,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(task, 1)
         self.runner.assert_not_awaited()
 
-    async def test_new_input_invalidates_old_ready_actions(self):
+    async def test_new_input_preserves_other_ready_offer_actions(self):
         self.ready.return_value = self.ready_result()
         await chat.prepare_chat(self.message(), self.context, 7, '123456789')
         prompt = self.messages[-1][0]
@@ -351,4 +353,5 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         self.metadata.return_value = None
         await inputs.text_input(SimpleNamespace(message=self.message(text='999'), effective_user=SimpleNamespace(id=7)), self.context)
         await chat.chat_callback(self.update(regen, prompt), self.context)
-        self.runner.assert_not_awaited()
+        await asyncio.gather(*self.tasks)
+        self.runner.assert_awaited_once()

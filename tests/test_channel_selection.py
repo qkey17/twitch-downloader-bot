@@ -52,8 +52,12 @@ class ChannelSelectionTests(unittest.IsolatedAsyncioTestCase):
             self.addCleanup(patched.stop)
 
     def context_for_user(self):
+        async def edit(**kw):
+            message = self.telegram_messages[kw.pop('message_id')]
+            kw.pop('chat_id')
+            return await message.edit_text(**kw)
         return SimpleNamespace(application=self.app, user_data={},
-                               bot=SimpleNamespace(edit_message_text=AsyncMock(), send_message=AsyncMock(),
+                               bot=SimpleNamespace(id=42,token='123:synthetic-card-test-key',edit_message_text=AsyncMock(side_effect=edit), edit_message_caption=AsyncMock(),send_message=AsyncMock(),
                                    edit_message_media=AsyncMock(side_effect=BadRequest('Synthetic text fallback'))))
 
     def task(self, coroutine):
@@ -73,8 +77,12 @@ class ChannelSelectionTests(unittest.IsolatedAsyncioTestCase):
             result = self.message(self.next_message_id)
             self.messages.append((result, args, kwargs))
             return result
-        return SimpleNamespace(chat_id=10, message_id=number, text=text,
+        result = SimpleNamespace(chat_id=10, message_id=number, text=text,
                                reply_text=AsyncMock(side_effect=reply), edit_text=AsyncMock(), delete=AsyncMock())
+        if not hasattr(self, 'telegram_messages'):
+            self.telegram_messages = {}
+        self.telegram_messages[number] = result
+        return result
 
     def update(self, data, message=None, owner=7):
         return SimpleNamespace(callback_query=SimpleNamespace(data=data, message=message or self.message(), answer=AsyncMock()),
@@ -191,33 +199,24 @@ class ChannelSelectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('123456789', self.context.user_data['vod_pending']['vod_id'])
         self.runner.assert_not_awaited()
 
-    async def test_pending_other_vod_is_not_overwritten_even_by_ready_selection(self):
-        for ready in (None, self.ready_result()):
-            with self.subTest(ready=ready is not None):
-                set_pending(self.context, 'https://www.twitch.tv/videos/999', '999')
-                bind_pending_message(self.context, self.message(90))
-                pending = self.context.user_data['vod_pending']
-                snapshot = dict(pending)
-                self.ready.return_value = ready
-                update, result = await self.select(await self.view())
-                self.assertIsNone(result)
-                self.assertIn('другого VOD', update.callback_query.message.reply_text.await_args.args[0])
-                self.assertIs(pending, self.context.user_data['vod_pending'])
-                self.assertEqual(snapshot, pending)
-                self.metadata.assert_not_awaited()
-                self.runner.assert_not_awaited()
+    async def test_separate_message_selection_preserves_existing_bound_pending(self):
+        from src.ui.card_context import for_message
+        set_pending(self.context,'https://www.twitch.tv/videos/999','999');bind_pending_message(self.context,self.message(90))
+        old=self.context.user_data['vod_pending'];old_state=for_message(self.context,7,10,90)
+        for ready in (None,self.ready_result()):
+            self.ready.return_value=ready;result=await self.select(await self.view())
+            self.assertIsInstance(result[1],VodSelection)
+            self.assertIs(old,old_state.user_data['vod_pending']);self.assertEqual('999',old['vod_id'])
+        self.runner.assert_not_awaited()
 
-    async def test_pending_same_vod_reuses_dialog_but_expired_pending_can_be_replaced(self):
-        set_pending(self.context, 'vod', '123456789')
-        bind_pending_message(self.context, self.message(90))
-        old = self.context.user_data['vod_pending']
+    async def test_separate_cards_of_same_vod_have_independent_pending_selection(self):
+        from src.ui.card_context import for_message
+        set_pending(self.context,'vod','123456789');bind_pending_message(self.context,self.message(90))
+        old_state=for_message(self.context,7,10,90);old=old_state.user_data['vod_pending']
         await self.select(await self.view())
-        self.assertIs(old, self.context.user_data['vod_pending'])
-        self.metadata.assert_not_awaited()
-        old['created_at'] = 0
-        await self.select(await self.view())
-        self.assertIsNot(old, self.context.user_data['vod_pending'])
-        self.assertNotEqual(90, self.context.user_data['vod_pending']['message_id'])
+        self.assertIs(old,old_state.user_data['vod_pending']);self.assertIsNot(old,self.context.user_data['vod_pending'])
+        self.assertNotEqual(90,self.context.user_data['vod_pending']['message_id'])
+        self.metadata.assert_awaited_once();self.runner.assert_not_awaited()
 
     async def test_global_slot_blocks_uncached_selection_but_allows_opening_ready_html(self):
         other = self.context_for_user()
@@ -278,30 +277,24 @@ class ChannelSelectionTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.gather(*self.tasks)
         self.assertEqual('999', self.runner.await_args.kwargs['vod_id'])
 
-    async def test_session_expiry_or_another_pending_during_lookup_cannot_commit_old_selection(self):
-        for replacement in ('expiry', 'pending'):
+    async def test_lookup_obeys_own_session_expiry_but_not_other_card_pending(self):
+        from src.ui.card_context import for_message
+        for replacement in ('expiry','pending'):
             with self.subTest(replacement=replacement):
-                self.context.user_data.clear()
-                view = await self.view()
-                entered, release = asyncio.Event(), asyncio.Event()
-                async def fetch(*args):
-                    entered.set()
-                    await release.wait()
-                    return SimpleNamespace(length_seconds=60)
-                self.metadata.side_effect = fetch
-                task = self.task(self.select(view))
-                await asyncio.wait_for(entered.wait(), 1)
-                if replacement == 'expiry':
-                    self.now += self.browser.ttl
+                view=await self.view();entered,release=asyncio.Event(),asyncio.Event()
+                async def fetch(*args):entered.set();await release.wait();return SimpleNamespace(length_seconds=60)
+                self.metadata.side_effect=fetch;task=self.task(self.select(view))
+                await asyncio.wait_for(entered.wait(),1)
+                if replacement=='expiry':self.now+=self.browser.ttl
                 else:
-                    set_pending(self.context, 'vod', '999')
-                    bind_pending_message(self.context, self.message(90))
-                release.set()
-                _, result = await task
-                self.assertIsNone(result)
-                self.assertEqual(None if replacement == 'expiry' else '999',
-                                 self.context.user_data.get('vod_pending', {}).get('vod_id'))
-                self.assertNotIn('vod_link_lookup', self.context.user_data)
+                    set_pending(self.context,'vod','999');bind_pending_message(self.context,self.message(90))
+                    other=for_message(self.context,7,10,90)
+                release.set();_,result=await task
+                if replacement=='expiry':self.assertIsNone(result)
+                else:
+                    self.assertIsInstance(result,VodSelection)
+                    self.assertEqual('999',other.user_data['vod_pending']['vod_id'])
+                self.assertNotIn('vod_link_lookup',self.context.user_data)
 
     async def test_missing_vod_and_twitch_failure_leave_no_pending_or_busy_state(self):
         for error, meta, text in ((None, None, 'не найден'),

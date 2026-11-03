@@ -32,6 +32,11 @@ class ImmediateAsyncMock:
         self.call_args_list.clear()
 
 
+def make_context(bot, user_data=None):
+    return SimpleNamespace(bot=bot,user_data=user_data if user_data is not None else {},
+                           application=SimpleNamespace(bot_data={}))
+
+
 def run_callback(coro):
     with asyncio.Runner(loop_factory=asyncio.SelectorEventLoop) as runner:
         return runner.run(coro)
@@ -124,7 +129,7 @@ class HistoryPaginationTestCase(unittest.TestCase):
             message=SimpleNamespace(edit_text=ImmediateAsyncMock(), chat_id=7, message_id=20),
         )
         update = SimpleNamespace(callback_query=query, effective_user=SimpleNamespace(id=50))
-        context = SimpleNamespace(bot=SimpleNamespace(send_message=ImmediateAsyncMock(), edit_message_text=query.message.edit_text),
+        context = make_context(bot=SimpleNamespace(send_message=ImmediateAsyncMock(), edit_message_text=query.message.edit_text),
             user_data={'history_view':dict(chat=7, owner=50, message_id=20, photo=False, request=object(), lock=asyncio.Lock())})
 
         with patch("src.database.database.get_history_for_user", wraps=db.get_history_for_user) as fetch:
@@ -162,10 +167,10 @@ class HistoryPaginationTestCase(unittest.TestCase):
         query = SimpleNamespace(
             data=f"ui:histfiles:h{target_id}",
             answer=ImmediateAsyncMock(),
-            message=SimpleNamespace(reply_text=ImmediateAsyncMock(), chat_id=8),
+            message=SimpleNamespace(reply_text=ImmediateAsyncMock(), chat_id=8, message_id=20),
         )
         update = SimpleNamespace(callback_query=query, effective_user=SimpleNamespace(id=70))
-        context = SimpleNamespace(bot=SimpleNamespace(
+        context = make_context(bot=SimpleNamespace(
             send_document=ImmediateAsyncMock(),
             send_message=ImmediateAsyncMock(),
         ))
@@ -198,10 +203,10 @@ class HistoryPaginationTestCase(unittest.TestCase):
         query = SimpleNamespace(
             data=f"ui:histvod:h{history_id}",
             answer=ImmediateAsyncMock(),
-            message=SimpleNamespace(reply_text=ImmediateAsyncMock(), chat_id=9),
+            message=SimpleNamespace(reply_text=ImmediateAsyncMock(), chat_id=9, message_id=20),
         )
         update = SimpleNamespace(callback_query=query, effective_user=SimpleNamespace(id=80))
-        context = SimpleNamespace(bot=SimpleNamespace(send_message=ImmediateAsyncMock()))
+        context = make_context(bot=SimpleNamespace(send_message=ImmediateAsyncMock()))
 
         run_callback(history_vod_callback(update, context))
         self.assertIn("100000000", query.message.reply_text.call_args.args[0])
@@ -239,10 +244,10 @@ class HistoryPaginationTestCase(unittest.TestCase):
         query = SimpleNamespace(
             data=f"ui:histvod:h{history_id}",
             answer=ImmediateAsyncMock(),
-            message=SimpleNamespace(reply_text=ImmediateAsyncMock(), chat_id=10),
+            message=SimpleNamespace(reply_text=ImmediateAsyncMock(), chat_id=10, message_id=20),
         )
         update = SimpleNamespace(callback_query=query, effective_user=SimpleNamespace(id=90))
-        context = SimpleNamespace(bot=SimpleNamespace(send_message=ImmediateAsyncMock()))
+        context = make_context(bot=SimpleNamespace(send_message=ImmediateAsyncMock()))
 
         run_callback(history_vod_callback(update, context))
         self.assertEqual("Кнопка больше неактуальна", query.answer.call_args.args[0])

@@ -148,7 +148,7 @@ class DirectCancelTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(choice['create']); self.assertTrue(choice['current']())
         self.assertEqual(1,self.worker.await_count)
 
-    async def test_new_input_before_old_cleanup_prevents_old_restoration(self):
+    async def test_new_input_before_old_cleanup_preserves_independent_restoration(self):
         record = await self.direct(); await self.cancel()
         source = self.message(81,'987654321')
         await inputs.text_input(SimpleNamespace(message=source,effective_user=SimpleNamespace(id=7)),self.context)
@@ -156,7 +156,8 @@ class DirectCancelTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(record['operation'],newer['operation'])
         self.assertFalse(self.context.user_data['vod_jobs'][newer['operation']].cancelled)
         await self.done()
-        self.assertNotIn('chat_choice',self.context.user_data)
+        self.assertIn('chat_choice',self.context.user_data)
+        self.assertEqual(record['vod_id'],self.context.user_data['chat_choice']['vod_id'])
         self.assertEqual(2,self.worker.await_count)
 
     async def test_accepted_cancel_cannot_commit_a_late_successful_worker(self):
@@ -211,10 +212,10 @@ class DirectCancelTests(unittest.IsolatedAsyncioTestCase):
             newer = self.context.user_data['download_ui']
             release.set(); await asyncio.wait_for(self.tasks[0],1)
             self.assertIs(newer,self.context.user_data['download_ui']); self.assertTrue(is_busy(self.context))
-            self.context.bot.edit_message_media.assert_not_awaited()
+            self.assertEqual(newer['message'],self.context.bot.edit_message_media.await_args.kwargs['message_id'])
         await self.cancel(); await self.done()
 
-    async def test_new_channel_during_preview_prevents_late_media(self):
+    async def test_new_channel_during_preview_preserves_both_cards(self):
         record = await self.direct(); record['meta']['thumbnail_preview_url'] = URL
         await self.cancel(); entered,release = asyncio.Event(),asyncio.Event()
         async def slow(*args): entered.set(); await release.wait(); return URL
@@ -222,12 +223,17 @@ class DirectCancelTests(unittest.IsolatedAsyncioTestCase):
             self.release.set(); await asyncio.wait_for(entered.wait(),1)
             await inputs.text_input(SimpleNamespace(message=self.message(90,'other'),effective_user=SimpleNamespace(id=7)),self.context)
             release.set(); await self.done()
-        self.context.bot.edit_message_media.assert_not_awaited()
-        self.assertNotIn('chat_choice',self.context.user_data)
+        self.context.bot.edit_message_media.assert_awaited_once()
+        self.assertIn('chat_choice',self.context.user_data)
 
     async def test_failed_edit_replacement_binds_new_id_and_create_still_works(self):
         record = await self.direct(); await self.cancel()
-        self.context.bot.edit_message_text.side_effect = BadRequest('message missing')
+        original = self.context.bot.edit_message_text.side_effect
+        async def edit(**kw):
+            if kw['message_id'] == record['message']:
+                raise BadRequest('message missing')
+            return await original(**kw)
+        self.context.bot.edit_message_text.side_effect = edit
         await self.done()
         choice = self.context.user_data['chat_choice']
         self.assertNotEqual(record['message'],choice['message'])
@@ -286,9 +292,9 @@ class DirectCancelTests(unittest.IsolatedAsyncioTestCase):
         self.entered.clear(); self.release.clear()
         await chat.chat_callback(self.action(),self.context); await asyncio.wait_for(self.entered.wait(),1)
         newer = self.context.user_data['download_ui']
-        self.assertNotEqual(record['message'],newer['message'])
+        self.assertEqual(record['message'],newer['message'])
         self.assertEqual(URL,newer['meta']['thumbnail_preview_url'])
-        self.assertIn('Загрузка чата',self.by_id[newer['message']].text)
+        self.assertIn('Загрузка чата',self.by_id[newer['message']].caption)
         await self.cancel(); await self.done()
         self.assertTrue(self.context.user_data['chat_choice']['photo'])
 
@@ -299,7 +305,7 @@ class DirectCancelTests(unittest.IsolatedAsyncioTestCase):
         self.entered.clear(); self.release.clear()
         await chat.chat_callback(self.action(),self.context); await asyncio.wait_for(self.entered.wait(),1)
         newer = self.context.user_data['download_ui']
-        self.assertTrue(newer['direct']); self.assertNotEqual(record['message'],newer['message'])
+        self.assertTrue(newer['direct']); self.assertEqual(record['message'],newer['message'])
         await self.cancel(); await self.done()
         choice = self.context.user_data['chat_choice']
         self.assertTrue(choice['photo']); self.assertFalse(choice['create'])
@@ -317,7 +323,7 @@ class DirectCancelTests(unittest.IsolatedAsyncioTestCase):
         new_session = next(iter(self.browser._sessions.values())); new = self.by_id[new_session.message_id]
         before = new.text
         release.set(); await self.done()
-        self.assertEqual(before,new.text); self.assertNotIn('chat_choice',self.context.user_data)
+        self.assertEqual(before,new.text); self.assertIn('chat_choice',self.context.user_data)
 
     async def test_restore_exception_keeps_slot_released(self):
         await self.direct(); await self.cancel()

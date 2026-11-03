@@ -40,10 +40,11 @@ class QueueIntegration(unittest.IsolatedAsyncioTestCase):
                 manager=scheduler(self.application);self.assertEqual(2,manager.active)
                 if len(requests)==3:
                     ctx,u,v=requests[2];self.assertFalse(started[v].is_set())
-                    text=u.message.edit_text.await_args.kwargs['text']
+                    delivery=u.message.edit_text.await_args or ctx.bot.edit_message_text.await_args
+                    text=delivery.kwargs['text']
                     for value in ('Channel','&lt;Title&gt;','01:02:03','2 янв 2026 03:04 UTC','🕒 В очереди — обработка начнётся автоматически'):self.assertIn(value,text)
                     for value in ('9999','8888','💬','👥'):self.assertNotIn(value,text)
-                    kb=u.message.edit_text.await_args.kwargs['reply_markup'];self.assertEqual([['Отмена']],[[b.text for b in row] for row in kb.inline_keyboard])
+                    kb=delivery.kwargs['reply_markup'];self.assertEqual([['Отмена']],[[b.text for b in row] for row in kb.inline_keyboard])
                     releases[requests[0][2]].set();await asyncio.wait_for(started[v].wait(),2)
                     self.assertEqual(3,len(started));self.assertEqual(2,manager.active)
             finally:
@@ -187,7 +188,7 @@ class QueueIntegration(unittest.IsolatedAsyncioTestCase):
         manager=scheduler(self.application);manager.admission=blocked
         async def restore(context,record):
             async with record['ui_lock']:return True
-        with patch.object(vod,'download_and_send') as worker,patch.object(chat,'restore_direct_cancelled',side_effect=restore):
+        with patch.object(vod,'download_and_send') as worker,patch.object(chat,'restore_cancelled_card',side_effect=restore):
             await vod._start_download(u,ctx,'123456789')
             job=next(iter(ctx.user_data['vod_jobs'].values()))
             self.assertEqual('waiting',job.state)

@@ -60,6 +60,9 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
             return msg
         bot.send_photo = AsyncMock(side_effect=send_photo)
         bot.edit_message_text = AsyncMock(side_effect=edit)
+        async def caption(**kw):
+            return await self.by_id[kw.pop('message_id')].edit_caption(**{k:v for k,v in kw.items() if k != 'chat_id'})
+        bot.edit_message_caption=AsyncMock(side_effect=caption)
         bot.delete_message = AsyncMock()
         self.lookup = AsyncMock(return_value=URL)
         p = patch.object(preview, 'fetch_video_thumbnail', self.lookup)
@@ -79,6 +82,8 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
             self.events.append(('text', number))
             return msg
         async def caption(**kw):
+            if not msg.photo:
+                raise BadRequest('There is no caption in the message to edit')
             msg.caption, msg.keyboard = kw.get('caption'), kw.get('reply_markup')
         msg.edit_text.side_effect = edit
         msg.edit_caption = AsyncMock(side_effect=caption)
@@ -166,39 +171,20 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
         finally:
             release.set(); await asyncio.wait_for(selecting, 1)
 
-    async def test_photo_back_rebinds_same_page_before_slow_cleanup_and_old_actions_fail(self):
-        message, view, choice = await self.offer(page=1)
-        entered, release = asyncio.Event(), asyncio.Event()
-        async def slow(**kw):
-            entered.set(); await release.wait()
-        self.context.bot.delete_message.side_effect = slow
-        returning = self.task(self.back(message, view))
-        try:
-            await asyncio.wait_for(entered.wait(), 1)
-            session = self.browser._sessions[view.session_id]
-            new = self.by_id[session.message_id]
-            self.assertNotEqual(message.message_id, new.message_id)
-            self.assertFalse(session.ui_lock.locked())
-            self.assertIn('Стр. 2/2', [b.text for r in new.keyboard.inline_keyboard for b in r])
-            self.assertIs(session.list_render[0], new)
-            for action in ('open','regen'):
-                await self.act(choice, action, message)
-            q = self.update(callback(self.browser._view(session), 'prev'), message)
-            await lists.channel_vods_callback(q, self.context)
-            assert_stale(self, q)
-            current = await lists.channel_vods_callback(self.update(callback(self.browser._view(session), 'prev'), new), self.context)
-            self.assertEqual(0, current.page)
-            await self.pick(new, current, 0)
-            latest = self.context.user_data['chat_choice']
-            release.set(); await asyncio.wait_for(returning, 1)
-            self.assertIs(latest, self.context.user_data['chat_choice'])
-            self.assertTrue(latest['photo'])
-            self.assertEqual(message.message_id, self.context.bot.delete_message.await_args.kwargs['message_id'])
-            self.runner.assert_not_awaited()
-        finally:
-            release.set(); await asyncio.wait_for(returning, 1)
+    async def test_photo_back_preserves_message_and_page_without_cleanup(self):
+        message,view,choice=await self.offer(page=1)
+        restored=await self.back(message,view);session=self.browser._sessions[view.session_id]
+        self.assertEqual(20,restored.message_id);self.assertTrue(session.photo)
+        self.assertIn('Стр. 2/2',[b.text for r in message.keyboard.inline_keyboard for b in r])
+        self.assertIs(session.list_render[0],message)
+        self.context.bot.send_message.assert_not_awaited();self.context.bot.delete_message.assert_not_awaited()
+        for action in ('open','regen'):await self.act(choice,action,message)
+        self.runner.assert_not_awaited()
+        current=await lists.channel_vods_callback(self.update(callback(restored,'prev'),message),self.context)
+        self.assertEqual(0,current.page)
 
     async def test_failed_or_cancelled_cleanup_never_unbinds_new_list(self):
+        self.context.bot.edit_message_caption.side_effect = BadRequest('caption edit refused')
         for cancel in (False, True):
             with self.subTest(cancel=cancel):
                 message, view, _ = await self.offer()
@@ -220,6 +206,7 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(self.browser.is_current(self.browser._view(session)))
 
     async def test_failed_or_cancelled_list_send_preserves_old_back(self):
+        self.context.bot.edit_message_caption.side_effect = BadRequest('caption edit refused')
         for error in (RuntimeError('SECRET'), asyncio.CancelledError()):
             with self.subTest(error=type(error).__name__):
                 message, view, choice = await self.offer()
@@ -265,8 +252,8 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.gather(*self.tasks)
         self.runner.assert_awaited_once()
         new_id = self.runner.await_args.kwargs['progress_message_id']
-        self.assertNotEqual(20, new_id)
-        self.assertIn('<b>Загрузка чата…</b>', self.by_id[new_id].text)
+        self.assertEqual(20,new_id)
+        self.assertIn('<b>Загрузка чата…</b>',self.by_id[new_id].caption)
         self.assertTrue(self.by_id[new_id].keyboard.inline_keyboard[0][0].callback_data.startswith('ui:pending_cancel:'))
         self.assertFalse(self.browser.is_current(view))
         self.assertFalse(self.context.user_data['vod_busy'])
@@ -282,8 +269,8 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(self.context.user_data['vod_busy'])
                 self.assertNotIn('vod_global_operation', self.app.bot_data)
                 new = self.by_id[choice['message']]
-                self.assertTrue(new.text.startswith('🟣 ')); self.assertIsNotNone(new.keyboard)
-                self.assertFalse(choice['photo']); self.assertNotIn('action', choice)
+                self.assertTrue(new.caption.startswith('🟣 ')); self.assertIsNotNone(new.keyboard)
+                self.assertTrue(choice['photo']); self.assertNotIn('action', choice)
                 self.app.create_task.side_effect = original
                 await self.act(choice, 'regen', new)
                 await asyncio.gather(*self.tasks)
@@ -318,7 +305,7 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
         session = self.browser._sessions[view.session_id]
         self.assertTrue(session.photo)
         new = await self.back(message, self.browser._view(session))
-        self.assertNotEqual(20, new.message_id)
+        self.assertEqual(20,new.message_id)
         self.assertFalse(session.ui_lock.locked())
 
     async def test_new_channel_while_offer_metadata_waits_is_never_overwritten(self):
@@ -338,8 +325,9 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
                 message=self.message(30, 'other'), effective_user=SimpleNamespace(id=7)), self.context), 1)
             new = self.browser._sessions[latest.session_id].list_render[0]
             release.set(); await asyncio.wait_for(selecting, 1)
-            self.context.bot.edit_message_media.assert_not_awaited()
-            self.assertIn('Время указано по UTC', new.text)
+            self.context.bot.edit_message_media.assert_awaited_once()
+            self.assertEqual(message.message_id,self.context.bot.edit_message_media.await_args.kwargs['message_id'])
+            self.assertIn('Время указано по UTC',new.text)
             self.assertTrue(self.browser.is_current(latest))
         finally:
             release.set(); await asyncio.wait_for(selecting, 1)
@@ -419,7 +407,7 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
                     release.set()
                     await asyncio.wait_for(asyncio.gather(selecting, acting), 1)
                     if action == 'back':
-                        self.assertNotEqual(20, self.browser._sessions[view.session_id].message_id)
+                        self.assertEqual(20,self.browser._sessions[view.session_id].message_id)
                     elif action == 'open':
                         self.assertNotIn(view.session_id, self.browser._sessions)
                     else:
@@ -431,7 +419,7 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_progress_edit_timeout_restores_offer_without_start_or_busy_leak(self):
         message, view, choice = await self.offer()
-        self.context.bot.send_message.side_effect = TimeoutError()
+        self.context.bot.edit_message_caption.side_effect=TimeoutError()
         with self.assertRaises(RuntimeError): await self.act(choice, 'regen', message)
         self.assertFalse(self.context.user_data['vod_busy'])
         self.assertNotIn('vod_global_operation', self.app.bot_data)

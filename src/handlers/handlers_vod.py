@@ -509,7 +509,6 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
     context = JobContext(context, job)
     job.context = context
     context.shared_user_data.setdefault('vod_jobs', {})[job.id] = job
-    context.user_data.pop('html_file_action', None)
     context.user_data['ready_preview_request'] = object()
     q = update.callback_query
     vod_url = f"https://www.twitch.tv/videos/{vod_id}"
@@ -528,8 +527,9 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
               owner=update.effective_user.id, vod_id=vod_id, regenerate=regenerate,
               origin=getattr(q.message, 'download_origin', None), request=context.user_data.get('chat_request'),
               direct=bool(getattr(q.message, 'direct_vod', False)), meta=dict(initial_meta or {}),
-              ui_lock=getattr(q.message, 'ui_lock', None) or asyncio.Lock())
-    if ui['direct'] and getattr(q.message, 'thumbnail_url', None) and not ui['meta'].get('thumbnail_preview_url'):
+              ui_lock=getattr(q.message, 'ui_lock', None) or asyncio.Lock(),
+              render_lock=asyncio.Lock(),phase='waiting',photo=bool(getattr(q.message,'photo',False)))
+    if getattr(q.message, 'thumbnail_url', None) is not None and not ui['meta'].get('thumbnail_preview_url'):
         ui['meta']['thumbnail_preview_url'] = q.message.thumbnail_url
     context.user_data['download_ui'] = ui
     context.shared_user_data['download_ui'] = ui
@@ -554,11 +554,11 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
         from src.ui.result_preview import render_card, caption_fits
         url = preview_url(meta.get('thumbnail_preview_url',meta.get('thumbnail_url'))
                           or getattr(q.message,'thumbnail_url',None))
-        waiting = manager.active >= 2 or bool(manager.queue and manager.queue[0] is not job)
-        if waiting and url and caption_fits(queue_text) and not job.cancelled:
+        if url and caption_fits(queue_text) and not job.cancelled:
+            was_photo=ui['photo']
             ui['photo'] = True  # A timeout may follow a successful remote edit.
             shown = await render_card(context.bot,ui['chat'],queue_text,cancel_keyboard(context,waiting=True),url,
-                                      message_id=ui['message'],keep_text=True)
+                                      message_id=ui['message'],photo=was_photo,keep_text=True)
             if shown is not None:
                 ui['photo'] = shown.photo or shown.media_uncertain
     except BaseException as exc:
@@ -581,10 +581,10 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
 
     async def runner_coro():
         from src.workers.worker_progress import safe_edit_html
-        async with ui['ui_lock']:
-            if not is_cancelled(context, operation_id):
-                await safe_edit_html(context, q.message.chat_id, q.message.message_id,
-                                     _build_progress_card(initial_meta or {}, vod_url, 0, 0, False))
+        ui['phase']='running'
+        if not is_cancelled(context, operation_id):
+            await safe_edit_html(context, q.message.chat_id, q.message.message_id,
+                                 _build_progress_card(initial_meta or {}, vod_url, 0, 0, False))
         if is_cancelled(context, operation_id):
             finish_download(context, operation_id)
             await _show_cancelled(context,ui['chat'],ui['message'],ui)
@@ -699,6 +699,7 @@ async def _runner(
         item = _make_item(meta, stats, vod_url, fmt)
         html_url = html_result_ref
 
+        if ui is not None:ui['phase']='ready'
         await _edit_progress_message_with_card(
             context=context,
             chat_id=chat_id,
@@ -778,14 +779,10 @@ async def _show_cancelled(context, chat_id, message_id, ui):
     if not current():
         return
     try:
-        if ui and ui.get('direct'):
-            from .handlers_chat import restore_direct_cancelled
-            if await restore_direct_cancelled(context, ui):
-                return
-        if ui and ui.get('origin'):
-            from .handlers_channel_vods import restore_cancelled_selection
-            if await restore_cancelled_selection(context, ui):
-                return
+        if ui:
+            ui['phase']='cancelled'
+            from .handlers_chat import restore_cancelled_card
+            if await restore_cancelled_card(context,ui):return
         shown = await render_card(context.bot, chat_id, 'Обработка чата отменена пользователем', None,
                                   message_id=message_id, current=current, file_context=context)
         await cleanup_card(context.bot, chat_id, shown)
