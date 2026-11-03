@@ -19,6 +19,7 @@ class TwitchUser:
     id: str
     login: str
     display_name: str
+    profile_image_url: str = ''
 
 
 @dataclass(frozen=True)
@@ -107,6 +108,8 @@ async def fetch_user_by_login(session: aiohttp.ClientSession, login: str) -> Twi
     if len(data) != 1 or not isinstance(data[0], dict):
         raise TwitchAPIError('Twitch Helix returned an invalid user response', status=200)
     user = TwitchUser(*(_string(data[0], field) for field in ('id', 'login', 'display_name')))
+    from src.ui.card_images import avatar_url
+    user = TwitchUser(user.id,user.login,user.display_name,avatar_url(data[0].get('profile_image_url')) or '')
     if not _id(user.id) or user.login.lower() != login:
         raise TwitchAPIError('Twitch Helix returned an unexpected user', status=200)
     return user

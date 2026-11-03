@@ -1,9 +1,10 @@
-"""Optional bounded preview delivery; no persistence or image downloads."""
+"""Bounded image-card delivery; no persistence or external image downloads."""
 import asyncio
 import re
 from contextlib import nullcontext
 from dataclasses import dataclass
 from telegram import InputMediaPhoto
+from .card_images import DEFAULT, LIVE, item_image, telegram_image
 from telegram.error import BadRequest, Forbidden
 from src.handlers.handlers_vod_info import preview_url, _placeholder, _diagnostic
 from src.twitch_api.videos import fetch_video_thumbnail
@@ -44,6 +45,7 @@ class CardMessage:
     retired_id: int | None = None
     message: object | None = None  # A replacement owner may need Message methods.
     media_uncertain: bool = False
+    source: object | None = None
 
 
 async def _delete(bot, chat_id, message_id):
@@ -132,23 +134,24 @@ async def finish_error_card(context, chat_id, message_id, text, record=None):
     return False
 
 
-async def send_card(context, chat_id, text, keyboard, item, *, current=lambda: True, on_sent=None):
-    """Standalone card; notify its owner before waiting for optional metadata."""
-    shown = await render_card(context.bot, chat_id, text, keyboard, current=current, file_context=context)
-    if shown is None:
-        return
-    if on_sent:
-        on_sent(shown.message_id)
-    if not caption_fits(text):
-        return
-    url = await resolve_preview(context, item)
-    if url:
-        updated = await render_card(context.bot, chat_id, text, keyboard, url,
-                                    message_id=shown.message_id, current=current, keep_text=True, file_context=context)
-        if updated is not None and current():
-            if updated.message_id != shown.message_id and on_sent:
-                on_sent(updated.message_id)
-            await cleanup_card(context.bot, chat_id, updated)
+async def create_card(message, context, text):
+    """The only new card for an input; never edit the user's message."""
+    shown = await render_card(context.bot, message.chat_id, text, None, DEFAULT,
+                              reply_to=message, file_context=context)
+    return shown
+
+
+async def send_card(context, chat_id, text, keyboard, item, *, current=lambda: True, on_sent=None,
+                    message_id=None, photo=False, ui_lock=None):
+    """Shared standalone or in-place result; metadata lookup stays outside UI locks."""
+    url = await resolve_preview(context, item) if caption_fits(text) and current() else None
+    async with ui_lock or nullcontext():
+        shown = await render_card(context.bot, chat_id, text, keyboard, url or item_image(item),
+                                  message_id=message_id, photo=photo, current=current, file_context=context)
+        if shown is not None and on_sent:
+            on_sent(shown.message_id)
+    await cleanup_card(context.bot, chat_id, shown)
+    return shown
 
 
 async def render_card(bot, chat_id, text, keyboard, url=None, *, file_context=None, **kwargs):
@@ -156,10 +159,24 @@ async def render_card(bot, chat_id, text, keyboard, url=None, *, file_context=No
     if not current():return None
     record = getattr(file_context,'user_data',{}).get('download_ui') if file_context else None
     owned = record and (record['chat'],record['message']) == (chat_id,kwargs.get('message_id'))
+    card = getattr(file_context,'card',None)
+    data = card.data if card is not None else {}
+    alias = data.get('rejected_image')
+    if alias and alias[0] == url:url = alias[1]
+    cached = data.get('image_surface')
+    if cached and cached[0] == kwargs.get('message_id'):
+        kwargs['photo'] = cached[1]
+        if url == cached[2]:url = None  # Same image: edit the caption, not its media.
     async with (record.get('render_lock') if owned else None) or nullcontext():
         if not current():return None
         shown = await _render_card(bot,chat_id,text,keyboard,url,**kwargs)
         if owned and shown is not None:record['photo']=shown.photo or shown.media_uncertain
+        if shown is not None:
+            source = shown.source if shown.source is not None else (cached[2] if cached and shown.photo else None)
+            data['image_surface'] = (shown.message_id,shown.photo,source)
+            if url and shown.photo and source != url:data['rejected_image'] = (url,source)
+        elif url:
+            data.pop('image_surface',None)  # Unknown remote edit: never assume its image.
     if file_context and shown is not None and kwargs.get('message_id') is not None:
         from .card_context import bind
         bind(file_context,chat_id,shown.message_id)
@@ -167,83 +184,69 @@ async def render_card(bot, chat_id, text, keyboard, url=None, *, file_context=No
 
 
 async def _render_card(bot, chat_id, text, keyboard, url=None, *, message_id=None, photo=False,
-                      current=lambda: True, keep_text=False):
-    """Caller serializes Telegram application; metadata must be fetched outside.
-
-    Replacing photo with text sends first; caller binds the new ID, unlocks,
-    then calls cleanup_card. Failed deletion leaves old callbacks inert.
-    keep_text means this exact text/keyboard was already rendered by this
-    request: optional media failure must not create another text card.
-    """
-    if not current():
-        return None
-    if not caption_fits(text):
-        url = None
-    media_uncertain = False
-    if url:
-        try:
-            async with asyncio.timeout(5):
-                if message_id is None:
-                    sent = await bot.send_photo(chat_id=chat_id, photo=url, caption=text,
-                                                parse_mode='HTML', reply_markup=keyboard)
-                    result = CardMessage(sent.message_id, True)
-                else:
-                    await bot.edit_message_media(chat_id=chat_id, message_id=message_id,
-                                                 media=InputMediaPhoto(url, caption=text, parse_mode='HTML'),
-                                                 reply_markup=keyboard)
-                    result = CardMessage(message_id, True)
-            if not current():
-                if message_id is None:
-                    await _delete(bot, chat_id, result.message_id)
-                return None
-            return result
-        except BadRequest as exc:
-            if 'message is not modified' in str(exc).lower():
-                return CardMessage(message_id, True) if current() else None
-            _diagnostic('photo_edit_failed' if message_id is not None else 'photo_send_failed')
-        except Exception:
-            media_uncertain = True  # A network timeout may follow a remote edit.
-            _diagnostic('photo_edit_failed' if message_id is not None else 'photo_send_failed')
-            if message_id is None:
-                return None  # An uncertain send must never be followed by a duplicate.
-        if not current():
-            return None
-    if photo and message_id is not None and caption_fits(text):
+                      current=lambda: True, keep_text=False, reply_to=None):
+    """One owned message; replacement only after definite refusal or caption overflow."""
+    if not current():return None
+    fits = caption_fits(text)
+    desired = url if fits else None
+    if fits and message_id is None and desired is None:desired = DEFAULT
+    if desired:
+        fallback = LIVE if desired == LIVE else DEFAULT
+        candidates = [desired] + ([fallback] if desired != fallback else [])
+        for source in candidates:
+            if not current():return None
+            try:
+                upload=telegram_image(source)
+            except (OSError,ValueError):
+                _diagnostic('card_asset_unavailable')
+                continue
+            try:
+                async with asyncio.timeout(5):
+                    if message_id is None:
+                        sent = (await reply_to.reply_photo(photo=upload,caption=text,parse_mode='HTML',reply_markup=keyboard)
+                                if reply_to else await bot.send_photo(chat_id=chat_id,photo=upload,caption=text,parse_mode='HTML',reply_markup=keyboard))
+                        result = CardMessage(sent.message_id,True,message=sent,source=source)
+                    else:
+                        edited = await bot.edit_message_media(chat_id=chat_id,message_id=message_id,
+                            media=InputMediaPhoto(upload,caption=text,parse_mode='HTML'),reply_markup=keyboard)
+                        result = CardMessage(message_id,True,message=edited if getattr(edited,'message_id',None)==message_id else None,source=source)
+                if not current():
+                    if message_id is None:await _delete(bot,chat_id,result.message_id)
+                    return None
+                return result
+            except BadRequest as exc:
+                if 'message is not modified' in str(exc).lower():
+                    return CardMessage(message_id,True,source=source) if current() else None
+                _diagnostic('photo_edit_failed' if message_id else 'photo_send_failed')
+            except Forbidden:
+                break
+            except Exception:
+                _diagnostic('card_delivery_uncertain')
+                return None  # No duplicate send or competing edit after an ambiguous timeout.
+        # A refused new image must not leave another VOD/avatar masquerading as it.
+        # Replace with full text only after the bounded safe image fallback failed.
+    elif message_id is not None and photo and fits:
         try:
             return await edit_surface(bot,chat_id,message_id,text,keyboard,photo=True,current=current)
-        except (BadRequest,Forbidden):
-            pass  # Definite refusal: retain the established bounded replacement.
+        except (BadRequest,Forbidden):pass
         except Exception:
-            _diagnostic('card_delivery_uncertain')
-            return None  # Never send a duplicate after an ambiguous edit.
-    if keep_text and message_id is not None and not photo:
-        _diagnostic('text_fallback')
-        return CardMessage(message_id, False, media_uncertain=media_uncertain) if current() else None
+            _diagnostic('card_delivery_uncertain');return None
     if message_id is not None and not photo:
         try:
-            async with asyncio.timeout(5):
-                edited = await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text,
-                                            parse_mode='HTML', reply_markup=keyboard)
-            _diagnostic('text_fallback')
-            message = edited if getattr(edited, 'message_id', None) == message_id else None
-            return CardMessage(message_id, False, message=message) if current() else None
-        except BadRequest as exc:
-            if 'message is not modified' in str(exc).lower():
-                return CardMessage(message_id, False) if current() else None
+            result = await edit_surface(bot,chat_id,message_id,text,keyboard,current=current)
+            return result
+        except (BadRequest,Forbidden):pass
         except Exception:
-            _diagnostic('card_delivery_uncertain')
-            return None
-    if not current():
-        return None
+            _diagnostic('card_delivery_uncertain');return None
+    if not current():return None
     try:
         async with asyncio.timeout(5):
-            sent = await bot.send_message(chat_id=chat_id, text=text, parse_mode='HTML', reply_markup=keyboard)
+            sent = (await reply_to.reply_text(text,parse_mode='HTML',reply_markup=keyboard)
+                    if reply_to else await bot.send_message(chat_id=chat_id,text=text,parse_mode='HTML',reply_markup=keyboard))
     except Exception:
-        _diagnostic('card_delivery_failed')
-        return None
-    result = CardMessage(sent.message_id, False, message_id, sent)
+        _diagnostic('card_delivery_failed');return None
+    result = CardMessage(sent.message_id,False,message_id,sent)
     if not current():
-        await _delete(bot, chat_id, result.message_id)
-        return None
+        await _delete(bot,chat_id,result.message_id);return None
     _diagnostic('text_fallback')
     return result

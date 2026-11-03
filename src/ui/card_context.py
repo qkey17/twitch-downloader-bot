@@ -10,7 +10,8 @@ LIMIT = 128
 TTL = 900
 FIELDS = frozenset(('chat_request', 'chat_choice', 'vod_pending', 'vod_link_lookup',
                     'ready_preview_request', 'vod_result_choice', 'legacy_open',
-                    'history_view', 'history_file_card', 'text_input_route'))
+                    'history_view', 'history_file_card', 'text_input_route',
+                    'image_surface', 'rejected_image'))
 
 
 @dataclass

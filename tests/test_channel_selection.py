@@ -57,7 +57,7 @@ class ChannelSelectionTests(unittest.IsolatedAsyncioTestCase):
             kw.pop('chat_id')
             return await message.edit_text(**kw)
         return SimpleNamespace(application=self.app, user_data={},
-                               bot=SimpleNamespace(id=42,token='123:synthetic-card-test-key',edit_message_text=AsyncMock(side_effect=edit), edit_message_caption=AsyncMock(),send_message=AsyncMock(),
+                               bot=SimpleNamespace(send_photo=AsyncMock(side_effect=BadRequest('Unsupported static fixture photo')),id=42,token='123:synthetic-card-test-key',edit_message_text=AsyncMock(side_effect=edit), edit_message_caption=AsyncMock(),send_message=AsyncMock(),
                                    edit_message_media=AsyncMock(side_effect=BadRequest('Synthetic text fallback'))))
 
     def task(self, coroutine):
@@ -78,7 +78,7 @@ class ChannelSelectionTests(unittest.IsolatedAsyncioTestCase):
             self.messages.append((result, args, kwargs))
             return result
         result = SimpleNamespace(chat_id=10, message_id=number, text=text,
-                               reply_text=AsyncMock(side_effect=reply), edit_text=AsyncMock(), delete=AsyncMock())
+                               reply_photo=AsyncMock(side_effect=BadRequest('Unsupported static fixture photo')),reply_text=AsyncMock(side_effect=reply), edit_text=AsyncMock(), delete=AsyncMock())
         if not hasattr(self, 'telegram_messages'):
             self.telegram_messages = {}
         self.telegram_messages[number] = result

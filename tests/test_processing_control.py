@@ -1,3 +1,4 @@
+from telegram.error import BadRequest
 import asyncio
 import os
 import runpy
@@ -88,10 +89,10 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
     def request(self, user_id=1, vod_id="123456789"):
         context = SimpleNamespace(
             application=self.application, user_data={},
-            bot=SimpleNamespace(edit_message_text=AsyncMock(), send_message=AsyncMock()),
+            bot=SimpleNamespace(edit_message_text=AsyncMock(), send_message=AsyncMock(),send_photo=AsyncMock(side_effect=BadRequest('Unsupported fixture photo')),edit_message_media=AsyncMock(side_effect=BadRequest('Unsupported fixture photo'))),
         )
         message = SimpleNamespace(
-            chat_id=user_id, message_id=20, edit_text=AsyncMock(), reply_text=AsyncMock(),
+            chat_id=user_id, message_id=20, edit_text=AsyncMock(), reply_text=AsyncMock(),reply_photo=AsyncMock(side_effect=BadRequest('Unsupported fixture photo')),
             delete=AsyncMock(), text=f"https://www.twitch.tv/videos/{vod_id}",
         )
         query = SimpleNamespace(

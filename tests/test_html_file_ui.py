@@ -16,7 +16,7 @@ class FileUiTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.bot=NS(id=42,token='123:synthetic-signing-test-key',send_message=AsyncMock(return_value=NS(message_id=20)),
             edit_message_text=AsyncMock(return_value=NS(message_id=20)),edit_message_caption=AsyncMock(),
-            edit_message_media=AsyncMock(),delete_message=AsyncMock())
+            edit_message_media=AsyncMock(),send_photo=AsyncMock(return_value=NS(message_id=20)),delete_message=AsyncMock())
         self.sender=NS(send=AsyncMock(return_value=SendResult(SendStatus.SENT)),closing=False)
         self.app=NS(running=True,bot_data={SENDER_KEY:self.sender})
         self.context=NS(user_data={},bot=self.bot,application=self.app)
@@ -76,10 +76,10 @@ class FileUiTests(unittest.IsolatedAsyncioTestCase):
     async def test_ready_history_and_worker_use_same_generation_action(self):
         with patch.object(vod,'_build_card',return_value=('card',self.kb)),patch.object(vod,'_html_button_url',side_effect=lambda x:x):
             await vod._edit_progress_message_with_card(self.context,1,20,ITEM,READY['html_ref'],ready=READY,owner_id=7)
-            kb=self.bot.edit_message_text.await_args.kwargs['reply_markup']
+            kb=self.bot.edit_message_media.await_args.kwargs['reply_markup']
             await action.file_callback(self.update(markup=kb),self.context)
         await history_files._send_file_card(self.context,1,'card',self.kb,dict(ITEM,ready_result=READY),7)
-        kb=self.bot.send_message.await_args.kwargs['reply_markup']
+        kb=self.bot.send_photo.await_args.kwargs['reply_markup']
         await action.file_callback(self.update(markup=kb),self.context)
         self.assertEqual(2,self.sender.send.await_count)
 

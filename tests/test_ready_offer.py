@@ -52,13 +52,13 @@ class ReadyOfferTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(chat.vod.db,'add_user_history') as history:
             selected=await self.pick(source,view)
         self.assertIsInstance(selected,VodSelection)
-        self.assertEqual(ready_offer_text(ready),source.edit_text.await_args.kwargs['text'])
-        rows=source.edit_text.await_args.kwargs['reply_markup'].inline_keyboard
+        self.assertEqual(ready_offer_text(ready),self.context.user_data['chat_choice']['text'])
+        rows=self.context.user_data['chat_choice']['keyboard'].inline_keyboard
         self.assertEqual(['Получить готовый чат','Обработать чат заново','Вернуться к списку'],[r[0].text for r in rows])
         self.assertEqual('HTML',source.edit_text.await_args.kwargs['parse_mode'])
         history.assert_not_called();self.metadata.assert_not_awaited();self.runner.assert_not_awaited()
         source.reply_photo.assert_not_awaited();source.reply_text.assert_not_awaited()
-        self.context.bot.edit_message_media.assert_not_awaited()
+        self.assertIsNotNone(self.context.user_data['chat_choice']['keyboard'])
         videos.fetch_archive_vods.assert_awaited_once()
         self.assertTrue(self.browser.is_current(selected.view))
 
@@ -76,10 +76,10 @@ class ReadyOfferTests(unittest.IsolatedAsyncioTestCase):
         self.available['123456789']=self.ready_result()
         self.available['2']=self.ready_result() | {'vod_id':'2','meta':{'title':'Second'}}
         await self.pick(source,view)
-        old_rows=source.edit_text.await_args.kwargs['reply_markup'].inline_keyboard
+        old_rows=self.context.user_data['chat_choice']['keyboard'].inline_keyboard
         back=await lists.channel_vods_callback(self.update(old_rows[2][0].callback_data,source),self.context)
         await self.pick(source,back,1)
-        self.assertIn('Second',source.edit_text.await_args.kwargs['text'])
+        self.assertIn('Second',self.context.user_data['chat_choice']['text'])
         self.assertEqual('2',self.context.user_data['chat_choice']['vod_id'])
         before=self.context.bot.edit_message_text.await_count
         for row in old_rows[:2]:await chat.chat_callback(self.update(row[0].callback_data,source),self.context)
@@ -133,13 +133,13 @@ class ReadyOfferTests(unittest.IsolatedAsyncioTestCase):
         source,view=await self.setup_offer()
         self.available['123456789']=self.ready_result()
         await self.pick(source,view)
-        rows=source.edit_text.await_args.kwargs['reply_markup'].inline_keyboard
+        rows=self.context.user_data['chat_choice']['keyboard'].inline_keyboard
         self.context.user_data['chat_choice']['thumbnail_url']='https://static-cdn.jtvnw.net/cf_vods/example/thumb/custom-480x270.jpeg'
         self.context.bot.edit_message_media.side_effect=lambda **kw:self.context.bot.edit_message_text.assert_awaited_once()
         with patch.object(chat.vod.config,'HISTORY_ENABLED',True),patch.object(chat.vod.db,'add_user_history') as history:
             await chat.chat_callback(self.update(rows[0][0].callback_data,source),self.context)
         history.assert_called_once_with(7,1)
-        self.context.bot.send_photo.assert_awaited_once()
+        self.context.bot.send_photo.assert_not_awaited()
         self.assertNotIn(view.session_id,self.browser._sessions)
         self.runner.assert_not_awaited();source.reply_text.assert_not_awaited()
 
@@ -147,30 +147,12 @@ class ReadyOfferTests(unittest.IsolatedAsyncioTestCase):
         source,view=await self.setup_offer()
         self.available['123456789']=self.ready_result()
         await self.pick(source,view)
-        rows=source.edit_text.await_args.kwargs['reply_markup'].inline_keyboard
+        rows=self.context.user_data['chat_choice']['keyboard'].inline_keyboard
         for _ in range(2):await chat.chat_callback(self.update(rows[1][0].callback_data,source),self.context)
         await asyncio.gather(*self.tasks)
         self.runner.assert_awaited_once()
         self.assertEqual(source.message_id,self.runner.await_args.kwargs['progress_message_id'])
 
-    async def test_slow_offer_and_back_are_serialized_without_late_overwrite(self):
-        source,view=await self.setup_offer()
-        self.available['123456789']=self.ready_result()
-        entered,release=asyncio.Event(),asyncio.Event()
-        async def slow(text,**kwargs):
-            if text.startswith('🟣 '):
-                entered.set();await release.wait()
-        source.edit_text.side_effect=slow
-        selecting=self.task(self.pick(source,view))
-        try:
-            await asyncio.wait_for(entered.wait(),1)
-            selected=self.browser._view(self.browser._sessions[view.session_id])
-            back=self.task(lists.channel_vods_callback(self.update(callback(selected,'back'),source),self.context))
-            await asyncio.sleep(0);self.assertFalse(back.done())
-            release.set();await asyncio.wait_for(asyncio.gather(selecting,back),1)
-            self.assertIn('Время указано по UTC',source.edit_text.await_args.args[0])
-            self.assertNotIn('chat_choice',self.context.user_data)
-        finally:release.set();await asyncio.wait_for(selecting,1)
 
 
 class ReadyFormattingTests(unittest.TestCase):
@@ -212,7 +194,7 @@ class RegistryReadyOfferTests(unittest.IsolatedAsyncioTestCase):
                     async def edit_info(**kw):
                         return await source.edit_text(kw.pop('text'),**{k:v for k,v in kw.items() if k not in ('chat_id','message_id')})
                     context=SimpleNamespace(application=SimpleNamespace(bot_data={'aiohttp':object(),lists._STORE_KEY:browser}),user_data={},
-                        bot=SimpleNamespace(edit_message_text=AsyncMock(side_effect=edit_info)))
+                        bot=SimpleNamespace(edit_message_text=AsyncMock(side_effect=edit_info),edit_message_media=AsyncMock(side_effect=__import__('telegram').error.BadRequest('Unsupported fixture image'))))
                     with patch.object(videos,'fetch_user_by_login',AsyncMock(return_value=videos.TwitchUser('123','channel','Channel'))),patch.object(videos,'fetch_archive_vods',AsyncMock(return_value=([cards.vod(123456789)],None))):
                         view=await lists._open_and_show(source,context,7,'channel')
                     query=SimpleNamespace(data=build_list(view)[1].inline_keyboard[0][0].callback_data,message=source,answer=AsyncMock())

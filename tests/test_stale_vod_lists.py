@@ -29,10 +29,10 @@ class StaleListTests(unittest.IsolatedAsyncioTestCase):
         return message, view
 
     async def test_new_lists_preserve_existing_text_keyboard_and_sessions(self):
-        old,a=await self.open(20);text,keyboard=old.edit_text.await_args.args[0],old.edit_text.await_args.kwargs['reply_markup']
+        old,a=await self.open(20);text,keyboard=old.edit_text.await_args.kwargs['text'],old.edit_text.await_args.kwargs['reply_markup']
         await self.open(21,'second');await self.open(22,'third')
         old.edit_text.assert_awaited_once()
-        self.assertEqual(text,old.edit_text.await_args.args[0]);self.assertIs(keyboard,old.edit_text.await_args.kwargs['reply_markup'])
+        self.assertEqual(text,old.edit_text.await_args.kwargs['text']);self.assertIs(keyboard,old.edit_text.await_args.kwargs['reply_markup'])
         self.assertTrue(self.browser.is_current(a))
         current=await h.channel_vods_callback(self.update(callback(a,'pages'),old),self.context)
         self.assertTrue(self.browser.is_current(current))

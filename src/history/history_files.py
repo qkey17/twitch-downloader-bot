@@ -16,24 +16,30 @@ from src.history.history_callbacks import (
 )
 
 
-async def _send_file_card(context, chat_id, text, keyboard, item, owner):
+async def _send_file_card(context, chat_id, text, keyboard, item, owner, *, message_id=None, photo=False):
     from src.ui.card_context import for_message,bind
     data = getattr(context, 'user_data', None)
     if data is None:  # Legacy internal caller, no persistent UI context.
         await send_card(context, chat_id, text, keyboard, item)
         return
-    context=for_message(context,owner,chat_id,-secrets.randbits(63),fresh=True)
+    if message_id is None:
+        context=for_message(context,owner,chat_id,-secrets.randbits(63),fresh=True)
     data=context.user_data
-    record = dict(chat=chat_id, owner=owner, history_id=item.get('history_id'), message_id=None)
+    state = data.get('history_view') if message_id is not None else None
+    request = object()
+    if state is not None:state['request'] = request
+    record = dict(chat=chat_id, owner=owner, history_id=item.get('history_id'), message_id=message_id)
     data['history_file_card'] = record
     from src.ui.html_file_action import keyboard as file_keyboard
     keyboard = file_keyboard(context, owner, chat_id, item.get('ready_result'), keyboard, history_id=item.get('history_id'))
     def sent(message_id):
         record.update(message_id=message_id)
         bind(context,chat_id,message_id)
+        if state is not None:state['message_id'] = message_id
     await send_card(context, chat_id, text, keyboard, item,
-                    current=lambda: data.get('history_file_card') is record,
-                    on_sent=sent)
+                    current=lambda: (data.get('history_file_card') is record
+                        and (state is None or (data.get('history_view') is state and state['request'] is request))),
+                    on_sent=sent,message_id=message_id,photo=photo,ui_lock=state['lock'] if state else None)
 
 
 async def send_cached_files(context, chat_id: int, files: list[dict]):
@@ -125,7 +131,8 @@ async def history_files_callback(update, context: ContextTypes.DEFAULT_TYPE):
             return
         if not _current_message(context, q.message, update.effective_user.id, history_id):
             return
-        await _send_file_card(context, q.message.chat_id, text, kb_final, item, update.effective_user.id)
+        await _send_file_card(context, q.message.chat_id, text, kb_final, item, update.effective_user.id,
+                              message_id=q.message.message_id,photo=bool(getattr(q.message,'photo',False)))
         return
 
     # Остальные форматы — нужны файлы
@@ -152,4 +159,5 @@ async def history_files_callback(update, context: ContextTypes.DEFAULT_TYPE):
     merged = (kb.inline_keyboard if kb else []) + extra_rows
     kb_final = InlineKeyboardMarkup(merged) if merged else None
 
-    await _send_file_card(context, q.message.chat_id, text, kb_final, item, update.effective_user.id)
+    await _send_file_card(context, q.message.chat_id, text, kb_final, item, update.effective_user.id,
+                              message_id=q.message.message_id,photo=bool(getattr(q.message,'photo',False)))

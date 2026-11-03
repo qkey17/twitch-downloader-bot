@@ -1,7 +1,7 @@
 # Telegram cards: identity and lifecycle
 
-This model is implemented in the independent Telegram cards PR. It is not a
-production acceptance record.
+PR #52 introduced independent card/job/result ownership. This change completes
+its image rendering contract; it is not a production acceptance record.
 
 ## Three independent responsibilities
 
@@ -68,7 +68,43 @@ Bot token rotation invalidates old signatures. Buttons produced by older release
 with RAM-only random capabilities cannot be reconstructed and show the existing
 stale-action popup. New result cards must be opened to obtain durable buttons.
 
-## One lifecycle and one rendering surface
+## One input, one image card
+
+A valid channel/VOD input creates one **bot-owned** photo message with the small
+neutral repository cover while metadata loads. It never edits the user's input.
+Invalid syntax retains the existing short error response. Lists, VOD information,
+ready offers, queue/progress, cancellation and final results edit this message.
+Opening an already-ready HTML now edits the offer's original message; the former
+intentional fresh-final send/delete path is removed. The exact-generation signed
+download and its separate streaming document message are unchanged.
+
+The existing Get Users response supplies optional `profile_image_url`. Only a
+bounded HTTPS Twitch CDN user-picture URL is accepted, and its exact original
+string is passed to Telegram. The application does not fetch, resize, crop,
+reencode or change the format/aspect ratio of the avatar. Telegram controls its
+own photo delivery/normalization; identical delivered bytes cannot be promised.
+An unsupported original avatar uses a separate neutral cover, never a transformed
+avatar. No file-size probe or image download is added; Telegram rejects images
+outside its supported limits and the renderer handles that definite refusal.
+
+List → VOD changes media to the safe existing thumbnail. Back changes media to
+the original channel avatar retained in the bounded browser snapshot. Pagination
+reuses that avatar without another channel lookup. Missing/placeholder previews
+use `live-vod.png` for confirmed current LIVE or saved LIVE capture, otherwise
+`vod.png`. Both repository covers are 1280×720 PNGs under 10 KB; only those two
+known paths are read, with a 32 KiB cap, and uploaded as multipart `InputFile`.
+There is no image-processing dependency, remote image cache or new persistence.
+
+Each existing `CardContext` remembers only its observed message surface/source
+and one rejected-source/fallback pair. Same-source transitions edit the caption,
+so queue/progress/result do not reload an unchanged preview. This observation
+expires/evicts with the unchanged navigation cache, not a new state manager.
+History and file-card navigation use the same renderer and source message;
+history request fences and its lock prevent a late file/metadata response from
+overwriting a newer page. Saved LIVE metadata, not a new stream lookup, selects
+the history cover.
+
+## Serialized lifecycle and exceptional fallback
 
 The job card moves through waiting → running → ready, cancelled or error.
 A separate render lock serializes progress and terminal delivery, while the
@@ -76,11 +112,11 @@ navigation lock serializes user transitions. Terminal phase is set before waitin
 for the render lock: an in-flight edit finishes first, then the terminal screen
 wins and later progress is ignored.
 
-A safe existing thumbnail is applied before arming the scheduler for first and
-regenerated jobs, immediate or queued. Activation cannot be overwritten by a
-late waiting/photo edit. No additional Twitch lookup is introduced at each job
-transition. Existing URL allowlists, placeholders, full-text fallback and caption
-limits remain in force.
+The image, caption and Cancel keyboard are applied together before arming the
+scheduler for first and regenerated jobs, immediate or queued. Activation cannot
+be overwritten by a late waiting/photo edit. No additional Twitch lookup is
+introduced at each job transition. Existing URL allowlists, placeholders,
+full-text fallback and caption limits remain in force.
 
 `edit_surface` chooses text or caption for the same message, with one alternate
 API call after a definite surface-type rejection. `render_card` is shared by
@@ -98,9 +134,14 @@ prevent self-contained VOD actions. The old operation token cannot cancel the
 next job. Startup failure/error removes Cancel using the same surface mechanism;
 one bounded fallback send is allowed only after a definite Telegram rejection.
 
-Opening an already-ready result keeps the existing fresh-final-message behavior
-required by the earlier release (no follow-up edit of that final card). Its file
-button is signed for that exact generation and is independent of newer input.
+Telegram may reject an original image or an edit, or the full card may exceed
+the conservative 1024 UTF-16-unit caption budget. A bounded repository-cover
+attempt precedes text fallback for a definite image refusal. Only a confirmed
+replacement changes message identity; binding is updated before old-message
+cleanup, and cleanup failure cannot unbind the replacement. Full text is not
+truncated. An ambiguous timeout stops that delivery attempt without a competing
+send/edit; it cannot establish what Telegram displayed. Existing error handling
+releases a failed job's slot and never loops image attempts.
 
 ## Regression coverage and limits
 
@@ -110,12 +151,26 @@ cancellation after other lists and terminal/progress serialization. Existing
 scheduler, cancellation/publication, real isolated registry/history, sender,
 terminal error and maintenance tests remain.
 
+`test_single_message_media.py` uses a stateful synthetic Telegram transport:
+one initial send, original avatar → VOD → avatar, pagination, three independent
+ready cards and signed downloads after RAM loss, first/regenerated and
+immediate/queued jobs, cancellation/restart, covers, ownership, in-flight media,
+caption overflow, definite refusal and ambiguous delivery. History regressions
+also cover saved LIVE, in-place files, superseded lookups and real isolated
+SQLite remaining unchanged.
+
 Old assertions that a new list must invalidate previous lists, or that every
 photo→text transition must send/delete a message, were replaced by independence
 and in-place-caption assertions. Exceptional cleanup/replacement tests explicitly
 simulate a definite caption refusal instead of relying on normal photo behavior.
 Duplicate old-list invalidation/cleanup tests were consolidated into a bounded
 independent-list test; they are not silently skipped.
+
+Tests asserting the removed two-step optional-preview phase and intentional
+fresh-final send/delete sequence are consolidated into the stateful lifecycle
+matrix and in-place final/history tests. Their old ordering is not the new
+contract. Scheduler, cancellation/publication, registry, sender and maintenance
+regressions are retained; no skip decorators substitute for coverage.
 
 No real Telegram/Twitch calls or production operations are needed for these tests.
 Real Telegram delivery and manual UI acceptance remain owner checks. Existing

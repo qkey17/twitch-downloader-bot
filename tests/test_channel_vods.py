@@ -391,10 +391,10 @@ class ChannelVodsTests(unittest.IsolatedAsyncioTestCase):
         app = SimpleNamespace(bot_data={'aiohttp': self.http, 'vod_global_operation': 'unchanged'},
                               create_task=Mock(side_effect=self.task))
         app.bot_data[handlers._STORE_KEY] = self.browser
-        return SimpleNamespace(application=app, user_data={'vod_busy': True})
+        return SimpleNamespace(application=app,user_data={'vod_busy':True},bot=SimpleNamespace(edit_message_media=AsyncMock(side_effect=BadRequest('Unsupported fixture photo')),edit_message_text=AsyncMock()))
 
     def message(self):
-        return SimpleNamespace(chat_id=10, message_id=20, edit_text=AsyncMock(), reply_text=AsyncMock())
+        return SimpleNamespace(chat_id=10, message_id=20,edit_text=AsyncMock(),reply_photo=AsyncMock(side_effect=BadRequest('Unsupported fixture photo')),reply_text=AsyncMock())
 
     def update(self, view, action, owner=7):
         query = SimpleNamespace(data=callback_data(view, action), message=self.message(), answer=AsyncMock())
@@ -416,7 +416,7 @@ class ChannelVodsTests(unittest.IsolatedAsyncioTestCase):
         progress.edit_text.assert_not_awaited()
         release.set()
         await task
-        progress.edit_text.assert_awaited_once()
+        context.bot.edit_message_text.assert_awaited_once()
         self.assertEqual('unchanged', context.application.bot_data['vod_global_operation'])
         self.assertEqual({'vod_busy': True}, context.user_data)
 

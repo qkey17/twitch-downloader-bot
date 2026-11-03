@@ -129,7 +129,7 @@ class HistoryPaginationTestCase(unittest.TestCase):
             message=SimpleNamespace(edit_text=ImmediateAsyncMock(), chat_id=7, message_id=20),
         )
         update = SimpleNamespace(callback_query=query, effective_user=SimpleNamespace(id=50))
-        context = make_context(bot=SimpleNamespace(send_message=ImmediateAsyncMock(), edit_message_text=query.message.edit_text),
+        context = make_context(bot=SimpleNamespace(send_message=ImmediateAsyncMock(),edit_message_media=__import__('unittest').mock.AsyncMock(side_effect=__import__('telegram').error.BadRequest('Unsupported image')),edit_message_text=query.message.edit_text),
             user_data={'history_view':dict(chat=7, owner=50, message_id=20, photo=False, request=object(), lock=asyncio.Lock())})
 
         with patch("src.database.database.get_history_for_user", wraps=db.get_history_for_user) as fetch:

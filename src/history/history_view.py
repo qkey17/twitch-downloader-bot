@@ -37,38 +37,26 @@ async def _show_history(context, state, items, page, total_items, request):
         ready = lookup(item.get('vod_id'))
         if ready:
             selected = dict(item, html_url=ready['html_ref'], captured_during_live=generation_capture(ready))
+            for key in ('thumbnail_preview_url', 'thumbnail_url'):
+                if key in ready.get('meta', {}):selected[key] = ready['meta'][key]
+            item = selected
             selected_cards, _ = build_history_page([selected], page=0, per_page=1)
             text, selected_keyboard = selected_cards[0]
             keyboard = InlineKeyboardMarkup(list(selected_keyboard.inline_keyboard) + list(nav.inline_keyboard if nav else ()))
         keyboard = file_keyboard(context, state['owner'], state['chat'], ready, keyboard, history_id=item.get('history_id'))
-    text_shown = False
-
+    from src.ui.card_images import item_image
     def current():
         return context.user_data.get('history_view') is state and state['request'] is request
-
-    async def apply(url=None):
-        nonlocal text_shown
-        async with state['lock']:
-            if not current():
-                return
-            shown = await render_card(context.bot, state['chat'], text, keyboard, url,
-                                      message_id=state['message_id'], photo=state['photo'], current=current,
-                                      keep_text=text_shown and not state['photo'], file_context=context)
-            if shown is not None and current():
-                from src.ui.card_context import bind
-                bind(context,state['chat'],shown.message_id)
-                state.update(message_id=shown.message_id, photo=shown.photo,
-                             history_id=item.get('history_id'))
-                text_shown = not shown.photo
-        await cleanup_card(context.bot, state['chat'], shown)
-
-    if not state['photo']:
-        await apply()  # HTML/navigation remain available while Twitch is slow.
-    if not current():
-        return
-    url = await resolve_preview(context, item) if item and caption_fits(text) else None
-    if url or state['photo']:
-        await apply(url)
+    url=await resolve_preview(context,item) if item and current() and caption_fits(text) else None
+    async with state['lock']:
+        if not current():return
+        shown=await render_card(context.bot,state['chat'],text,keyboard,url or item_image(item),
+            message_id=state['message_id'],photo=state['photo'],current=current,file_context=context)
+        if shown is not None and current():
+            from src.ui.card_context import bind
+            bind(context,state['chat'],shown.message_id)
+            state.update(message_id=shown.message_id,photo=shown.photo,history_id=item.get('history_id'))
+    await cleanup_card(context.bot,state['chat'],shown)
 
 
 async def _send_history_cards(chat_id, context, items, page, total_items=None, *, owner_id=None):
@@ -99,6 +87,7 @@ async def show_history_page(update, context, page):
         if not await reply.send():
             return
         request = state['request'] = object()
+        context.user_data.pop('history_file_card', None)
     total = db.get_history_count(update.effective_user.id)
     page = max(0, min(page, max(0, total-1)))
     items = db.get_history_for_user(update.effective_user.id, limit=1, offset=page)

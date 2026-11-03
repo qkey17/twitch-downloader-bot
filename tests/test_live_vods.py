@@ -213,8 +213,8 @@ class HistoryLiveTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(html_file_action,'lookup',side_effect=lambda vod_id:dict(saved,vod_id=vod_id)), \
              patch.object(live,'current_stream',AsyncMock(return_value='')) as status:
             await self.open_history()
-            self.assertIn(WARNING,self.context.bot.send_message.await_args.kwargs['text'])
+            self.assertIn(WARNING,self.context.bot.send_photo.await_args.kwargs['caption'])
             await history_page_callback(self.query(1),self.context)
-            self.assertIn(WARNING,self.context.bot.edit_message_text.await_args.kwargs['text'])
+            self.assertIn(WARNING,self.context.bot.edit_message_caption.await_args.kwargs['caption'])
             self.assertEqual(2,self.context.user_data['history_view']['history_id'])
             status.assert_not_awaited()

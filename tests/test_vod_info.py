@@ -74,7 +74,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         card = self.record(view)
         self.assertEqual(source.message_id, card.message.message_id)
         self.assertTrue(card.photo)
-        self.assertEqual([('text',20),('text',20),('media',20)], self.events)
+        self.assertEqual([('text',20),('media',20)], self.events)
         self.assertEqual(['Обработать чат','Вернуться к списку'], [r[0].text for r in card.keyboard.inline_keyboard])
         for value in ('Channel','Title 123456789','01:02:03','2 янв 2026 03:04 UTC'):
             self.assertIn(value,card.text)
@@ -82,18 +82,6 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         self.metadata.assert_not_awaited(); self.runner.assert_not_awaited()
         videos.fetch_archive_vods.assert_awaited_once()
 
-    async def test_actions_are_available_before_optional_media_finishes(self):
-        source,view = await self.setup_list()
-        entered,release = asyncio.Event(),asyncio.Event()
-        original = self.context.bot.edit_message_media.side_effect
-        async def slow(**kwargs):
-            self.assertIn('Title',source.text)
-            self.assertEqual('Обработать чат',source.keyboard.inline_keyboard[0][0].text)
-            entered.set(); await release.wait(); return await original(**kwargs)
-        self.context.bot.edit_message_media.side_effect = slow
-        task = self.task(self.show(source,view))
-        await asyncio.wait_for(entered.wait(),1)
-        self.assertFalse(task.done()); release.set(); await task
 
     async def test_back_from_photo_restores_same_page_and_rebinds_message(self):
         source,view = await self.setup_list(count=8)
@@ -102,9 +90,9 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         old = self.process_update(view)
         message,restored = await self.back(view)
         self.assertEqual(1,restored.page)
-        self.assertEqual(build_list(restored)[0],message.caption)
-        self.assertEqual(source.message_id,message.message_id)
-        self.context.bot.delete_message.assert_not_awaited()
+        self.assertEqual(build_list(restored)[0],message.text)
+        self.assertNotEqual(source.message_id,message.message_id)
+        self.context.bot.delete_message.assert_awaited_once()  # Explicit fixture refusal of the list cover
         await info.info_callback(old,self.context); assert_stale(self,old)
         self.metadata.assert_not_awaited(); videos.fetch_archive_vods.assert_awaited_once()
 
@@ -133,6 +121,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         source,view = await self.setup_list()
         session = self.browser._sessions[view.session_id]
         session.vods[0] = replace(session.vods[0],title='&'*240)
+        self.context.bot.edit_message_media.reset_mock()
         await self.show(source,self.browser._view(session))
         self.assertEqual(240,source.text.count('&amp;')); self.assertIsNotNone(source.keyboard)
         self.context.bot.edit_message_media.assert_not_awaited()
@@ -230,6 +219,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_deletion_disables_only_retired_keyboard(self):
         source,view = await self.setup_list(); await self.show(source,view)
+        self.context.bot.edit_message_media.side_effect = BadRequest('Definite cover refusal')
         self.context.bot.edit_message_caption.side_effect = BadRequest('caption edit refused')
         self.context.bot.delete_message.side_effect = BadRequest('cannot delete')
         self.context.bot.edit_message_reply_markup = AsyncMock()
@@ -239,6 +229,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_slow_cleanup_cannot_delete_or_clear_new_card(self):
         source,view = await self.setup_list(); await self.show(source,view)
+        self.context.bot.edit_message_media.side_effect = BadRequest('Definite cover refusal')
         self.context.bot.edit_message_caption.side_effect = BadRequest('caption edit refused')
         entered,release = asyncio.Event(),asyncio.Event()
         async def slow(**kwargs):
@@ -254,6 +245,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cancelled_cleanup_keeps_new_list_and_invalidates_old_actions(self):
         source,view = await self.setup_list(); await self.show(source,view)
+        self.context.bot.edit_message_media.side_effect = BadRequest('Definite cover refusal')
         self.context.bot.edit_message_caption.side_effect = BadRequest('caption edit refused')
         old = self.process_update(view); entered = asyncio.Event()
         async def stuck(**kwargs):
@@ -265,12 +257,6 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(self.by_id[session.message_id].keyboard)
         await info.info_callback(old,self.context); assert_stale(self,old)
 
-    async def test_preview_timeout_is_conservatively_photo_and_back_works(self):
-        source,view = await self.setup_list()
-        self.context.bot.edit_message_media.side_effect = TimeoutError()
-        await self.show(source,view); self.assertTrue(self.record(view).photo)
-        message,restored = await self.back(view)
-        self.assertEqual(source.message_id,message.message_id); self.assertTrue(self.browser.is_current(restored))
 
     async def test_new_channel_preserves_old_info_and_its_actions(self):
         source,view=await self.setup_list();await self.show(source,view)
@@ -278,18 +264,8 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         source.edit_reply_markup.assert_not_awaited();self.assertIs(card,self.record(view))
         await self.back(view)
         self.assertTrue(self.browser.is_current(new));self.assertIsNotNone(message.keyboard)
-        self.assertIn('Время указано по UTC',source.caption)
+        self.assertIn('Время указано по UTC',self.by_id[self.browser._sessions[view.session_id].message_id].text)
 
-    async def test_delayed_preview_obeys_own_transition_but_not_other_channel(self):
-        for channel in (False,True):
-            source,view = await self.setup_list()
-            with patch.object(info,'preview_info',new=AsyncMock()): await self.show(source,view)
-            session = self.browser._sessions[view.session_id]; card = session.info_card
-            if channel: await self.open(21,'other')
-            else: await self.back(view)
-            before = list(self.events)
-            await info.preview_info(self.browser,session,card,self.context.bot)
-            self.assertEqual(len(before)+(1 if channel else 0),len(self.events))
 
     async def test_session_change_during_text_delivery_discards_late_result(self):
         source,view = await self.setup_list(''); original = self.context.bot.edit_message_text.side_effect
@@ -297,7 +273,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
             result = await original(**kwargs); self.browser._sessions[view.session_id].revision += 1; return result
         self.context.bot.edit_message_text.side_effect = changed
         await self.show(source,view)
-        self.assertIsNone(self.record(view)); self.context.bot.edit_message_media.assert_not_awaited()
+        self.assertIsNone(self.record(view))
 
     async def test_initial_edit_failure_sends_replacement_before_cleanup(self):
         source,view = await self.setup_list(''); source.edit_text.side_effect = BadRequest('cannot edit')
@@ -325,19 +301,16 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         source,view = await self.setup_list()
         await asyncio.gather(self.show(source,view,0),self.show(source,view,1))
         self.assertEqual('Title 123456789',self.browser._sessions[view.session_id].vods[self.record(view).index].title)
-        self.context.bot.edit_message_media.assert_awaited_once()
+        self.assertEqual(2,self.context.bot.edit_message_media.await_count)
         self.context.bot.send_message.assert_not_awaited()
 
-    async def test_expiry_during_preview_never_restores_expired_actions(self):
-        source,view = await self.setup_list()
-        captured = []
-        async def expired(**kw):
-            captured.append(self.process_update(view))
-            self.now += 601
-        self.context.bot.edit_message_media.side_effect = expired
+    async def test_expiry_during_atomic_media_never_installs_actions(self):
+        source,view=await self.setup_list();original=self.context.bot.edit_message_media.side_effect
+        async def expired(**kw):self.now+=601;return await original(**kw)
+        self.context.bot.edit_message_media.side_effect=expired
         await self.show(source,view)
-        old = captured[0]
-        await info.info_callback(old,self.context); assert_stale(self,old)
+        stale=self.update(f'ui:vi:{view.session_id}:0000000000000000:process',source)
+        await info.info_callback(stale,self.context);assert_stale(self,stale)
         self.runner.assert_not_awaited()
 
     async def test_information_expiry_is_bounded_by_session_ttl(self):
@@ -347,21 +320,12 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         await self.show(source,self.browser._view(session))
         self.assertEqual(session.expires,session.info_card.expires)
 
-    async def test_cancelled_preview_retains_back_with_uncertain_media_state(self):
-        source,view = await self.setup_list()
-        entered = asyncio.Event()
-        async def stuck(**kw): entered.set(); await asyncio.Event().wait()
-        self.context.bot.edit_message_media.side_effect = stuck
-        task = self.task(self.show(source,view)); await asyncio.wait_for(entered.wait(),1); task.cancel()
-        with self.assertRaises(asyncio.CancelledError): await task
-        self.assertTrue(self.record(view).photo)
-        message,restored = await self.back(view)
-        self.assertTrue(self.browser.is_current(restored)); self.assertIsNotNone(message.keyboard)
 
     async def test_text_back_failure_keeps_card_nonce_and_releases_lock(self):
         source,view = await self.setup_list(''); await self.show(source,view)
         card = self.record(view); source.edit_text.side_effect = BadRequest('edit refused')
-        with self.assertRaises(BadRequest): await self.back(view)
+        self.context.bot.send_message.side_effect=BadRequest('send refused')
+        await self.back(view)
         self.assertIs(card,self.record(view)); self.assertTrue(card.nonce)
         self.assertEqual(card.revision,self.browser._sessions[view.session_id].revision)
         self.assertFalse(lists._ui_lock(self.browser._sessions[view.session_id]).locked())
@@ -390,6 +354,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_slow_cleanup_does_not_block_replacement_channel(self):
         source,view = await self.setup_list(); await self.show(source,view)
+        self.context.bot.edit_message_media.side_effect = BadRequest('Definite cover refusal')
         self.context.bot.edit_message_caption.side_effect = BadRequest('caption edit refused')
         entered,release = asyncio.Event(),asyncio.Event()
         async def slow(**kw): entered.set(); await release.wait()

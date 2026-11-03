@@ -104,8 +104,8 @@ def information_text(channel, title, duration, created_at, *, is_live=False):
             + ('\n'+WARNING if is_live else ''))
 
 
-async def show_info(browser, session, source, request, *, bot):
-    """Render text/actions under the caller's UI lock; preview is a second step."""
+async def show_info(browser, session, source, request, *, bot, context=None):
+    """Render image, caption and actions atomically under the caller's UI lock."""
     from src.ui.result_preview import render_card
     previous = browser._view(session)
     if not browser.is_current(request.view):
@@ -122,10 +122,12 @@ async def show_info(browser, session, source, request, *, bot):
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(CREATE_CHAT, callback_data=f'ui:vi:{session.token}:{nonce}:process')],
         [InlineKeyboardButton(BACK_TO_LIST, callback_data=f'ui:vi:{session.token}:{nonce}:back')]])
+    from src.ui.card_images import vod_image
+    image=vod_image(vod.thumbnail_url,live=vod.id in view.live_vod_ids)
     try:
-        shown = await render_card(bot, source.chat_id, text, keyboard,
+        shown = await render_card(bot, source.chat_id, text, keyboard,image,
                                   message_id=session.message_id, photo=getattr(session, 'photo', False),
-                                  current=lambda: browser.is_current(view))
+                                  current=lambda: browser.is_current(view),file_context=context)
     except BaseException:
         if browser.is_current(view):
             session.revision = previous.revision
@@ -140,33 +142,6 @@ async def show_info(browser, session, source, request, *, bot):
     session.info_card = InfoCard(shown.message or source, shown.photo, nonce, view.revision, request.index,
                                  session.expires, text, keyboard, vod.thumbnail_url)
     return shown
-
-
-async def preview_info(browser, session, card, bot):
-    """Optional media never creates another card or borrows a newer binding."""
-    from .handlers_channel_vods import _ui_lock
-    from src.ui.result_preview import render_card, caption_fits
-    def current():
-        return (browser._live(session) and session.info_card is card and bool(card.nonce)
-                and session.revision == card.revision and card.expires > browser.clock()
-                and session.message_id == card.message.message_id)
-    if not current() or not caption_fits(card.text):
-        return
-    url = preview_url(card.preview)
-    if not url:
-        _diagnostic('url_missing' if not card.preview else
-                    'placeholder' if _placeholder(card.preview) else 'url_rejected')
-        return
-    async with _ui_lock(session):
-        if not current():
-            return
-        # Cancellation/timeouts can follow a successful remote edit.
-        was_photo=card.photo
-        session.photo = card.photo = True
-        shown = await render_card(bot, session.chat_id, card.text, card.keyboard, url,
-                                  message_id=session.message_id,photo=was_photo,current=current, keep_text=True)
-        if shown is not None and current():
-            session.photo = card.photo = shown.photo or shown.media_uncertain
 
 
 @callback_context
@@ -210,7 +185,7 @@ async def info_callback(update, context):
                 view = await browser.handle_callback(context.application.bot_data['aiohttp'], session.owner_id,
                     callback(previous, 'back'), session.chat_id, session.message_id)
                 try:
-                    replaced = await _render_list(card.message, view, session, bot=context.bot,
+                    replaced = await _render_list(card.message, view, session, bot=context.bot,context=context,
                                                   current=lambda: browser.is_current(view))
                 except BaseException:
                     if browser.is_current(view):

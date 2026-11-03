@@ -137,7 +137,7 @@ class LocalCompletionMessageTestCase(unittest.IsolatedAsyncioTestCase):
             "length_seconds": 60,
             "html_url": html_ref,
         }
-        bot = SimpleNamespace(edit_message_text=AsyncMock())
+        bot = SimpleNamespace(edit_message_text=AsyncMock(),edit_message_media=AsyncMock())
         context = SimpleNamespace(bot=bot,user_data={})
 
         with patch.object(handlers_vod, "HTML_PUBLISH_MODE", "local"), \
@@ -164,8 +164,9 @@ class LocalCompletionMessageTestCase(unittest.IsolatedAsyncioTestCase):
         cache_write.assert_called_once()
         self.assertEqual(html_ref, cache_write.call_args.kwargs["meta"]["html_url"])
         history_write.assert_called_once_with(7, 42)
-        call = bot.edit_message_text.call_args.kwargs
-        self.assertIn("_out/" + html_ref.removeprefix("local:"), call["text"])
+        call = bot.edit_message_media.call_args.kwargs
+        self.assertEqual(9,call['message_id'])
+        self.assertIn("_out/" + html_ref.removeprefix("local:"), call["media"].caption)
         self.assertTrue(all(
             button.text != CHAT_GENERIC
             for row in call["reply_markup"].inline_keyboard
