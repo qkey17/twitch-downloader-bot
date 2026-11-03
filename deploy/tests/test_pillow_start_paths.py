@@ -32,10 +32,7 @@ timeout() {
     fi
     fixture_timeout "$@"
 }
-sudo() {
-    fixture_sudo "$@" || return $?
-    if [[ "${4:-}" == stop && "$SCENARIO" == old_signal_* ]]; then kill -"${SCENARIO#old_signal_}" "$$"; fi
-}
+
 """
 
 @unittest.skipUnless(registry.BASH,'Bash required')
@@ -44,8 +41,9 @@ class PillowStartPaths(unittest.TestCase):
     def setUp(self):
         deployment.OracleDeploymentTests.setUp(self)
         source=self.harness.read_text(encoding='utf-8').removesuffix('${FAKE_ENTRY:-main}\n')
-        source=source.replace('\ngit() {','\nfixture_git() {').replace('\ntimeout() {','\nfixture_timeout() {').replace('\nsudo() {','\nfixture_sudo() {')
+        source=source.replace('\ngit() {','\nfixture_git() {').replace('\ntimeout() {','\nfixture_timeout() {')
         source=source.replace('    stage=imports\n','    stage=imports\n    if [[ "$SCENARIO" == signal_after_update_* ]]; then kill -"${SCENARIO#signal_after_update_}" "$$"; fi\n')
+        source=source.replace('    deadline=$((SECONDS + STOP_TIMEOUT))','    if [[ "$SCENARIO" == old_signal_* ]]; then kill -"${SCENARIO#old_signal_}" "$$"; fi\n    deadline=$((SECONDS + STOP_TIMEOUT))')
         self.harness.write_text(source+OVERRIDES+'\n${FAKE_ENTRY:-main}\n',encoding='utf-8',newline='\n')
     def test_ready_environment_is_checked_at_admission_and_before_one_start(self):
         p,events=self.run_case('pillow_ready');self.assertEqual(0,p.returncode,p.stderr)
@@ -71,7 +69,7 @@ class PillowStartPaths(unittest.TestCase):
         for signal in ('HUP','INT','TERM'):
             p,events=self.run_case('old_signal_'+signal);self.assertNotEqual(0,p.returncode)
             self.assertEqual(deployment.OLD,(self.root/'head').read_text().strip())
-            self.assertEqual(1,events.count('start'))
+            self.assertEqual(1,events.count('start'),(signal,p.returncode,p.stderr,events))
             self.assertEqual(1,sum(x.startswith('pillow:') for x in events)) # target admission only
     def test_ordinary_old_manifest_has_no_new_runtime_requirement(self):
         p,events=self.run_case('old_manifest');self.assertEqual(0,p.returncode,p.stderr)
