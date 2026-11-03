@@ -7,7 +7,7 @@ from contextlib import nullcontext
 from types import SimpleNamespace
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from . import handlers_vod as vod
-from .handlers_state import is_busy, pending_expired
+from .handlers_state import input_busy as is_busy, pending_expired
 from src.ui.callbacks import CallbackReply
 from src.ui.ui_labels import STALE_ACTION_NOTICE, ACTION_DONE_NOTICE, PROCESSING_NOTICE, ACTION_PENDING_NOTICE
 from src.ui.ui_labels import ready_chat_label, RECREATE_CHAT, CREATE_CHAT, BACK_TO_LIST, READY_UNAVAILABLE

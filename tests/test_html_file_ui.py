@@ -75,6 +75,47 @@ class FileUiTests(unittest.IsolatedAsyncioTestCase):
         await self.card();await action.file_callback(old,self.context)
         self.assertEqual(1,self.sender.send.await_count)
 
+    async def test_parallel_job_cards_keep_message_owner_and_generation_bindings(self):
+        from src.job_context import JobContext
+        from src.vod_scheduler import Job
+        contexts=[JobContext(self.context,Job(str(i)*32,7,str(i))) for i in (1,2)]
+        records=[]
+        for i,ctx in enumerate(contexts,1):
+            kb=action.keyboard(ctx,7,1,dict(READY,id=str(i)*32,vod_id=str(i)),self.kb)
+            record=action.rendering(ctx,1,20+i,kb)
+            action.bind(ctx,record,NS(message_id=20+i))
+            records.append(record)
+        self.context.user_data['chat_request']=object()  # Later navigation is independent.
+        for i,record in enumerate(records,1):
+            q=self.update(message=20+i,token=record['token'])
+            await action.file_callback(q,self.context)
+            self.sender.send.assert_awaited_with(7,1,str(i),generation_id=str(i)*32)
+            await action.file_callback(self.update(owner=99,message=20+i,token=record['token']),self.context)
+            await action.file_callback(self.update(message=20,token=record['token']),self.context)
+        self.assertEqual(2,self.sender.send.await_count)
+        records[0]['created']-=action.TTL+1
+        await action.file_callback(self.update(message=21,token=records[0]['token']),self.context)
+        await preview.render_card(self.bot,1,'intermediate',None,message_id=22,file_context=contexts[1])
+        await action.file_callback(self.update(message=22,token=records[1]['token']),self.context)
+        self.assertEqual(2,self.sender.send.await_count)
+
+    async def test_completed_job_capabilities_are_bounded_and_rebinding_revokes_old(self):
+        from src.job_context import JobContext
+        from src.vod_scheduler import Job
+        ctx=JobContext(self.context,Job('1'*32,7,'123'))
+        tokens=[]
+        for i in range(action.MAX_JOB_CARDS+2):
+            scoped=JobContext(self.context,Job(str(i),7,'123'))
+            kb=action.keyboard(scoped,7,1,READY,self.kb)
+            record=action.rendering(scoped,1,20,kb)
+            action.bind(scoped,record,NS(message_id=20));tokens.append(record['token'])
+        self.assertEqual(action.MAX_JOB_CARDS,len(self.context.user_data[action.JOB_CARDS]))
+        self.assertNotIn(tokens[0],self.context.user_data[action.JOB_CARDS])
+        kb=action.keyboard(ctx,7,1,READY,self.kb)
+        old=action.rendering(ctx,1,20,kb);action.bind(ctx,old,NS(message_id=20))
+        action.keyboard(ctx,7,1,READY,self.kb)
+        self.assertNotIn(old['token'],self.context.user_data[action.JOB_CARDS])
+
     async def test_media_replacement_rebinds_and_intermediate_edit_revokes(self):
         self.bot.send_message.return_value=NS(message_id=21)
         await self.card(photo=True)

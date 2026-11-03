@@ -27,6 +27,7 @@ from .handlers.handlers_input import (
 from .html_cleanup import start_cleanup, stop_cleanup
 from .maintenance import start_maintenance, stop_maintenance
 from .html_sender import start_sender, stop_sender
+from .vod_scheduler import stop_scheduler
 from .ui.html_file_action import file_callback
 from src.handlers.handlers import (
     start_command,
@@ -70,8 +71,8 @@ async def history_command(update, context: ContextTypes.DEFAULT_TYPE):
 
 class TcdApplication(Application):
     async def stop(self):
-        # A future PTB callback can itself be awaiting sender.send(). Cancel and
-        # join uploads BEFORE PTB waits for those handlers/create_task waiters.
+        # Drain owned jobs/uploads before PTB waits for handlers/create_task.
+        await stop_scheduler(self)
         await stop_sender(self)
         await super().stop()
 
@@ -112,6 +113,7 @@ async def post_stop(app: Application):
 async def post_shutdown(app: Application):
     # Also covers a failed startup, when PTB does not invoke post_stop.
     try:
+        await stop_scheduler(app)
         try:
             await stop_maintenance(app)
         finally:

@@ -18,12 +18,26 @@ def extract_vod_id_strict(url: str) -> Optional[str]:
 
 
 def is_busy(context: ContextTypes.DEFAULT_TYPE) -> bool:
-    return bool(context.user_data.get("vod_busy"))
+    if context.user_data.get('_vod_job') is not None:
+        return bool(context.user_data.get('vod_busy'))
+    return bool(context.user_data.get("vod_busy") or any(j.state in ("waiting","running") for j in context.user_data.get("vod_jobs", {}).values()))
+
+
+def input_busy(context):
+    """Downloads have their own cards; only a legacy unscoped operation blocks input."""
+    return bool(context.user_data.get("vod_busy")) and not (
+        context.user_data.get('_vod_job') is None and context.user_data.get('vod_jobs'))
 
 
 def is_globally_busy(context: ContextTypes.DEFAULT_TYPE) -> bool:
+    manager = context.application.bot_data.get('tdb_vod_scheduler')
+    legacy = context.application.bot_data.get(_GLOBAL_OPERATION_KEY)
+    from src.vod_scheduler import INPUT_TICKET
+    ticket = INPUT_TICKET.get()
+    owns_place = ticket is not None and ticket[0] is manager and ticket[1]
     return (admission_closed(context.application)
-            or context.application.bot_data.get(_GLOBAL_OPERATION_KEY) is not None)
+            or (legacy is not None and (manager is None or legacy not in manager.jobs))
+            or (manager is not None and manager.full and not owns_place))
 
 
 def set_busy(context: ContextTypes.DEFAULT_TYPE, v: bool):
@@ -31,7 +45,12 @@ def set_busy(context: ContextTypes.DEFAULT_TYPE, v: bool):
 
 
 def begin_download(context: ContextTypes.DEFAULT_TYPE) -> str | None:
-    """Atomically reserve the single application slot, without awaiting or queuing."""
+    """Bind a reserved job, or retain single-slot admission for legacy callers."""
+    job = context.user_data.get("_vod_job")
+    if job is not None:
+        context.user_data[_ACTIVE_OPERATION_KEY] = job.id
+        context.user_data["vod_busy"] = True
+        return job.id
     bot_data = context.application.bot_data
     if admission_closed(context.application) or bot_data.get(_GLOBAL_OPERATION_KEY) is not None or is_busy(context):
         return None
@@ -45,6 +64,14 @@ def begin_download(context: ContextTypes.DEFAULT_TYPE) -> str | None:
 
 def finish_download(context: ContextTypes.DEFAULT_TYPE, operation_id: str | None) -> bool:
     """Release state only when it still belongs to this operation."""
+    job = context.user_data.get("_vod_job")
+    if job is not None:
+        if operation_id != job.id or context.user_data.get(_ACTIVE_OPERATION_KEY) != job.id:
+            return False
+        context.user_data["vod_busy"] = False
+        context.user_data.pop(_ACTIVE_OPERATION_KEY, None)
+        context.user_data.pop(_CANCEL_OPERATION_KEY, None)
+        return True
     if operation_id is None:
         if context.user_data.get(_ACTIVE_OPERATION_KEY) is not None:
             return False
@@ -111,6 +138,12 @@ def set_cancel(context: ContextTypes.DEFAULT_TYPE, v: bool):
 
 
 def is_cancelled(context: ContextTypes.DEFAULT_TYPE, operation_id: str | None = None) -> bool:
+    job = context.user_data.get("_vod_job")
+    if job is not None and operation_id == job.id:
+        return job.cancelled
+    job = context.user_data.get('vod_jobs', {}).get(operation_id)
+    if job is not None:
+        return job.cancelled
     cancel_operation = context.user_data.get(_CANCEL_OPERATION_KEY)
     if operation_id is None:
         if context.user_data.get(_ACTIVE_OPERATION_KEY) is not None:
