@@ -92,7 +92,7 @@ async def _dispatch_one(message, context, owner_id, value):
         if value.kind == 'vod':
             return await prepare_vod_choice(message, context, owner_id, value.value, is_current=current)
         task = await show_channel_vods(message, context, owner_id, value.value)
-        return await task  # Already owned by Application.create_task.
+        return await task if task is not None else None  # Already PTB-owned; uncertain delivery stops here.
     finally:
         if context.user_data.get(_ROUTE) is record:
             context.user_data.pop(_ROUTE, None)

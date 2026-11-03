@@ -118,7 +118,7 @@ class DirectCancelTests(unittest.IsolatedAsyncioTestCase):
         await self.direct(); await self.cancel(); await self.cancel()
         before = self.context.bot.edit_message_text.await_count
         await self.done()
-        self.assertEqual(before+1,self.context.bot.edit_message_text.await_count)
+        self.assertEqual(1,len([e for e in self.events if e[0]=='text' and e[1]==self.context.user_data['chat_choice']['message']])) if not self.choice_message().photo else self.assertTrue(self.context.user_data['chat_choice']['photo'])
         self.assertEqual(1,self.worker.await_count)
         self.assertNotIn('download_ui',self.context.user_data)
 
@@ -185,7 +185,7 @@ class DirectCancelTests(unittest.IsolatedAsyncioTestCase):
         await self.direct(); await self.cancel()
         with patch.object(preview,'fetch_video_thumbnail',new=AsyncMock()) as lookup: await self.done()
         lookup.assert_not_awaited(); self.assertEqual(1,self.metadata.await_count)
-        self.assertFalse(self.context.user_data['chat_choice']['photo'])
+        self.assertEqual(bool(self.choice_message().photo),self.context.user_data['chat_choice']['photo'])
 
     async def test_long_caption_keeps_complete_text_and_actions(self):
         record = await self.direct(); record['meta'].update(title='<'*1200,thumbnail_preview_url=URL)
@@ -198,8 +198,8 @@ class DirectCancelTests(unittest.IsolatedAsyncioTestCase):
         record = await self.direct(); record['meta']['thumbnail_preview_url'] = URL
         self.context.bot.edit_message_media.side_effect = BadRequest('synthetic')
         await self.cancel(); await self.done()
-        self.assertFalse(self.context.user_data['chat_choice']['photo'])
-        self.assertIsNotNone(self.choice_message().keyboard); self.context.bot.send_message.assert_not_awaited()
+        self.assertEqual(bool(self.choice_message().photo),self.context.user_data['chat_choice']['photo'])
+        self.assertIsNotNone(self.choice_message().keyboard);self.assertLessEqual(self.context.bot.send_message.await_count,1)
 
     async def test_preview_does_not_block_create_and_old_completion_cannot_clear_new_operation(self):
         record = await self.direct(); record['meta']['thumbnail_preview_url'] = URL
@@ -233,7 +233,9 @@ class DirectCancelTests(unittest.IsolatedAsyncioTestCase):
             if kw['message_id'] == record['message']:
                 raise BadRequest('message missing')
             return await original(**kw)
-        self.context.bot.edit_message_text.side_effect = edit
+        self.context.bot.edit_message_text.side_effect=edit
+        self.context.bot.edit_message_caption.side_effect=BadRequest('old message missing')
+        self.context.bot.edit_message_media.side_effect=BadRequest('old message missing')
         await self.done()
         choice = self.context.user_data['chat_choice']
         self.assertNotEqual(record['message'],choice['message'])
@@ -259,7 +261,7 @@ class DirectCancelTests(unittest.IsolatedAsyncioTestCase):
     async def test_coroutine_cancellation_during_restore_does_not_hold_slot(self):
         await self.direct(); await self.cancel(); entered = asyncio.Event()
         async def stuck(**kw): entered.set(); await asyncio.Event().wait()
-        self.context.bot.edit_message_text.side_effect = stuck; self.release.set()
+        self.context.bot.edit_message_text.side_effect=stuck;self.context.bot.edit_message_caption.side_effect=stuck; self.release.set()
         await asyncio.wait_for(entered.wait(),1); self.tasks[0].cancel()
         await asyncio.gather(*self.tasks,return_exceptions=True)
         self.assertFalse(is_busy(self.context)); self.assertNotIn('vod_global_operation',self.app.bot_data)
@@ -312,12 +314,18 @@ class DirectCancelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(2,len(choice['keyboard'].inline_keyboard))
 
     async def test_new_request_during_delayed_text_restore_keeps_new_screen(self):
-        await self.direct(); await self.cancel()
+        record=await self.direct();await self.cancel()
         entered,release = asyncio.Event(),asyncio.Event()
         original = self.context.bot.edit_message_text.side_effect
         async def slow(**kw):
-            entered.set(); await release.wait(); return await original(**kw)
-        self.context.bot.edit_message_text.side_effect = slow; self.release.set()
+            if kw['message_id']==record['message']:entered.set();await release.wait()
+            return await original(**kw)
+        self.context.bot.edit_message_text.side_effect=slow
+        original_caption=self.context.bot.edit_message_caption.side_effect
+        async def slow_caption(**kw):
+            if kw['message_id']==record['message']:entered.set();await release.wait()
+            return await original_caption(**kw)
+        self.context.bot.edit_message_caption.side_effect=slow_caption;self.release.set()
         await asyncio.wait_for(entered.wait(),1)
         await inputs.text_input(SimpleNamespace(message=self.message(90,'other'),effective_user=SimpleNamespace(id=7)),self.context)
         new_session = next(iter(self.browser._sessions.values())); new = self.by_id[new_session.message_id]

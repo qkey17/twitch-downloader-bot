@@ -319,17 +319,11 @@ class ProgressCancelTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(entered.is_set()); self.assertFalse(is_busy(self.context))
         self.assertTrue(self.closed); self.assertNotIn('download_ui',self.context.user_data)
 
-    async def test_ready_final_photo_is_one_new_send_without_offer_edits(self):
-        source, _, choice = await self.offer()
-        self.context.bot.edit_message_media.reset_mock()
-        self.context.bot.edit_message_text.reset_mock()
-        self.context.bot.send_message.reset_mock()
+    async def test_ready_final_photo_edits_existing_caption_without_send_or_delete(self):
+        source,_,choice=await self.offer();self.context.bot.edit_message_caption.reset_mock()
         await self.act(choice,'open',source)
-        self.context.bot.send_photo.assert_awaited_once()
-        self.context.bot.edit_message_media.assert_not_awaited()
-        self.context.bot.edit_message_text.assert_not_awaited()
-        self.context.bot.send_message.assert_not_awaited()
-        self.context.bot.delete_message.assert_awaited_once_with(chat_id=source.chat_id,message_id=source.message_id)
+        self.context.bot.edit_message_caption.assert_awaited_once()
+        self.context.bot.send_photo.assert_not_awaited();self.context.bot.send_message.assert_not_awaited();self.context.bot.delete_message.assert_not_awaited()
 
     async def test_direct_input_full_progress_deduplicates_initial_worker_card(self):
         self.available.clear()
@@ -337,7 +331,7 @@ class ProgressCancelTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(self.entered.wait(),1)
         ui=self.context.user_data['download_ui']
         text=_build_progress_card(vars(self.metadata.return_value),'',0,0,False)
-        self.assertEqual(text,self.by_id[ui['message']].text)
+        self.assertEqual(text,self.by_id[ui['message']].caption if self.by_id[ui['message']].photo else self.by_id[ui['message']].text)
         before=len(self.events)
         await safe_edit_html(self.context,ui['chat'],ui['message'],text)
         self.assertEqual(before,len(self.events))

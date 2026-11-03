@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import aiohttp
 from telegram.ext import Application
+from telegram.error import BadRequest
 
 from src.handlers import handlers_vod
 from src.handlers.handlers_state import (
@@ -44,6 +45,8 @@ class TaskLifecycleTestCase(unittest.IsolatedAsyncioTestCase):
             bot=SimpleNamespace(
                 edit_message_text=AsyncMock(),
                 send_message=AsyncMock(),
+                # This legacy text-only fixture models a definite media refusal.
+                edit_message_media=AsyncMock(side_effect=BadRequest('Photo unsupported')),
             ),
         )
 

@@ -134,38 +134,13 @@ async def _edit_progress_message_with_card(context, chat_id: int, message_id: in
     from src.ui.html_file_action import keyboard
     final_kb = keyboard(context, owner_id, chat_id, ready, final_kb)
 
-    if fresh:
-        # Previously ready HTML: send the final form once, never edit the offer
-        # or upgrade the new result from text to photo after sending it.
-        url = await resolve_preview(context, item) if current() and caption_fits(text) else None
-        async with ui_lock or nullcontext():
-            shown = await render_card(context.bot, chat_id, text, final_kb, url,
-                                      current=current, file_context=context)
-            if shown is not None and on_photo:
-                on_photo()
-        if shown is not None:
-            from src.ui.result_preview import CardMessage
-            await cleanup_card(context.bot, chat_id, CardMessage(shown.message_id, shown.photo, message_id))
-        return shown is not None
-
-    # Make HTML available BEFORE any optional Twitch lookup.
-    if not photo:
-        async with ui_lock or nullcontext():
-            shown = await render_card(context.bot, chat_id, text, final_kb, message_id=message_id, current=current, file_context=context)
-            if shown and shown.message_id != message_id and on_photo:
-                on_photo()  # Replacement is terminal too: retire callbacks on the old source.
-        await cleanup_card(context.bot, chat_id, shown)
-        if shown is None or shown.message_id != message_id:
-            return shown is not None  # Preserve the safe fallback, no second card.
-    url = await resolve_preview(context, item) if current() and caption_fits(text) else None
-    if not url and not photo:
-        return True
+    from src.ui.card_images import item_image
+    url = await resolve_preview(context,item) if current() and caption_fits(text) else None
     async with ui_lock or nullcontext():
-        shown = await render_card(context.bot, chat_id, text, final_kb, url, message_id=message_id,
-                                  photo=photo, current=current, keep_text=not photo, file_context=context)
-        if shown and (shown.photo or shown.message_id != message_id) and on_photo:
-            on_photo()  # Terminal result: old list/back actions cannot edit a photo as text.
-    await cleanup_card(context.bot, chat_id, shown)
+        shown = await render_card(context.bot,chat_id,text,final_kb,url or item_image(item),
+            message_id=message_id,photo=photo,current=current,file_context=context)
+        if shown is not None and on_photo:on_photo()
+    await cleanup_card(context.bot,chat_id,shown)
     return shown is not None
 
 
@@ -534,7 +509,7 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
     context.user_data['download_ui'] = ui
     context.shared_user_data['download_ui'] = ui
     from src.workers.worker_progress import _build_progress_card, cancel_keyboard
-    from .handlers_vod_info import information_text, preview_url
+    from .handlers_vod_info import information_text
     from src.ui.ui_formatters import _fmt_len
     meta = initial_meta or {}
     if regenerate:
@@ -545,22 +520,27 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
                                       _fmt_len(meta.get('length_seconds')),meta.get('created_at'))
         queue_text += '\n🕒 В очереди — обработка начнётся автоматически'
         initial_text = queue_text
-        await q.message.edit_text(
-            text=initial_text, parse_mode='HTML', reply_markup=cancel_keyboard(context,waiting=True)
-        )
-        ui.update(message=q.message.message_id, last_text=initial_text)
-        # Deliver optional media before arming: activation cannot race this edit,
+        if not modern:  # Compatibility for the old internal format chooser.
+            await q.message.edit_text(
+                text=initial_text, parse_mode='HTML', reply_markup=cancel_keyboard(context,waiting=True)
+            )
+            ui['message']=q.message.message_id
+        ui['last_text']=initial_text
+        # Deliver image/caption together before arming: activation cannot race this edit,
         # and cancellation waits for delivery. Never look up another thumbnail.
-        from src.ui.result_preview import render_card, caption_fits
-        url = preview_url(meta.get('thumbnail_preview_url',meta.get('thumbnail_url'))
-                          or getattr(q.message,'thumbnail_url',None))
-        if url and caption_fits(queue_text) and not job.cancelled:
-            was_photo=ui['photo']
-            ui['photo'] = True  # A timeout may follow a successful remote edit.
-            shown = await render_card(context.bot,ui['chat'],queue_text,cancel_keyboard(context,waiting=True),url,
-                                      message_id=ui['message'],photo=was_photo,keep_text=True)
-            if shown is not None:
-                ui['photo'] = shown.photo or shown.media_uncertain
+        from src.ui.result_preview import render_card, cleanup_card
+        from src.ui.card_images import item_image
+        image=item_image(dict(meta,thumbnail_preview_url=getattr(q.message,'thumbnail_url',None))
+                         if getattr(q.message,'thumbnail_url',None) is not None else meta)
+        if not job.cancelled:
+            shown = await render_card(context.bot,ui['chat'],queue_text,cancel_keyboard(context,waiting=True),image,
+                                      message_id=ui['message'],photo=ui['photo'],file_context=context)
+            if shown is None:raise RuntimeError('queue_media_delivery_unknown')
+            ui.update(photo=shown.photo,message=shown.message_id)
+            on_bind=getattr(q.message,'on_bind',None)
+            if on_bind:on_bind(shown)
+            await cleanup_card(context.bot,ui['chat'],shown)
+
     except BaseException as exc:
         telemetry.fail(exc)
         try:
@@ -583,7 +563,7 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
         from src.workers.worker_progress import safe_edit_html
         ui['phase']='running'
         if not is_cancelled(context, operation_id):
-            await safe_edit_html(context, q.message.chat_id, q.message.message_id,
+            await safe_edit_html(context, ui['chat'],ui['message'],
                                  _build_progress_card(initial_meta or {}, vod_url, 0, 0, False))
         if is_cancelled(context, operation_id):
             finish_download(context, operation_id)
@@ -592,7 +572,7 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
         return await _runner(
         context=context,
         chat_id=q.message.chat_id,
-        progress_message_id=q.message.message_id,
+        progress_message_id=ui['message'],
         vod_url=vod_url,
         vod_id=vod_id,
         fmt=fmt,

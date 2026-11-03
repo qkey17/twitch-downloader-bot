@@ -43,24 +43,17 @@ def _ui_lock(session):
     return session.ui_lock
 
 
-async def _render_list(message, view, session, *, bot=None, current=lambda: True):
-    # Called under this session's UI lock, never use Message.text as a cache.
-    if getattr(session, 'photo', False):
-        from src.ui.result_preview import render_card
-        text, keyboard = build_list(view)
-        shown = await render_card(bot, message.chat_id, text, keyboard,
-                                  message_id=message.message_id, photo=True, current=current)
-        if shown is None:
-            return None
-        # Transfer ownership before cleanup/unlocking. Old callbacks fail both
-        # their revision and message binding; never edit a photo as text.
-        session.message_id, session.photo = shown.message_id, shown.photo or shown.media_uncertain
-        session.list_render = (shown.message or message, text)
-        return shown
-    await _edit(message, view)
-    session.list_render = (message, build_list(view)[0]) if view.status in ('ready', 'empty') and view.complete else None
-    from src.ui.result_preview import CardMessage
-    return CardMessage(message.message_id,False,message=message)
+async def _render_list(message, view, session, *, bot=None, current=lambda: True, context=None):
+    from src.ui.result_preview import render_card
+    from src.ui.card_images import avatar_url, DEFAULT
+    text,keyboard = build_list(view) if isinstance(view,ListView) else build_channel_vod_card(view)
+    image = avatar_url(getattr(view.channel,'profile_image_url',None)) or DEFAULT
+    shown = await render_card(bot,message.chat_id,text,keyboard,image,message_id=message.message_id,
+                              photo=getattr(session,'photo',False),current=current,file_context=context)
+    if shown is not None:
+        session.message_id,session.photo=shown.message_id,shown.photo
+        session.list_render=(shown.message or message,text)
+    return shown
 
 
 def _consume_selection(session):
@@ -95,7 +88,7 @@ async def _prepare_selection(query, message, context, browser, session, result, 
                            is_current=lambda: browser.is_current(view), edit=True,
                            back=callback(view, 'back'), on_start=lambda: browser.retire(view),
                            ui_lock=_ui_lock(session), thumbnail_url=result.view.vod.thumbnail_url,
-                           ready_only=ready_only, on_bind=bind, download_origin=origin, on_download=started,photo=getattr(session,'photo',False))
+                           image_live=result.vod_id in getattr(view,'live_vod_ids',()),ready_only=ready_only, on_bind=bind, download_origin=origin, on_download=started,photo=getattr(session,'photo',False))
     finally:
         # The consumed inline card may already be progress/the ready screen.
         # close_info never edits a detached record or its reused message ID.
@@ -127,11 +120,19 @@ async def _open_and_show(message, context, owner_id, login):
                               message.chat_id,message.message_id)
     session = browser._sessions.get(view.session_id)
     if session is not None:
+        shown = None
         async with _ui_lock(session):
             if browser.is_current(view):
-                await _render_list(message,view,session,bot=getattr(context,'bot',None),current=lambda:browser.is_current(view))
+                shown = await _render_list(message,view,session,bot=getattr(context,'bot',None),context=context,current=lambda:browser.is_current(view))
+        from src.ui.result_preview import cleanup_card
+        await cleanup_card(context.bot,message.chat_id,shown)
     elif view.session_id is None:
-        await _edit(message,view)
+        from src.ui.result_preview import render_card,cleanup_card
+        from src.ui.card_images import DEFAULT
+        text,keyboard=build_list(view) if isinstance(view,ListView) else build_channel_vod_card(view)
+        shown=await render_card(context.bot,message.chat_id,text,keyboard,DEFAULT,
+            message_id=message.message_id,photo=bool(getattr(message,'photo',False)),file_context=context)
+        await cleanup_card(context.bot,message.chat_id,shown)
     return view
 
 
@@ -173,7 +174,6 @@ async def _list_callback(update, context, browser):
     navigation_card = None
     replaced = None
     ready_only = False
-    info_preview = None
     try:
         async with _ui_lock(session):
             if not browser._live(session) or str(session.revision) != parts[3]:
@@ -194,9 +194,8 @@ async def _list_callback(update, context, browser):
                     from .handlers_vod_info import show_info
                     if not await reply.send():
                         return
-                    replaced = await show_info(browser, session, message, result, bot=context.bot)
+                    replaced = await show_info(browser, session, message, result, bot=context.bot, context=context)
                     if replaced is not None:
-                        info_preview = session.info_card
                         return replace(result, view=browser._view(session))
                     return None
                 result = await browser.handle_callback(context.application.bot_data['aiohttp'], result.owner_id,
@@ -213,7 +212,7 @@ async def _list_callback(update, context, browser):
                     return
                 if browser.is_current(view):
                     try:
-                        replaced = await _render_list(message, view, session, bot=getattr(context, 'bot', None),
+                        replaced = await _render_list(message, view, session, bot=getattr(context, 'bot', None),context=context,
                                                       current=lambda: browser.is_current(view))
                     except BaseException:
                         if browser.is_current(view):
@@ -236,9 +235,7 @@ async def _list_callback(update, context, browser):
         if navigation_card is not None:
             from .handlers_vod_info import close_info
             await close_info(session, navigation_card)
-        if info_preview is not None:
-            from .handlers_vod_info import preview_info
-            await preview_info(browser, session, info_preview, context.bot)
+
     if isinstance(result, VodSelection):
         await _prepare_selection(query, message, context, browser, session, result, card, ready_only=ready_only, reply=reply)
     return result
@@ -250,13 +247,18 @@ async def show_channel_vods(message, context, owner_id, login):
     Text and command routing may await the returned task without blocking PTB's
     update processing. Browsing never reserves a download slot or reads chat.
     """
-    progress = await message.reply_text('Загрузка VODs канала…')
+    from src.ui.result_preview import create_card
+    shown=await create_card(message,context,'Загрузка VODs канала…')
+    if shown is None:return
+    progress=shown.message
     coroutine = _open_and_show(progress, context, owner_id, login)
     try:
         return context.application.create_task(coroutine)
     except BaseException:
         coroutine.close()
-        await progress.edit_text('Не удалось открыть список VODs. Повторите попытку.')
+        from src.ui.result_preview import render_card
+        await render_card(context.bot,progress.chat_id,'Не удалось открыть список VODs. Повторите попытку.',None,
+                          message_id=progress.message_id,photo=shown.photo,file_context=context)
         raise
 
 

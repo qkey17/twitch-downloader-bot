@@ -33,7 +33,7 @@ class NavigationCards(unittest.IsolatedAsyncioTestCase):
             source,view=await self.open(n);await self.pick(source,view)
             ctx=for_message(self.context,7,10,source.message_id);choice=ctx.user_data['chat_choice']
             await chat.chat_callback(self.update(f'ui:chat:open:{choice["token"]}',source),self.context)
-            results.append(self.by_id[self.next_message_id])
+            results.append(source)
         await self.open(23,'another')
         restarted=NS(user_data={},bot=self.context.bot,application=NS(running=True,bot_data={SENDER_KEY:sender}))
         for message in results:
@@ -73,7 +73,7 @@ class NavigationCards(unittest.IsolatedAsyncioTestCase):
         self.now+=601;self.browser._prune()
         self.assertNotIn(view.session_id,self.browser._sessions)
         await chat.chat_callback(self.update(f'ui:chat:open:{choice["token"]}',source),self.context)
-        self.context.bot.send_photo.assert_awaited_once()
+        self.context.bot.send_photo.assert_not_awaited()
         self.runner.assert_not_awaited()
 
     async def test_reusing_exact_message_consumes_its_previous_offer(self):
@@ -104,7 +104,7 @@ class NavigationCards(unittest.IsolatedAsyncioTestCase):
         card=self.browser._sessions[view.session_id].info_card
         self.now+=301
         await info.info_callback(self.update(f'ui:vi:{view.session_id}:{card.nonce}:back',source),self.context)
-        self.assertIn('Время указано по UTC',source.caption)
+        self.assertIn('Время указано по UTC',self.by_id[self.browser._sessions[view.session_id].message_id].text)
 
 
 class JobCards(unittest.IsolatedAsyncioTestCase):

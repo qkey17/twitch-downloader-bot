@@ -16,7 +16,7 @@ from src.ui.ui_history import ready_offer_text
 from src.ui.result_preview import render_card, resolve_preview, caption_fits, cleanup_card, CardMessage
 
 
-async def prepare_chat(message, context, user_id, vod_id, *, is_current=None, edit=False, back=None, on_start=None, ui_lock=None, thumbnail_url=None, ready_only=False, on_bind=None, download_origin=None, on_download=None, photo=None):
+async def prepare_chat(message, context, user_id, vod_id, *, is_current=None, edit=False, back=None, on_start=None, ui_lock=None, thumbnail_url=None, ready_only=False, on_bind=None, download_origin=None, on_download=None, photo=None, image_live=False):
     from src.ui.card_context import for_message, bind
     context = for_message(context,user_id,message.chat_id,message.message_id)
     source_current = is_current or (lambda: True)
@@ -29,7 +29,11 @@ async def prepare_chat(message, context, user_id, vod_id, *, is_current=None, ed
         return (context.user_data.get('chat_request') is request
                 and (source_current() if preparing else True))
     if not edit:
-        message = await message.reply_text('Проверка VOD…')
+        from src.ui.result_preview import create_card
+        shown=await create_card(message,context,'Проверка VOD…')
+        if shown is None:return 'delivery_unknown'
+        message=shown.message
+        photo=shown.photo
     bind(context,message.chat_id,message.message_id)
     async def respond(text, **kwargs):
         if back:
@@ -51,7 +55,7 @@ async def prepare_chat(message, context, user_id, vod_id, *, is_current=None, ed
     proxy = SimpleNamespace(chat_id=message.chat_id, message_id=message.message_id,
                             edit_text=edit_surface_text, reply_text=respond, ui_lock=ui_lock, thumbnail_url=thumbnail_url,
                             on_bind=on_bind, download_origin=download_origin, on_download=on_download,
-                            photo=photo,direct_vod=download_origin is None)
+                            photo=photo,image_live=image_live,direct_vod=download_origin is None)
     try:
         outcome = await vod.prepare_vod_choice(proxy, context, user_id, vod_id,
                                               is_current=current, immediate=True, back=back, on_start=on_start,
@@ -143,13 +147,18 @@ async def offer_chat(message, context, owner, ready, current, back, on_start=Non
                   on_bind=getattr(message, 'on_bind', None), photo=bool(photo or getattr(message,'photo',False)),
                   download_origin=getattr(message, 'download_origin', None),
                   on_download=getattr(message, 'on_download', None), meta=ready['meta'],
-                  direct=bool(getattr(message, 'direct_vod', False)), create=create)
+                  direct=bool(getattr(message, 'direct_vod', False)), create=create,
+                  image_live=getattr(message,'image_live',False))
     rows = [[InlineKeyboardButton(ready_chat_label(ready), callback_data=f'ui:chat:open:{token}')],
             [InlineKeyboardButton(RECREATE_CHAT, callback_data=f'ui:chat:regen:{token}')]]
     if create:
         rows = [[InlineKeyboardButton(CREATE_CHAT, callback_data=f'ui:chat:create:{token}')]]
     if back:
         rows.append([InlineKeyboardButton(BACK_TO_LIST, callback_data=back)])
+    from src.ui.card_images import item_image
+    image_meta=dict(ready['meta'],is_live=choice['image_live'] or ready['meta'].get('is_live') is True)
+    if choice['thumbnail_url'] is not None:image_meta['thumbnail_preview_url']=choice['thumbnail_url']
+    initial_image=item_image(image_meta)
     text = direct_information_text(ready['meta'], ready['vod_id']) if create else ready_offer_text(ready)
     keyboard = InlineKeyboardMarkup(rows)
     choice.update(text=text, keyboard=keyboard)
@@ -161,7 +170,7 @@ async def offer_chat(message, context, owner, ready, current, back, on_start=Non
             return
         context.user_data['chat_choice'] = choice
         if restore:
-            shown = await render_card(context.bot, choice['chat'], text, keyboard,
+            shown = await render_card(context.bot, choice['chat'], text, keyboard,initial_image,
                                       message_id=choice['message'], photo=choice['photo'], current=offer_current, file_context=context)
             if shown is None:
                 if context.user_data.get('chat_choice') is choice:
@@ -170,7 +179,7 @@ async def offer_chat(message, context, owner, ready, current, back, on_start=Non
             _bind_choice(choice, shown)
         else:
             shown = None
-            shown = await render_card(context.bot,choice['chat'],text,keyboard,
+            shown = await render_card(context.bot,choice['chat'],text,keyboard,initial_image,
                                       message_id=choice['message'],photo=choice['photo'],current=offer_current,file_context=context)
             if shown is not None:_bind_choice(choice,shown)
     await cleanup_card(context.bot, choice['chat'], shown)
@@ -201,6 +210,7 @@ async def offer_chat(message, context, owner, ready, current, back, on_start=Non
                                   message_id=choice['message'], photo=was_photo,current=offer_current, keep_text=True, file_context=context)
         if shown is not None and offer_current():
             _bind_choice(choice, shown)
+    await cleanup_card(context.bot, choice['chat'], shown)
 
 
 def _bind_choice(choice, shown):
@@ -312,6 +322,7 @@ async def chat_callback(update, context):
             start_message = SimpleNamespace(chat_id=message.chat_id, message_id=message.message_id,
                                             edit_text=edit_start, reply_text=reply_start,
                                             download_origin=choice.get('download_origin'), on_download=choice.get('on_download'),
+                                            on_bind=choice.get('on_bind'),
                                             direct_vod=choice.get('direct', False), ui_lock=choice.get('ui_lock'),
                                             thumbnail_url=choice.get('thumbnail_url'),photo=choice.get('photo',False))
             request = SimpleNamespace(callback_query=SimpleNamespace(message=start_message), effective_user=update.effective_user)
@@ -365,7 +376,7 @@ async def show_ready(message, context, user_id, vod_id, *, current=lambda: True,
         item['thumbnail_preview_url'] = thumbnail_url
     return await vod._edit_progress_message_with_card(context, message.chat_id, message.message_id, item, ready['html_ref'],
         current=lambda: context.user_data.get('ready_preview_request') is request and current(),
-        ready=ready, owner_id=user_id, ui_lock=ui_lock, photo=bool(getattr(message, 'photo', False)) if photo is None else photo, on_photo=on_photo, fresh=True)
+        ready=ready, owner_id=user_id, ui_lock=ui_lock, photo=bool(getattr(message, 'photo', False)) if photo is None else photo, on_photo=on_photo)
 
 
 @callback_context
