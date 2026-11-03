@@ -1,4 +1,5 @@
 """One active list or information card per bounded browser session."""
+from src.ui.card_context import callback_context
 import asyncio
 import html
 import logging
@@ -18,7 +19,6 @@ from src.ui.ui_labels import STALE_ACTION_NOTICE, PROCESSING_NOTICE
 from src.ui.ui_labels import CREATE_CHAT, BACK_TO_LIST
 
 
-TTL = 300
 _ACTION = re.compile(r'ui:vi:([0-9a-f]{16}):([0-9a-f]{16}):(process|back)')
 
 
@@ -138,7 +138,7 @@ async def show_info(browser, session, source, request, *, bot):
     session.message_id, session.photo = shown.message_id, shown.photo
     session.list_render = None
     session.info_card = InfoCard(shown.message or source, shown.photo, nonce, view.revision, request.index,
-                                 min(session.expires, browser.clock()+TTL), text, keyboard, vod.thumbnail_url)
+                                 session.expires, text, keyboard, vod.thumbnail_url)
     return shown
 
 
@@ -161,13 +161,15 @@ async def preview_info(browser, session, card, bot):
         if not current():
             return
         # Cancellation/timeouts can follow a successful remote edit.
+        was_photo=card.photo
         session.photo = card.photo = True
         shown = await render_card(bot, session.chat_id, card.text, card.keyboard, url,
-                                  message_id=session.message_id, current=current, keep_text=True)
+                                  message_id=session.message_id,photo=was_photo,current=current, keep_text=True)
         if shown is not None and current():
             session.photo = card.photo = shown.photo or shown.media_uncertain
 
 
+@callback_context
 async def info_callback(update, context):
     from .handlers_channel_vods import (get_channel_browser, _ui_lock,
                                         _consume_selection, _prepare_selection)
@@ -214,24 +216,15 @@ async def info_callback(update, context):
                     if browser.is_current(view):
                         session.revision = previous.revision
                     raise
-                if getattr(session, 'photo', False):
-                    session.revision = previous.revision
-                    return  # Failed replacement: the old Back remains usable.
+                if replaced is None:
+                    if browser.is_current(view):
+                        session.revision=previous.revision
+                    return
                 take_info(session)
                 return
             if is_busy(context) or is_globally_busy(context):
                 return
             source = card.message
-            if getattr(session, 'photo', False):
-                # Send text first, transfer ownership, then retire the photo.
-                # The normal starter/offer can now reuse this text message.
-                replaced = await render_card(context.bot, session.chat_id, card.text, card.keyboard,
-                    message_id=session.message_id, photo=True, current=valid_card)
-                if replaced is None:
-                    return
-                session.message_id, session.photo = replaced.message_id, False
-                source = card.message = replaced.message
-                card.photo = False
             result = await browser.handle_callback(context.application.bot_data['aiohttp'], session.owner_id,
                 callback(browser._view(session), 'select', card.index), session.chat_id, session.message_id)
             if not isinstance(result, VodSelection):

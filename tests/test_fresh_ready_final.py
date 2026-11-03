@@ -23,14 +23,12 @@ class FreshFinal(unittest.IsolatedAsyncioTestCase):
             with patch.object(vod.results,'get_ready_result',return_value=fixture.READY):
                 self.assertTrue(await chat.show_ready(message,self.context,7,'123'))
             self.bot.edit_message_text.assert_not_awaited();self.bot.edit_message_media.assert_not_awaited()
-            record=self.context.user_data[action.KEY]
-            self.assertEqual(21 if photo else 20,record['message'])
-            self.assertEqual('a'*32,record['generation'])
+            markup=(self.bot.send_photo if photo else self.bot.send_message).await_args.kwargs['reply_markup']
             self.bot.delete_message.assert_awaited_once_with(chat_id=1,message_id=10)
             self.sender.send.reset_mock()
-            await action.file_callback(self.update(message=10),self.context)
+            await action.file_callback(self.update(message=10,markup=fixture.Markup([])),self.context)
             self.sender.send.assert_not_awaited()
-            await action.file_callback(self.update(message=record['message']),self.context)
+            await action.file_callback(self.update(message=21 if photo else 20,markup=markup),self.context)
             self.sender.send.assert_awaited_once_with(7,1,'123',generation_id='a'*32)
 
     async def test_photo_rejection_falls_back_once_without_edit(self):
@@ -47,7 +45,7 @@ class FreshFinal(unittest.IsolatedAsyncioTestCase):
         preview.resolve_preview.return_value='https://static-cdn.jtvnw.net/cf_vods/x/test.jpg'
         with patch.object(vod.results,'get_ready_result',return_value=fixture.READY):
             self.assertFalse(await chat.show_ready(NS(chat_id=1,message_id=10),self.context,7,'123'))
-        self.bot.send_photo.assert_awaited_once();self.bot.send_message.assert_awaited_once()
+        self.bot.send_photo.assert_awaited_once();self.bot.send_message.assert_not_awaited()
         self.bot.delete_message.assert_not_awaited()
 
     async def test_first_processing_route_still_edits_its_progress_message(self):

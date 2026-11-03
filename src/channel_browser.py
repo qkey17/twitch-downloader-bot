@@ -85,7 +85,7 @@ def callback_data(view: BrowseView, action: str) -> str:
 
 
 class ChannelBrowser:
-    """One session per owner; absolute TTL, lazy expiry, and no background tasks.
+    """Independent message sessions; bounded TTL/cache and no background tasks.
 
     Each action makes at most one videos request (opening also resolves login).
     Limits bound retained sessions, VODs, metadata, and pagination cursors.
@@ -143,7 +143,7 @@ class ChannelBrowser:
         self._prune()
         if not isinstance(login, str) or not re.fullmatch(r'[a-z0-9_]{1,25}', login.strip().lower()):
             return BrowseView('invalid')
-        previous = next((s for s in self._sessions.values() if s.owner_id == owner_id), None)
+        previous = next((s for s in self._sessions.values() if (s.owner_id,s.chat_id,s.message_id) == (owner_id,chat_id,message_id)), None)
         if previous and previous.busy:
             return BrowseView('busy')
         if previous:

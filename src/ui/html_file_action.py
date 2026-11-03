@@ -1,24 +1,25 @@
-"""Message-bound ready HTML capabilities: one navigation card, bounded job cards."""
+"""Durable generation actions authenticated for owner/chat and bot message markup.
+
+The callback lives on the Telegram message, not in a last-card RAM capability.
+The bot token is an existing signing key; rotating it invalidates old signatures.
+"""
 import asyncio
+import base64
+import hashlib
+import hmac
 import re
 import secrets
 import sqlite3
-import time
-
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import TelegramError
-from src.database import database as db
 from src.html_sender import SENDER_KEY, SendStatus
 from src.ready_html import HtmlUnavailable
 from src.ui.callbacks import CallbackReply
 from src.ui.ui_labels import CHAT_GENERIC, VOD_LINK, STALE_ACTION_NOTICE, DOWNLOAD_HTML
 from src.ui.result_actions import stack_actions
 
-KEY = 'html_file_action'
-JOB_CARDS = 'job_html_file_actions'
-MAX_JOB_CARDS = 20
 PREFIX = 'ui:htmlfile:'
-TTL = 900
+_CALLBACK = re.compile(re.escape(PREFIX) + r'2[A-Za-z0-9_-]{51}')
 NOTICES = {
     SendStatus.UNAVAILABLE: 'Файл сейчас недоступен.',
     SendStatus.TOO_LARGE: 'Файл превышает предел отправки 40 МиБ.',
@@ -41,91 +42,86 @@ def lookup(vod_id):
         return None
 
 
+def _signature(bot, owner, chat, payload):
+    key = getattr(bot, 'token', None)
+    if not isinstance(key, str) or not key:
+        raise ValueError('Signing key unavailable')
+    scope = f'tcd-file-v2:{owner}:{chat}:'.encode() + payload
+    return hmac.new(key.encode(), scope, hashlib.sha256).digest()[:12]
+
+
 def keyboard(context, owner, chat, ready, original, *, history_id=None):
-    """Caller has already selected/authorized this ready row, not a user path."""
-    if (owner is None or not ready or not re.fullmatch('[0-9a-f]{32}', str(ready.get('id', '')))):
+    if owner is None or not ready or not re.fullmatch('[0-9a-f]{32}', str(ready.get('id', ''))):
         return stack_actions(original)
-    if hasattr(context,'shared_user_data'):
-        previous=context.user_data.get(KEY)
-        if previous:context.shared_user_data.get(JOB_CARDS,{}).pop(previous['token'],None)
-    token = secrets.token_hex(12)
-    record = dict(token=token, owner=owner, chat=chat, message=None, vod=ready['vod_id'],
-                  generation=ready['id'], history=history_id, created=time.monotonic())
-    context.user_data[KEY] = record  # Revoke the previous card in this UI context.
+    try:
+        payload = bytes.fromhex(ready['id']) + int(ready['vod_id']).to_bytes(9, 'big') + secrets.token_bytes(1)
+        encoded = base64.urlsafe_b64encode(payload + _signature(context.bot, owner, chat, payload)).decode().rstrip('=')
+    except (ValueError, OverflowError, TypeError):
+        return stack_actions(original)
+    action = PREFIX + '2' + encoded
+    assert len(action.encode()) <= 64
     first, vod, extra = [], [], []
     for row in original.inline_keyboard if original else ():
-        rest=[]
+        rest = []
         for button in row:
-            if button.text == CHAT_GENERIC: first.append(button)
-            elif button.text == VOD_LINK: vod.append(button)
-            else: rest.append(button)
-        if rest: extra.append(rest)
-    first.append(InlineKeyboardButton(DOWNLOAD_HTML, callback_data=PREFIX+token))
-    return stack_actions(InlineKeyboardMarkup([first]+([vod] if vod else [])+extra))
+            if button.text == CHAT_GENERIC:
+                first.append(button)
+            elif button.text == VOD_LINK:
+                vod.append(button)
+            else:
+                rest.append(button)
+        if rest:
+            extra.append(rest)
+    first.append(InlineKeyboardButton(DOWNLOAD_HTML, callback_data=action))
+    return stack_actions(InlineKeyboardMarkup([first] + ([vod] if vod else []) + extra))
 
 
-def rendering(context, chat, message, markup):
-    record = getattr(context,'user_data',{}).get(KEY)
-    if not record:return None
-    attached = any(b.callback_data == PREFIX+record['token']
-                   for row in (markup.inline_keyboard if markup else ()) for b in row)
-    if not attached:
-        if (record['chat'],record['message']) == (chat,message):
-            context.user_data.pop(KEY,None)
-            if hasattr(context,'shared_user_data'):
-                context.shared_user_data.get(JOB_CARDS,{}).pop(record['token'],None)
+def _selection(update, context):
+    q = update.callback_query
+    message, data = q.message, q.data or ''
+    if message is None or not _CALLBACK.fullmatch(data):
         return None
-    return record
-
-
-def bind(context, record, shown):
-    if record is not None and shown is not None and context.user_data.get(KEY) is record:
-        record['message']=shown.message_id
-        # Identity/request fences survive media transitions but not navigation.
-        record['fence']=tuple((k,context.user_data.get(k)) for k in
-                              ('chat_request','ready_preview_request','history_view','history_file_card'))
-        state=context.user_data.get('history_view')
-        record['history_request']=state.get('request') if state else None
-        if hasattr(context,'shared_user_data'):
-            # A completed job card has its own immutable generation/message;
-            # another job or navigation must not revoke its download action.
-            from types import SimpleNamespace
-            record['fence']=tuple((k,None) for k,_ in record['fence'])
-            record['history_request']=None
-            cards=context.shared_user_data.setdefault(JOB_CARDS,{})
-            for token,view in list(cards.items()):
-                if time.monotonic()-view.user_data[KEY]['created']>TTL:cards.pop(token)
-            if record['token'] not in cards and len(cards)>=MAX_JOB_CARDS:cards.pop(next(iter(cards)))
-            cards[record['token']]=SimpleNamespace(application=context.application,bot=context.bot,user_data={KEY:record})
+    # Telegram supplies the bot-authored source message. Its own attached button
+    # binds this action to that message ID, including after application restart.
+    sender = getattr(message, 'from_user', None)
+    if sender is None or sender.id != getattr(context.bot, 'id', None):
+        return None
+    markup = getattr(message, 'reply_markup', None)
+    if not any(b.callback_data == data for row in (markup.inline_keyboard if markup else ()) for b in row):
+        return None
+    try:
+        encoded = data[len(PREFIX)+1:]
+        raw = base64.urlsafe_b64decode(encoded + '=')
+        if len(raw) != 38 or base64.urlsafe_b64encode(raw).decode().rstrip('=') != encoded:
+            return None
+        payload, tag = raw[:26], raw[26:]
+        if not hmac.compare_digest(tag, _signature(context.bot, update.effective_user.id, message.chat_id, payload)):
+            return None
+        vod = str(int.from_bytes(payload[16:25], 'big'))
+        from src.database.db_results import normalize_vod_id
+        return normalize_vod_id(vod), payload[:16].hex()
+    except (ValueError, TypeError):
+        return None
 
 
 async def file_callback(update, context):
-    q=update.callback_query;reply=CallbackReply(q)
-    token=(q.data or '')[len(PREFIX):] if (q.data or '').startswith(PREFIX) else ''
-    context=context.user_data.get(JOB_CARDS,{}).get(token,context)
-    record=context.user_data.get(KEY)
-    def valid():
-        if (not record or context.user_data.get(KEY) is not record or q.message is None
-                or q.data != PREFIX+record['token'] or time.monotonic()-record['created'] > TTL
-                or update.effective_user.id != record['owner']
-                or (q.message.chat_id,q.message.message_id)!=(record['chat'],record['message'])
-                or 'fence' not in record):return False
-        if any(context.user_data.get(k) is not v for k,v in record['fence']):return False
-        state=context.user_data.get('history_view')
-        if (state.get('request') if state else None) is not record['history_request']:return False
-        if record['history'] is not None:
-            hist=db.get_history_entry_for_user(record['owner'],record['history'])
-            if not hist or hist['vod_id']!=record['vod'] or hist['fmt']!='html_online':return False
-        return True
-    if not valid():
-        await reply.send(STALE_ACTION_NOTICE);return
-    if not await reply.send() or not valid():return
-    service=context.application.bot_data.get(SENDER_KEY)
-    if service is None:return
-    outcome=await service.send(record['owner'],record['chat'],record['vod'],generation_id=record['generation'])
-    notice=NOTICES.get(outcome.status)
+    q = update.callback_query
+    reply = CallbackReply(q)
+    selected = _selection(update, context)
+    if selected is None:
+        await reply.send(STALE_ACTION_NOTICE)
+        return
+    if not await reply.send():
+        return
+    service = context.application.bot_data.get(SENDER_KEY)
+    if service is None:
+        return
+    vod, generation = selected
+    outcome = await service.send(update.effective_user.id, q.message.chat_id, vod, generation_id=generation)
+    notice = NOTICES.get(outcome.status)
     if notice and context.application.running and not service.closing:
         try:
-            async with asyncio.timeout(5):await context.bot.send_message(chat_id=record['chat'],text=notice)
-        except TelegramError:pass
-        except TimeoutError:pass
+            async with asyncio.timeout(5):
+                await context.bot.send_message(chat_id=q.message.chat_id, text=notice)
+        except (TelegramError, TimeoutError):
+            pass

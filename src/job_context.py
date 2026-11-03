@@ -1,7 +1,7 @@
 """Scope only operation fields; navigation fences remain shared with input handlers."""
 from collections.abc import MutableMapping
 
-FIELDS = {'vod_busy','vod_active_operation','vod_cancel','download_ui','_vod_job','html_file_action'}
+FIELDS = {'vod_busy','vod_active_operation','vod_cancel','download_ui','_vod_job'}
 
 
 class JobData(MutableMapping):

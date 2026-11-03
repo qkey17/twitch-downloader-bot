@@ -19,34 +19,33 @@ def cancel_keyboard(context, *, waiting=False):
 
 
 async def safe_edit_html(context, chat_id: int, message_id: int, text: str):
+    from contextlib import nullcontext
+    from src.ui.result_preview import edit_surface
     record = context.user_data.get('download_ui')
+    job = context.user_data.get('_vod_job')
     owned = record and (record['chat'], record['message']) == (chat_id, message_id)
-    if owned and record.get('last_text') == text:
-        return
-    keyboard = cancel_keyboard(context)
-
-    try:
-        kwargs=dict(chat_id=chat_id,message_id=message_id,parse_mode='HTML',reply_markup=keyboard)
-        if owned and record.get('photo'):
-            try:
-                await context.bot.edit_message_caption(caption=text,**kwargs)
-            except BadRequest as exc:
-                if 'no caption' not in str(exc).lower():
-                    raise
-                # An ambiguous media timeout may have left the original text.
-                await context.bot.edit_message_text(text=text,**kwargs)
-                record['photo'] = False
-        else:
-            await context.bot.edit_message_text(text=text,**kwargs)
-        if owned and context.user_data.get('download_ui') is record:
-            record['last_text'] = text
-    except RetryAfter as e:
-        await asyncio.sleep(float(e.retry_after))
-    except BadRequest as e:
-        if "message is not modified" in str(e).lower():
+    def current():
+        if record is None:
+            return job is None  # A finished job must not recreate its old progress.
+        return (owned and context.user_data.get('download_ui') is record
+                and (job is None or record.get('operation') == job.id)
+                and record.get('phase', 'running') in ('waiting', 'running'))
+    retry_delay = None
+    async with (record.get('render_lock') if owned else None) or nullcontext():
+        if not current() or owned and record.get('last_text') == text:
             return
-    except (TimedOut, NetworkError):
-        return
+        try:
+            shown = await edit_surface(context.bot, chat_id, message_id, text, cancel_keyboard(context),
+                                       photo=bool(owned and record.get('photo')), current=current)
+            if owned and shown is not None:
+                record['last_text'] = text
+                record['photo'] = shown.photo
+        except RetryAfter as e:
+            retry_delay = float(e.retry_after)
+        except (BadRequest, TimedOut, NetworkError, TimeoutError):
+            return
+    if retry_delay is not None:
+        await asyncio.sleep(retry_delay)  # Honor Telegram without holding the render lock.
 
 
 def _fmt_date_ru(dt: str) -> str:

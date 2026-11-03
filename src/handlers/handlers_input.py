@@ -31,6 +31,7 @@ def cancel_input_request(context, chat_id):
     """Invalidate a pending lookup, without touching a format choice/download."""
     record = context.user_data.get(_ROUTE)
     if record is not None and record.get('chat_id') == chat_id:
+        record['cancelled']=True
         context.user_data.pop(_ROUTE, None)
         return True
     return False
@@ -52,6 +53,8 @@ def _active_route(context):
 
 
 async def _dispatch(message, context, owner_id, value):
+    from src.ui.card_context import for_message
+    context = for_message(context,owner_id,message.chat_id,message.message_id)
     if value.kind != 'vod':
         return await _dispatch_one(message,context,owner_id,value)
     from src.vod_scheduler import scheduler, INPUT_TICKET
@@ -83,7 +86,7 @@ async def _dispatch_one(message, context, owner_id, value):
     context.user_data.pop('chat_request', None)
 
     def current():
-        return context.user_data.get(_ROUTE) is record and _alive(record)
+        return context.user_data.get(_ROUTE) is record and not record.get('cancelled') and _alive(record)
 
     try:
         if value.kind == 'vod':

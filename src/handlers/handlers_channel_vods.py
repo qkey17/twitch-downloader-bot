@@ -1,4 +1,5 @@
 """Channel browsing entry and callbacks, independent of chat downloads."""
+from src.ui.card_context import callback_context
 import asyncio
 from dataclasses import replace
 from telegram.error import BadRequest
@@ -53,11 +54,13 @@ async def _render_list(message, view, session, *, bot=None, current=lambda: True
             return None
         # Transfer ownership before cleanup/unlocking. Old callbacks fail both
         # their revision and message binding; never edit a photo as text.
-        session.message_id, session.photo = shown.message_id, False
-        session.list_render = (shown.message, text)
+        session.message_id, session.photo = shown.message_id, shown.photo or shown.media_uncertain
+        session.list_render = (shown.message or message, text)
         return shown
     await _edit(message, view)
     session.list_render = (message, build_list(view)[0]) if view.status in ('ready', 'empty') and view.complete else None
+    from src.ui.result_preview import CardMessage
+    return CardMessage(message.message_id,False,message=message)
 
 
 def _consume_selection(session):
@@ -92,66 +95,13 @@ async def _prepare_selection(query, message, context, browser, session, result, 
                            is_current=lambda: browser.is_current(view), edit=True,
                            back=callback(view, 'back'), on_start=lambda: browser.retire(view),
                            ui_lock=_ui_lock(session), thumbnail_url=result.view.vod.thumbnail_url,
-                           ready_only=ready_only, on_bind=bind, download_origin=origin, on_download=started)
+                           ready_only=ready_only, on_bind=bind, download_origin=origin, on_download=started,photo=getattr(session,'photo',False))
     finally:
         # The consumed inline card may already be progress/the ready screen.
         # close_info never edits a detached record or its reused message ID.
         if card is not None:
             from .handlers_vod_info import close_info
             await close_info(session, card)
-
-
-async def restore_cancelled_selection(context, record):
-    """Use only a still-live bounded session; never recreate an expired token."""
-    from types import SimpleNamespace
-    from .handlers_state import input_busy as is_busy
-    from .handlers_vod_info import show_info, preview_info
-    origin = record.get('origin')
-    browser = context.application.bot_data.get(_STORE_KEY)
-    session = browser._sessions.get(origin['token']) if isinstance(browser, VodListBrowser) and origin else None
-    def current():
-        return (context.user_data.get('download_ui') is record and not is_busy(context)
-                and context.user_data.get('chat_request') is record['request']
-                and session is not None and browser._live(session, origin['revision'])
-                and session.owner_id == record['owner'] and session.status == 'selected'
-                and (session.chat_id, session.message_id) == (record['chat'], record['message']))
-    if not current():
-        return False
-    bot, chat, mid = context.bot, record['chat'], record['message']
-    async def edit_text(text, **kwargs):
-        return await bot.edit_message_text(chat_id=chat, message_id=mid, text=text, **kwargs)
-    async def reply_text(text, **kwargs):
-        return await bot.send_message(chat_id=chat, text=text, **kwargs)
-    async def reply_photo(photo, **kwargs):
-        return await bot.send_photo(chat_id=chat, photo=photo, **kwargs)
-    message = SimpleNamespace(chat_id=chat, message_id=mid,
-                              edit_text=edit_text, reply_text=reply_text, reply_photo=reply_photo)
-    async with _ui_lock(session):
-        if not current():
-            return False
-        session.revision += 1
-        view = browser._view(session)
-        ready = results.get_ready_result(record['vod_id']) if record['regenerate'] else None
-        if ready is None:
-            session.status = 'ready'
-            view = browser._view(session)
-            shown = await show_info(browser, session, message, VodInformation(record['owner'], origin['index'], view), bot=bot)
-            card = getattr(session, 'info_card', None)
-        else:
-            shown = card = None
-        result = VodSelection(record['owner'], record['vod_id'], f'https://www.twitch.tv/videos/{record["vod_id"]}',
-                              session.channel.login, view)
-    if ready is None:
-        from src.ui.result_preview import cleanup_card
-        await cleanup_card(bot, chat, shown)
-        if shown is not None and card is not None:
-            await preview_info(browser, session, card, bot)
-        return shown is not None
-    async def answered():
-        pass
-    # Reuse all normal ready-only, binding, nonce and preview fencing.
-    await _prepare_selection(SimpleNamespace(answer=answered), message, context, browser, session, result, None, ready_only=True)
-    return True
 
 
 def retire_download_selection(context, record):
@@ -165,56 +115,19 @@ def retire_download_selection(context, record):
         browser.retire(browser._view(session))
 
 
-async def _expire_message(browser, old):
-    record = getattr(old, 'list_render', None)
-    from .handlers_vod_info import close_info
-    if not browser._live(old):
-        await close_info(old)
-    if browser._live(old) or old.status not in ('ready', 'empty') or record is None:
-        return
-    old.list_render = None  # At most one attempt, including failure/cancellation.
-    message, text = record
-    try:
-        async with asyncio.timeout(10):
-            await message.edit_text(text+'\n'+STALE_LIST, parse_mode='HTML', reply_markup=None)
-    except Exception:
-        # Deleted/inaccessible messages must never prevent the new request.
-        pass
-
-
 async def _open_and_show(message, context, owner_id, login):
+    from src.ui.card_context import bind
+    bind(context,message.chat_id,message.message_id)
     browser = get_channel_browser(context.application)
-    if not isinstance(browser, VodListBrowser):
-        view = await browser.open(context.application.bot_data['aiohttp'], owner_id, login,
-                                  message.chat_id, message.message_id)
-        if view.session_id is None or browser.is_current(view):
-            await _edit(message, view)
-        return view
-    browser._prune()
-    old = next((s for s in browser._sessions.values() if s.owner_id == owner_id), None)
-    async def open_new():
-        return await browser.open(context.application.bot_data['aiohttp'], owner_id, login,
-                                  message.chat_id, message.message_id)
-    if old is not None:
-        async with _ui_lock(old):
-            view = await open_new()
-    else:
-        view = await open_new()
-    try:
-        session = browser._sessions.get(view.session_id)
-        if session is not None:
-            async with _ui_lock(session):
-                if browser.is_current(view):
-                    await _render_list(message, view, session, bot=getattr(context, 'bot', None),
-                                       current=lambda: browser.is_current(view))
-        elif view.session_id is None:
-            await _edit(message, view)
-    finally:
-        # Render/unlock the new list first. Old-message cleanup stays bounded
-        # and owned by this request, without blocking the new session's UI.
-        if old is not None:
-            async with _ui_lock(old):
-                await _expire_message(browser, old)
+    view = await browser.open(context.application.bot_data['aiohttp'],owner_id,login,
+                              message.chat_id,message.message_id)
+    session = browser._sessions.get(view.session_id)
+    if session is not None:
+        async with _ui_lock(session):
+            if browser.is_current(view):
+                await _render_list(message,view,session,bot=getattr(context,'bot',None),current=lambda:browser.is_current(view))
+    elif view.session_id is None:
+        await _edit(message,view)
     return view
 
 
@@ -302,10 +215,10 @@ async def _list_callback(update, context, browser):
                         if browser.is_current(view):
                             session.revision, session.status = previous.revision, previous.status
                         raise
-                    if getattr(session, 'photo', False):
-                        # A failed photo->text delivery leaves the old Back usable.
-                        session.revision, session.status = previous.revision, previous.status
-                        return None
+                    if replaced is None:
+                        if browser.is_current(view):
+                            session.revision,session.status=previous.revision,previous.status
+                        return
                     navigation_card = take_info(session)
                     context.user_data.pop('chat_choice', None)
                     if replaced is not None:
@@ -343,6 +256,7 @@ async def show_channel_vods(message, context, owner_id, login):
         raise
 
 
+@callback_context
 async def channel_vods_callback(update, context):
     """Prepare a selected VOD using the existing confirmation flow, never download.
 

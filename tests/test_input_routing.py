@@ -32,7 +32,10 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
     callback = fixture.ChannelSelectionTests.update
     ready_result = fixture.ChannelSelectionTests.ready_result
 
-    def request(self, text='', *, args=None, owner=7, number=20):
+    def request(self, text='', *, args=None, owner=7, number=None):
+        if number is None:
+            self.incoming_id=getattr(self,'incoming_id',19)+1
+            number=self.incoming_id
         message = self.message(number, text)
         self.context.args = args or []
         return SimpleNamespace(message=message, effective_message=message,
@@ -250,8 +253,9 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
             await command(self.request(), self.context)
             self.assertIs(pending, self.context.user_data['vod_pending'])
         await inputs.text_input(self.request('123456789'), self.context)
-        self.assertIs(pending, self.context.user_data['vod_pending'])
-        self.metadata.assert_not_awaited()
+        self.assertIsNot(pending,self.context.user_data['vod_pending'])
+        self.assertEqual('999',pending['vod_id'])
+        self.metadata.assert_awaited_once()
         await commands.cancel_command(self.request(), self.context)
         self.assertNotIn('vod_pending', self.context.user_data)
 
@@ -286,7 +290,8 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
         release.set()
         await first
         await waiting
-        self.assertEqual('123456789', self.context.user_data['vod_pending']['vod_id'])
+        self.assertEqual('999',self.context.user_data['vod_pending']['vod_id'])
+        self.assertEqual(2,self.metadata.await_count)
 
     async def test_missing_vod_or_metadata_error_cleans_input_route_for_retry(self):
         for error in (None, TwitchAPIError('MOCK_SECRET', status=503)):
@@ -334,20 +339,18 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('ready', (await new).status)
         self.assertNotIn(inputs._ROUTE, self.context.user_data)
 
-    async def test_parallel_channel_requests_keep_one_owned_lookup(self):
-        entered, release = asyncio.Event(), asyncio.Event()
-        async def slow(*args):
-            entered.set()
-            await release.wait()
-            return videos.TwitchUser('123', 'channel', 'Channel')
-        videos.fetch_user_by_login.side_effect = slow
-        first = self.task(inputs.text_input(self.request('channel'), self.context))
-        await asyncio.wait_for(entered.wait(), 1)
-        await inputs.channel_command(self.request(args=['other']), self.context)
-        videos.fetch_user_by_login.assert_awaited_once()
-        self.app.create_task.assert_called_once()
-        release.set()
-        await first
+    async def test_parallel_channel_requests_have_independent_owned_lookups(self):
+        entered,release=asyncio.Event(),asyncio.Event()
+        async def slow(*args):entered.set();await release.wait();return videos.TwitchUser('123','channel','Channel')
+        videos.fetch_user_by_login.side_effect=slow
+        first=self.task(inputs.text_input(self.request('channel'),self.context));await asyncio.wait_for(entered.wait(),1)
+        second=self.task(inputs.channel_command(self.request(args=['other']),self.context))
+        for _ in range(10):
+            if videos.fetch_user_by_login.await_count==2:break
+            await asyncio.sleep(0)
+        self.assertEqual(2,videos.fetch_user_by_login.await_count)
+        release.set();a,b=await asyncio.gather(first,second)
+        self.assertTrue(self.browser.is_current(a));self.assertTrue(self.browser.is_current(b))
 
     async def test_help_and_empty_commands_during_lookup_do_not_cancel_or_replace_request(self):
         entered, release = asyncio.Event(), asyncio.Event()
@@ -422,7 +425,7 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
             for _ in range(2):
                 await vod.vod_result_callback(self.callback(data, ready_message), self.context)
                 self.assertIs(pending, self.context.user_data['vod_pending'])
-                self.assertNotIn('vod_result_choice', self.context.user_data)
+                self.assertEqual('123456789',self.context.user_data['vod_result_choice']['vod_id'])
         self.runner.assert_not_awaited()
         self.app.create_task.assert_not_called()
 

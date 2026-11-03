@@ -1,4 +1,5 @@
 """Active HTML-only entry; shares metadata checks and download lifecycle."""
+from src.ui.card_context import callback_context
 import secrets
 import re
 import time
@@ -15,28 +16,42 @@ from src.ui.ui_history import ready_offer_text
 from src.ui.result_preview import render_card, resolve_preview, caption_fits, cleanup_card, CardMessage
 
 
-async def prepare_chat(message, context, user_id, vod_id, *, is_current=None, edit=False, back=None, on_start=None, ui_lock=None, thumbnail_url=None, ready_only=False, on_bind=None, download_origin=None, on_download=None):
+async def prepare_chat(message, context, user_id, vod_id, *, is_current=None, edit=False, back=None, on_start=None, ui_lock=None, thumbnail_url=None, ready_only=False, on_bind=None, download_origin=None, on_download=None, photo=None):
+    from src.ui.card_context import for_message, bind
+    context = for_message(context,user_id,message.chat_id,message.message_id)
     source_current = is_current or (lambda: True)
     if not source_current():
         return 'stale'
-    context.user_data.pop('html_file_action', None)
     request = object()
     context.user_data['chat_request'] = request
     preparing = True
     def current():
         return (context.user_data.get('chat_request') is request
-                and (source_current() if preparing or edit else True))
+                and (source_current() if preparing else True))
     if not edit:
         message = await message.reply_text('Проверка VOD…')
+    bind(context,message.chat_id,message.message_id)
     async def respond(text, **kwargs):
         if back:
             kwargs['reply_markup'] = InlineKeyboardMarkup([[InlineKeyboardButton(BACK_TO_LIST, callback_data=back)]])
-        return await message.edit_text(text, **kwargs)
+        return await edit_surface_text(text, **kwargs)
     ui_lock = ui_lock or asyncio.Lock()
+    photo = bool(getattr(message,'photo',False)) if photo is None else photo
+    async def edit_surface_text(text,**kwargs):
+        nonlocal photo,message
+        shown = await render_card(context.bot,message.chat_id,text,kwargs.get('reply_markup'),
+                                  message_id=message.message_id,photo=photo,current=current,file_context=context)
+        if shown is None:raise RuntimeError('card_delivery_failed')
+        photo=shown.photo or shown.media_uncertain
+        message=shown.message or message
+        proxy.message_id=shown.message_id
+        proxy.photo=photo
+        if on_bind:on_bind(shown)
+        return message
     proxy = SimpleNamespace(chat_id=message.chat_id, message_id=message.message_id,
-                            edit_text=message.edit_text, reply_text=respond, ui_lock=ui_lock, thumbnail_url=thumbnail_url,
+                            edit_text=edit_surface_text, reply_text=respond, ui_lock=ui_lock, thumbnail_url=thumbnail_url,
                             on_bind=on_bind, download_origin=download_origin, on_download=on_download,
-                            direct_vod=download_origin is None)
+                            photo=photo,direct_vod=download_origin is None)
     try:
         outcome = await vod.prepare_vod_choice(proxy, context, user_id, vod_id,
                                               is_current=current, immediate=True, back=back, on_start=on_start,
@@ -61,28 +76,38 @@ def direct_information_text(meta, vod_id):
     return text
 
 
-async def restore_direct_cancelled(context, record):
-    """Called after worker/publication cleanup and operation-owned slot release."""
-    request = record.get('request')
-    # Admission is checked before installation. The request fence must survive
-    # this card reserving its own next operation; choice/action fences own media.
-    def current():
-        return request is not None and context.user_data.get('chat_request') is request
-    if (context.user_data.get('download_ui') is not record or not current()
-            or is_busy(context) or context.user_data.get('vod_active_operation') is not None
-            or record.get('origin') or not record.get('direct')):
-        return False
-    # Resolve availability at restoration time; never mutate or regenerate HTML.
+async def restore_cancelled_card(context, record):
+    """Restore the card's own VOD; navigation cache is optional, never authority."""
+    if context.user_data.get('download_ui') is not record or is_busy(context):return False
     ready = vod.results.get_ready_result(record['vod_id'])
     meta = dict(record.get('meta') or {})
-    if ready is not None:
-        ready = dict(ready, meta=meta | {k:v for k,v in (ready.get('meta') or {}).items() if v is not None and v != ''})
-    else:
-        ready = dict(vod_id=record['vod_id'], meta=meta, stats={})
-    message = SimpleNamespace(chat_id=record['chat'], message_id=record['message'],
-                              ui_lock=record.get('ui_lock') or asyncio.Lock(), direct_vod=True)
-    await offer_chat(message, context, record['owner'], ready, current, None,
-                     create=not bool(ready.get('html_ref')), restore=True)
+    if ready:
+        ready = dict(ready,meta=meta | {k:v for k,v in ready.get('meta',{}).items() if v is not None and v!=''})
+    else:ready=dict(vod_id=record['vod_id'],meta=meta,stats={})
+    request=object();context.user_data['chat_request']=request
+    current=lambda:context.user_data.get('chat_request') is request
+    back=on_start=on_download=None
+    from .handlers_channel_vods import _STORE_KEY
+    from src.vod_list import callback
+    browser=context.application.bot_data.get(_STORE_KEY)
+    origin=record.get('origin')
+    session=browser._sessions.get(origin['token']) if browser is not None and origin else None
+    if session is not None and browser._live(session,origin['revision']) and session.owner_id==record['owner']:
+        session.photo=bool(record.get('photo'))
+        view=browser._view(session);back=callback(view,'back');on_start=lambda:browser.retire(view)
+        def on_download():
+            if browser._live(session,origin['revision']):
+                if session.revision == 999999999:
+                    browser.retire(browser._view(session))
+                else:
+                    session.revision += 1
+                    origin['revision'] = session.revision
+    message=SimpleNamespace(chat_id=record['chat'],message_id=record['message'],
+        ui_lock=record.get('ui_lock') or asyncio.Lock(),direct_vod=True,
+        thumbnail_url=meta.get('thumbnail_preview_url',meta.get('thumbnail_url')),
+        on_download=on_download,download_origin=origin)
+    await offer_chat(message,context,record['owner'],ready,current,back,on_start,
+                     create=not bool(ready.get('html_ref')),restore=True,photo=bool(record.get('photo')))
     return True
 
 
@@ -96,17 +121,12 @@ async def create_from_choice(query, context, choice):
             if not current() or is_busy(context) or vod.is_globally_busy(context):
                 return
             message = query.message
-            if choice.get('photo'):
-                replaced = await render_card(context.bot, choice['chat'], choice['text'], choice['keyboard'],
-                    message_id=choice['message'], photo=True, current=current, file_context=context)
-                if replaced is None:
-                    return
-                _bind_choice(choice, replaced)
-                message = replaced.message
         # No await between the owned screen check and prepare_chat claiming a
         # fresh request. Its identity fences new input throughout preparation.
         outcome = await prepare_chat(message, context, choice['owner'], choice['vod_id'], edit=True,
-            ui_lock=choice['ui_lock'], thumbnail_url=choice.get('thumbnail_url'))
+            ui_lock=choice['ui_lock'], thumbnail_url=choice.get('thumbnail_url'),photo=choice.get('photo',False),
+            back=choice.get('back'),on_start=choice.get('on_start'),
+            on_download=choice.get('on_download'),download_origin=choice.get('download_origin'))
         if outcome == 'started' and context.user_data.get('chat_choice') is choice:
             context.user_data.pop('chat_choice', None)
     finally:
@@ -114,13 +134,13 @@ async def create_from_choice(query, context, choice):
         await cleanup_card(context.bot, choice['chat'], replaced)
 
 
-async def offer_chat(message, context, owner, ready, current, back, on_start=None, *, create=False, restore=False):
+async def offer_chat(message, context, owner, ready, current, back, on_start=None, *, create=False, restore=False, photo=False):
     token = secrets.token_hex(8)
     choice = dict(token=token, owner=owner, vod_id=ready['vod_id'], created_at=time.time(),
-                  chat=message.chat_id, message=message.message_id, current=current, on_start=on_start,
+                  chat=message.chat_id, message=message.message_id, current=current, on_start=on_start,back=back,
                   ui_lock=getattr(message, 'ui_lock', None) or asyncio.Lock(),
                   thumbnail_url=getattr(message, 'thumbnail_url', None),
-                  on_bind=getattr(message, 'on_bind', None), photo=False,
+                  on_bind=getattr(message, 'on_bind', None), photo=bool(photo or getattr(message,'photo',False)),
                   download_origin=getattr(message, 'download_origin', None),
                   on_download=getattr(message, 'on_download', None), meta=ready['meta'],
                   direct=bool(getattr(message, 'direct_vod', False)), create=create)
@@ -142,7 +162,7 @@ async def offer_chat(message, context, owner, ready, current, back, on_start=Non
         context.user_data['chat_choice'] = choice
         if restore:
             shown = await render_card(context.bot, choice['chat'], text, keyboard,
-                                      message_id=choice['message'], current=offer_current, file_context=context)
+                                      message_id=choice['message'], photo=choice['photo'], current=offer_current, file_context=context)
             if shown is None:
                 if context.user_data.get('chat_choice') is choice:
                     context.user_data.pop('chat_choice', None)
@@ -150,8 +170,9 @@ async def offer_chat(message, context, owner, ready, current, back, on_start=Non
             _bind_choice(choice, shown)
         else:
             shown = None
-            async with asyncio.timeout(5):
-                await message.edit_text(text, parse_mode='HTML', reply_markup=keyboard)
+            shown = await render_card(context.bot,choice['chat'],text,keyboard,
+                                      message_id=choice['message'],photo=choice['photo'],current=offer_current,file_context=context)
+            if shown is not None:_bind_choice(choice,shown)
     await cleanup_card(context.bot, choice['chat'], shown)
     if not offer_current() or not caption_fits(text):
         return
@@ -172,11 +193,12 @@ async def offer_chat(message, context, owner, ready, current, back, on_start=Non
         if not offer_current():
             return
         choice['thumbnail_url'] = url
+        was_photo = choice['photo']
         # A cancelled/ambiguous media edit might have reached Telegram. Treat
         # it conservatively as photo until a definite text fallback is known.
         _bind_choice(choice, CardMessage(choice['message'], True))
         shown = await render_card(context.bot, choice['chat'], text, keyboard, url,
-                                  message_id=choice['message'], current=offer_current, keep_text=True, file_context=context)
+                                  message_id=choice['message'], photo=was_photo,current=offer_current, keep_text=True, file_context=context)
         if shown is not None and offer_current():
             _bind_choice(choice, shown)
 
@@ -187,6 +209,7 @@ def _bind_choice(choice, shown):
         choice['on_bind'](shown)
 
 
+@callback_context
 async def chat_callback(update, context):
     q = update.callback_query
     reply = CallbackReply(q)
@@ -278,7 +301,7 @@ async def chat_callback(update, context):
                     if replaced is None:
                         raise RuntimeError('progress_delivery_failed')
                     _bind_choice(choice, replaced)
-                    message = replaced.message
+                    message = replaced.message or message
                     start_message.message_id = message.message_id
                     return message
                 async with asyncio.timeout(5):
@@ -290,7 +313,7 @@ async def chat_callback(update, context):
                                             edit_text=edit_start, reply_text=reply_start,
                                             download_origin=choice.get('download_origin'), on_download=choice.get('on_download'),
                                             direct_vod=choice.get('direct', False), ui_lock=choice.get('ui_lock'),
-                                            thumbnail_url=choice.get('thumbnail_url'))
+                                            thumbnail_url=choice.get('thumbnail_url'),photo=choice.get('photo',False))
             request = SimpleNamespace(callback_query=SimpleNamespace(message=start_message), effective_user=update.effective_user)
             try:
                 started = await vod._start_download(request, context, choice['vod_id'], regenerate=True, modern=True,
@@ -300,8 +323,10 @@ async def chat_callback(update, context):
                 # this still-owned action screen; never reserve/start a second time.
                 if context.user_data.get('chat_choice') is choice and choice['current']():
                     try:
-                        async with asyncio.timeout(5):
-                            await message.edit_text(choice['text'], parse_mode='HTML', reply_markup=choice['keyboard'])
+                        shown = await render_card(context.bot,choice['chat'],choice['text'],choice['keyboard'],
+                            message_id=choice['message'],photo=choice['photo'],
+                            current=lambda:context.user_data.get('chat_choice') is choice and choice['current'](),file_context=context)
+                        if shown is not None:_bind_choice(choice,shown)
                     except Exception:
                         from .handlers_vod_info import _diagnostic
                         _diagnostic('offer_restore_failed')
@@ -343,6 +368,7 @@ async def show_ready(message, context, user_id, vod_id, *, current=lambda: True,
         ready=ready, owner_id=user_id, ui_lock=ui_lock, photo=bool(getattr(message, 'photo', False)) if photo is None else photo, on_photo=on_photo, fresh=True)
 
 
+@callback_context
 async def legacy_open_callback(update, context):
     """Compatibility only: never prepare a missing result or regenerate it."""
     q = update.callback_query

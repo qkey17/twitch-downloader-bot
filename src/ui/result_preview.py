@@ -1,6 +1,7 @@
 """Optional bounded preview delivery; no persistence or image downloads."""
 import asyncio
 import re
+from contextlib import nullcontext
 from dataclasses import dataclass
 from telegram import InputMediaPhoto
 from telegram.error import BadRequest, Forbidden
@@ -63,6 +64,30 @@ async def cleanup_card(bot, chat_id, shown):
         await _delete(bot, chat_id, shown.retired_id)
 
 
+async def edit_surface(bot, chat_id, message_id, text, keyboard, *, photo=False, current=lambda:True, parse_mode='HTML'):
+    """Edit the owned surface in place; one definite type rejection may switch API."""
+    if not current():return None
+    async def edit(as_photo):
+        async with asyncio.timeout(5):
+            formatting = {'parse_mode':parse_mode} if parse_mode else {}
+            if as_photo:
+                await bot.edit_message_caption(chat_id=chat_id,message_id=message_id,
+                                               caption=text,reply_markup=keyboard,**formatting)
+            else:
+                await bot.edit_message_text(chat_id=chat_id,message_id=message_id,
+                                            text=text,reply_markup=keyboard,**formatting)
+    try:
+        try:await edit(photo)
+        except BadRequest as exc:
+            reason=str(exc).lower()
+            if not ('no caption' in reason if photo else 'no text' in reason) or not current():raise
+            photo=not photo
+            await edit(photo)
+    except BadRequest as exc:
+        if 'message is not modified' not in str(exc).lower():raise
+    return CardMessage(message_id,photo) if current() else None
+
+
 async def finish_error_card(context, chat_id, message_id, text, record=None):
     """Bounded terminal edit; never duplicate an ambiguously delivered error."""
     def current():
@@ -73,30 +98,14 @@ async def finish_error_card(context, chat_id, message_id, text, record=None):
                      and (job is None or record.get('operation') == job.id))))
     if not current():
         return False
+    if record is not None:record['phase']='error'
     photo = bool(record and record.get('photo'))
     definitive = False
-    async def edit(as_photo):
-        async with asyncio.timeout(5):
-            if as_photo:
-                await context.bot.edit_message_caption(chat_id=chat_id,message_id=message_id,
-                                                       caption=text,reply_markup=None)
-            else:
-                await context.bot.edit_message_text(chat_id=chat_id,message_id=message_id,
-                                                    text=text,reply_markup=None)
     try:
-        try:
-            await edit(photo)
-        except BadRequest as exc:
-            reason = str(exc).lower()
-            wrong_surface = ('no caption' in reason if photo else 'no text' in reason)
-            if not wrong_surface or not current():
-                raise
-            # A media timeout can leave either text or photo. Only a definite
-            # type rejection permits one alternate edit on the same message.
-            await edit(not photo)
-            if record is not None:
-                record['photo'] = not photo
-        return True
+        async with (record.get('render_lock') if record else None) or nullcontext():
+            shown = await edit_surface(context.bot,chat_id,message_id,text,None,photo=photo,current=current,parse_mode=None)
+            if record is not None and shown is not None:record['photo']=shown.photo
+        return shown is not None
     except BadRequest as exc:
         if 'message is not modified' in str(exc).lower():
             return True
@@ -143,12 +152,17 @@ async def send_card(context, chat_id, text, keyboard, item, *, current=lambda: T
 
 
 async def render_card(bot, chat_id, text, keyboard, url=None, *, file_context=None, **kwargs):
-    from .html_file_action import rendering, bind
-    if not kwargs.get('current', lambda: True)():
-        return None
-    record = rendering(file_context, chat_id, kwargs.get('message_id'), keyboard) if file_context else None
-    shown = await _render_card(bot, chat_id, text, keyboard, url, **kwargs)
-    if file_context:bind(file_context, record, shown)
+    current = kwargs.get('current',lambda:True)
+    if not current():return None
+    record = getattr(file_context,'user_data',{}).get('download_ui') if file_context else None
+    owned = record and (record['chat'],record['message']) == (chat_id,kwargs.get('message_id'))
+    async with (record.get('render_lock') if owned else None) or nullcontext():
+        if not current():return None
+        shown = await _render_card(bot,chat_id,text,keyboard,url,**kwargs)
+        if owned and shown is not None:record['photo']=shown.photo or shown.media_uncertain
+    if file_context and shown is not None and kwargs.get('message_id') is not None:
+        from .card_context import bind
+        bind(file_context,chat_id,shown.message_id)
     return shown
 
 
@@ -190,8 +204,18 @@ async def _render_card(bot, chat_id, text, keyboard, url=None, *, message_id=Non
         except Exception:
             media_uncertain = True  # A network timeout may follow a remote edit.
             _diagnostic('photo_edit_failed' if message_id is not None else 'photo_send_failed')
+            if message_id is None:
+                return None  # An uncertain send must never be followed by a duplicate.
         if not current():
             return None
+    if photo and message_id is not None and caption_fits(text):
+        try:
+            return await edit_surface(bot,chat_id,message_id,text,keyboard,photo=True,current=current)
+        except (BadRequest,Forbidden):
+            pass  # Definite refusal: retain the established bounded replacement.
+        except Exception:
+            _diagnostic('card_delivery_uncertain')
+            return None  # Never send a duplicate after an ambiguous edit.
     if keep_text and message_id is not None and not photo:
         _diagnostic('text_fallback')
         return CardMessage(message_id, False, media_uncertain=media_uncertain) if current() else None
@@ -207,7 +231,8 @@ async def _render_card(bot, chat_id, text, keyboard, url=None, *, message_id=Non
             if 'message is not modified' in str(exc).lower():
                 return CardMessage(message_id, False) if current() else None
         except Exception:
-            pass
+            _diagnostic('card_delivery_uncertain')
+            return None
     if not current():
         return None
     try:

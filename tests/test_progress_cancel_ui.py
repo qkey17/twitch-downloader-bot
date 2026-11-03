@@ -109,7 +109,7 @@ class ProgressCancelTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_first_list_start_is_full_card_without_bare_placeholder_or_extra_progress(self):
         source, _ = await self.first()
-        text = source.text
+        text = source.caption if source.photo else source.text
         self.assertIn('<b>Загрузка чата…</b>', text)
         self.assertIn('&lt;Title&amp;&gt;', text)
         self.assertIn('01:02:03', text)
@@ -120,29 +120,21 @@ class ProgressCancelTests(unittest.IsolatedAsyncioTestCase):
         self.worker.assert_awaited_once()
         await self.cancel(); await self.done()
 
-    async def test_first_cancel_waits_for_worker_cleanup_and_publication_close_then_restores_working_info(self):
-        source, view = await self.first()
-        self.allow_cleanup.clear(); self.close_release.clear()
-        record = await self.cancel()
-        self.release.set()
+    async def test_first_cancel_waits_for_cleanup_and_close_then_restores_usable_card(self):
+        source,view=await self.first();self.allow_cleanup.clear();self.close_release.clear()
+        record=await self.cancel();self.release.set()
         try:
-            await asyncio.wait_for(self.cleaning.wait(), 1)
-            self.assertTrue(is_busy(self.context)); self.assertIsNone(self.browser._sessions[view.session_id].info_card)
-            self.allow_cleanup.set()
-            await asyncio.wait_for(self.closing.wait(), 1)
-            self.assertTrue(is_busy(self.context)); self.assertFalse(self.closed)
-        finally:
-            await self.done()
-        self.assertTrue(self.closed); self.assertFalse(is_busy(self.context))
-        session = self.browser._sessions[view.session_id]
-        self.assertIsNotNone(session.info_card)
-        self.assertNotEqual(view.revision, session.info_card.revision)
-        self.assertIn('Обработать чат', [b.text for r in session.info_card.message.keyboard.inline_keyboard for b in r])
-        q = self.update(f'ui:vi:{session.token}:{session.info_card.nonce}:back', session.info_card.message)
-        await info.info_callback(q, self.context)
-        q.callback_query.answer.assert_awaited_once()
-        self.assertIsNotNone(session.list_render)
-        self.assertNotIn('download_ui', self.context.user_data)
+            await asyncio.wait_for(self.cleaning.wait(),1);self.assertTrue(is_busy(self.context))
+            self.assertNotIn('chat_choice',self.context.user_data)
+            self.allow_cleanup.set();await asyncio.wait_for(self.closing.wait(),1)
+            self.assertTrue(is_busy(self.context));self.assertFalse(self.closed)
+        finally:await self.done()
+        self.assertTrue(self.closed);self.assertFalse(is_busy(self.context))
+        choice=self.context.user_data['chat_choice'];self.assertTrue(choice['create'])
+        self.assertEqual(source.message_id,choice['message']);self.assertTrue(choice['photo'])
+        session=self.browser._sessions[view.session_id]
+        await self.back(source,self.browser._view(session))
+        self.assertIsNotNone(session.list_render);self.assertNotIn('download_ui',self.context.user_data)
 
     async def test_regen_cancel_restores_current_ready_and_back_same_page(self):
         source, view = await self.regenerate(page=1)
@@ -159,16 +151,15 @@ class ProgressCancelTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(record['origin']['revision'], restored.revision)
 
     async def test_regen_cancel_ready_disappears_restores_create_without_touching_previous_result(self):
-        _, view = await self.regenerate()
-        old = self.available['123456789'].copy()
-        await self.cancel(); self.available.clear(); await self.done()
-        session = self.browser._sessions[view.session_id]
-        self.assertIsNotNone(session.info_card)
-        self.assertNotIn('chat_choice', self.context.user_data)
-        self.assertEqual(self.ready_result()['html_ref'], old['html_ref'])
-        self.assertEqual('Обработать чат', session.info_card.message.keyboard.inline_keyboard[0][0].text)
+        source,view=await self.regenerate();old=self.available['123456789'].copy()
+        await self.cancel();self.available.clear();await self.done()
+        choice=self.context.user_data['chat_choice'];self.assertTrue(choice['create'])
+        self.assertEqual(source.message_id,choice['message'])
+        self.assertEqual(self.ready_result()['html_ref'],old['html_ref'])
+        self.assertEqual('Обработать чат',source.keyboard.inline_keyboard[0][0].text)
 
     async def test_text_regen_start_has_single_full_edit_and_restores_text_on_missing_preview(self):
+        self.metadata.return_value.thumbnail_preview_url=''
         source, view = await self.regenerate(url='')
         self.context.bot.send_message.assert_not_awaited()
         self.assertIn('<b>Загрузка чата…</b>', source.text)
@@ -197,11 +188,12 @@ class ProgressCancelTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(['Получить готовый чат', 'Обработать чат заново'] if regenerate else ['Обработать чат'], labels)
                 self.assertFalse(self.browser._sessions)
 
-    async def test_expired_session_does_not_revive_old_buttons(self):
-        _, view = await self.first()
-        record = await self.cancel(); self.now += 601; await self.done()
-        self.assertNotIn(view.session_id, self.browser._sessions)
-        self.assertEqual('Обработка чата отменена пользователем', self.by_id[record['message']].text)
+    async def test_expired_session_restores_self_contained_vod_actions_without_old_back(self):
+        source,view=await self.first();record=await self.cancel();self.now+=601;await self.done()
+        self.assertNotIn(view.session_id,self.browser._sessions)
+        choice=self.context.user_data['chat_choice'];self.assertTrue(choice['create'])
+        self.assertEqual(record['message'],choice['message'])
+        self.assertEqual(['Обработать чат'],[r[0].text for r in source.keyboard.inline_keyboard])
 
     async def test_new_channel_before_cleanup_is_never_overwritten(self):
         _, view = await self.first()
@@ -211,16 +203,15 @@ class ProgressCancelTests(unittest.IsolatedAsyncioTestCase):
         await self.done()
         self.assertEqual(before, new.edit_text.await_count)
         self.assertTrue(self.browser.is_current(latest))
-        self.assertNotIn(view.session_id, self.browser._sessions)
-        self.assertEqual('Обработка чата отменена пользователем', self.by_id[record['message']].text)
+        self.assertIn(view.session_id,self.browser._sessions)
+        self.assertEqual(record['message'],self.context.user_data['chat_choice']['message'])
 
     async def test_repeat_cancel_and_old_operation_token_cannot_cancel_new_download(self):
         _, view = await self.first()
         record = await self.cancel(); await self.cancel(); await self.done()
-        session = self.browser._sessions[view.session_id]
-        card = session.info_card
-        self.entered.clear(); self.release.clear()
-        await info.info_callback(self.update(f'ui:vi:{session.token}:{card.nonce}:process', card.message), self.context)
+        choice=self.context.user_data['chat_choice']
+        self.entered.clear();self.release.clear()
+        await self.act(choice,'create',self.by_id[choice['message']])
         await asyncio.wait_for(self.entered.wait(), 1)
         newer = self.context.user_data['vod_active_operation']
         self.assertNotEqual(record['operation'], newer)
@@ -293,22 +284,18 @@ class ProgressCancelTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('C&lt;&amp;&gt;',text); self.assertIn('T&lt;&amp;&gt;',text)
         self.assertIn('💬 0',text)
 
-    async def test_photo_start_sends_full_progress_directly_without_replaying_offer(self):
-        await self.regenerate()
-        self.context.bot.send_message.assert_awaited_once()
-        self.assertIn('🕒 В очереди — обработка начнётся автоматически', self.context.bot.send_message.await_args.kwargs['text'])
-        self.assertNotIn('Чат VOD уже готов', self.context.bot.send_message.await_args.kwargs['text'])
-        self.assertTrue(is_busy(self.context))  # Slow worker has an immediate usable Cancel.
-        await self.cancel(); await self.done()
+    async def test_photo_start_edits_full_progress_in_place_without_replaying_offer(self):
+        source,view=await self.regenerate()
+        self.context.bot.send_message.assert_not_awaited()
+        self.assertIn('Загрузка чата',source.caption);self.assertTrue(source.photo)
+        self.assertTrue(is_busy(self.context));await self.cancel();await self.done()
 
-    async def test_restored_info_image_failure_keeps_text_actions_and_original_page(self):
-        _, view = await self.first()
-        await self.cancel()
-        self.context.bot.edit_message_media.side_effect = BadRequest('synthetic')
-        await self.done()
-        card = self.browser._sessions[view.session_id].info_card
-        self.assertIsNotNone(card); self.assertFalse(card.photo)
-        self.assertEqual('Обработать чат', card.message.keyboard.inline_keyboard[0][0].text)
+    async def test_restored_photo_retains_actions_when_optional_media_refresh_fails(self):
+        source,view=await self.first();await self.cancel()
+        self.context.bot.edit_message_media.side_effect=BadRequest('synthetic');await self.done()
+        choice=self.context.user_data['chat_choice'];self.assertTrue(choice['photo'])
+        self.assertEqual(source.message_id,choice['message']);self.assertTrue(source.photo)
+        self.assertEqual('Обработать чат',source.keyboard.inline_keyboard[0][0].text)
 
     async def test_publication_close_error_never_shows_confirmed_cancel(self):
         await self.first(); record = await self.cancel()
@@ -325,7 +312,7 @@ class ProgressCancelTests(unittest.IsolatedAsyncioTestCase):
         entered = asyncio.Event()
         async def stuck(**kw):
             entered.set(); await asyncio.Event().wait()
-        self.context.bot.edit_message_text.side_effect = stuck
+        self.context.bot.edit_message_caption.side_effect = stuck
         real_timeout = asyncio.timeout
         with patch.object(asyncio,'timeout',side_effect=lambda n:real_timeout(min(n,0.02))):
             await self.done()
@@ -372,4 +359,4 @@ class ProgressCancelTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(self.entered.wait(),1)
         self.assertTrue(is_busy(self.context))
         await self.cancel();await self.done()
-        self.assertEqual('Обработка чата отменена пользователем',source.text)
+        self.assertIn('Обработать чат',str(source.keyboard))

@@ -102,9 +102,9 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         old = self.process_update(view)
         message,restored = await self.back(view)
         self.assertEqual(1,restored.page)
-        self.assertEqual(build_list(restored)[0],message.text)
-        self.assertNotEqual(source.message_id,message.message_id)
-        self.context.bot.delete_message.assert_awaited_once_with(chat_id=10,message_id=20)
+        self.assertEqual(build_list(restored)[0],message.caption)
+        self.assertEqual(source.message_id,message.message_id)
+        self.context.bot.delete_message.assert_not_awaited()
         await info.info_callback(old,self.context); assert_stale(self,old)
         self.metadata.assert_not_awaited(); videos.fetch_archive_vods.assert_awaited_once()
 
@@ -160,7 +160,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         await info.info_callback(old,self.context); assert_stale(self,old)
         await asyncio.gather(*self.tasks); self.runner.assert_awaited_once()
         mid = self.runner.await_args.kwargs['progress_message_id']
-        self.assertNotEqual(source.message_id,mid); self.assertIn('Загрузка чата',self.by_id[mid].text)
+        self.assertEqual(source.message_id,mid); self.assertIn('Загрузка чата',self.by_id[mid].caption)
         self.assertIsNone(self.record(view))
 
     async def test_first_process_with_another_owned_job_reaches_scheduler(self):
@@ -213,24 +213,24 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         self.runner.assert_not_awaited()
 
     async def test_failed_back_delivery_keeps_original_photo_actions_valid(self):
-        source,view = await self.setup_list(); await self.show(source,view)
-        card = self.record(view)
-        self.context.bot.send_message.side_effect = BadRequest('cannot send')
+        source,view=await self.setup_list();await self.show(source,view);card=self.record(view)
+        self.context.bot.edit_message_caption.side_effect=BadRequest('cannot edit')
+        self.context.bot.send_message.side_effect=BadRequest('cannot send')
         await self.back(view)
-        self.assertIs(card,self.record(view)); self.assertTrue(card.nonce)
+        self.assertIs(card,self.record(view));self.assertTrue(card.nonce)
         self.assertEqual(card.revision,self.browser._sessions[view.session_id].revision)
         self.context.bot.delete_message.assert_not_awaited()
 
-    async def test_failed_process_replacement_keeps_card_and_free_slot(self):
-        source,view = await self.setup_list(); await self.show(source,view)
-        card = self.record(view)
-        self.context.bot.send_message.side_effect = BadRequest('cannot send')
-        await info.info_callback(self.process_update(view),self.context)
-        self.assertIs(card,self.record(view)); self.assertTrue(card.nonce)
-        self.assertNotIn('vod_global_operation',self.app.bot_data); self.runner.assert_not_awaited()
+    async def test_failed_progress_edit_releases_slot_and_never_starts_worker(self):
+        source,view=await self.setup_list();await self.show(source,view)
+        self.context.bot.edit_message_caption.side_effect=TimeoutError()
+        with self.assertRaises(RuntimeError):await info.info_callback(self.process_update(view),self.context)
+        self.assertNotIn('vod_global_operation',self.app.bot_data);self.runner.assert_not_awaited()
+        self.context.bot.send_message.assert_not_awaited()
 
     async def test_failed_deletion_disables_only_retired_keyboard(self):
         source,view = await self.setup_list(); await self.show(source,view)
+        self.context.bot.edit_message_caption.side_effect = BadRequest('caption edit refused')
         self.context.bot.delete_message.side_effect = BadRequest('cannot delete')
         self.context.bot.edit_message_reply_markup = AsyncMock()
         new,restored = await self.back(view)
@@ -239,6 +239,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_slow_cleanup_cannot_delete_or_clear_new_card(self):
         source,view = await self.setup_list(); await self.show(source,view)
+        self.context.bot.edit_message_caption.side_effect = BadRequest('caption edit refused')
         entered,release = asyncio.Event(),asyncio.Event()
         async def slow(**kwargs):
             entered.set(); await release.wait()
@@ -253,6 +254,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cancelled_cleanup_keeps_new_list_and_invalidates_old_actions(self):
         source,view = await self.setup_list(); await self.show(source,view)
+        self.context.bot.edit_message_caption.side_effect = BadRequest('caption edit refused')
         old = self.process_update(view); entered = asyncio.Event()
         async def stuck(**kwargs):
             entered.set(); await asyncio.Event().wait()
@@ -268,16 +270,17 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         self.context.bot.edit_message_media.side_effect = TimeoutError()
         await self.show(source,view); self.assertTrue(self.record(view).photo)
         message,restored = await self.back(view)
-        self.assertNotEqual(source.message_id,message.message_id); self.assertTrue(self.browser.is_current(restored))
+        self.assertEqual(source.message_id,message.message_id); self.assertTrue(self.browser.is_current(restored))
 
-    async def test_channel_replacement_clears_only_old_info_keyboard(self):
-        source,view = await self.setup_list(); await self.show(source,view)
-        old = self.process_update(view); message,new = await self.open(21,'other')
-        source.edit_reply_markup.assert_awaited_once_with(reply_markup=None)
-        self.assertTrue(self.browser.is_current(new)); self.assertIsNotNone(message.keyboard)
-        await info.info_callback(old,self.context); assert_stale(self,old)
+    async def test_new_channel_preserves_old_info_and_its_actions(self):
+        source,view=await self.setup_list();await self.show(source,view)
+        card=self.record(view);message,new=await self.open(21,'other')
+        source.edit_reply_markup.assert_not_awaited();self.assertIs(card,self.record(view))
+        await self.back(view)
+        self.assertTrue(self.browser.is_current(new));self.assertIsNotNone(message.keyboard)
+        self.assertIn('Время указано по UTC',source.caption)
 
-    async def test_delayed_preview_is_ignored_after_back_or_channel_replacement(self):
+    async def test_delayed_preview_obeys_own_transition_but_not_other_channel(self):
         for channel in (False,True):
             source,view = await self.setup_list()
             with patch.object(info,'preview_info',new=AsyncMock()): await self.show(source,view)
@@ -286,7 +289,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
             else: await self.back(view)
             before = list(self.events)
             await info.preview_info(self.browser,session,card,self.context.bot)
-            self.assertEqual(before,self.events)
+            self.assertEqual(len(before)+(1 if channel else 0),len(self.events))
 
     async def test_session_change_during_text_delivery_discards_late_result(self):
         source,view = await self.setup_list(''); original = self.context.bot.edit_message_text.side_effect
@@ -374,7 +377,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Время указано по UTC',self.by_id[30].text)
         self.assertIsNotNone(self.by_id[30].keyboard)
 
-    async def test_new_channel_during_metadata_prevents_old_download(self):
+    async def test_new_channel_during_metadata_preserves_old_download(self):
         source,view = await self.setup_list(''); await self.show(source,view)
         entered,release = asyncio.Event(),asyncio.Event(); original = self.metadata.return_value
         async def slow(*args): entered.set(); await release.wait(); return original
@@ -382,11 +385,12 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         task = self.task(info.info_callback(self.process_update(view),self.context))
         await asyncio.wait_for(entered.wait(),1)
         message,new = await self.open(30,'other'); release.set(); await task
-        self.runner.assert_not_awaited(); self.assertTrue(self.browser.is_current(new))
+        await asyncio.gather(*self.tasks);self.runner.assert_awaited_once();self.assertTrue(self.browser.is_current(new))
         self.assertIsNotNone(message.keyboard)
 
     async def test_slow_cleanup_does_not_block_replacement_channel(self):
         source,view = await self.setup_list(); await self.show(source,view)
+        self.context.bot.edit_message_caption.side_effect = BadRequest('caption edit refused')
         entered,release = asyncio.Event(),asyncio.Event()
         async def slow(**kw): entered.set(); await release.wait()
         self.context.bot.delete_message.side_effect = slow
