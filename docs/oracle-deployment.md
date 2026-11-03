@@ -49,7 +49,8 @@ Git merge получает `--no-overwrite-ignore`, чтобы не переза
 пустым успешным ответом. Приватный временный список путей удаляется при выходе.
 Изменённые tracked-файлы на сервере приводят к отказу до остановки.
 
-Обновления `requirements.txt` и `src/database/` намеренно отклоняются. Для них
+Непроверенные обновления `requirements.txt` и `src/database/` отклоняются. Узкие
+исключения PR #31 и Pillow PR #54 описаны ниже; остальные переходы запрещены. Для них
 нужен отдельный план обслуживания, проверки совместимости и резервные копии.
 Если зависимости прежние, используется существующая `.venv`, проверяемая через
 `pip check`. Будущие новые импорты без объявленных зависимостей всё равно могут
@@ -443,3 +444,76 @@ VM должна иметь Git, Bash, sudo, Python 3.12 и systemd. Резуль
 Venv здесь синтетический: только `pip check` заменён успешной заглушкой;
 compile/import, systemd-служба и проверки journal/readiness выполняются реально.
 Сеть гостя отключена; production dependencies и Telegram API этим не проверяются.
+
+
+### Узкий переход requirements для Pillow 12.3.0 — подготовка выпуска PR #54
+
+**Это исходник для review и отдельной установки, не подтверждение готовности Oracle.**
+Merge исходника helper не обновляет root-owned `/usr/local/libexec/tdb-deploy`.
+Обычный GitHub Actions deployment не устанавливает Pillow, не обновляет helper
+и не меняет `.venv`. PR #54, production и существующие данные этим PR не меняются.
+
+Разрешается только направленная пара записей Git tree для `requirements.txt`:
+
+```text
+100644 blob 384fc51190b284c4dd1ed4efa321bdcb7284bb46  requirements.txt
+100644 blob 5b606d55a0ba9a793ca91248e971598ab9ffaaca  requirements.txt
+```
+
+Это прежние `aiohttp==3.13.5`, `python-telegram-bot==22.7` и добавление только
+`Pillow==12.3.0`. Сравниваются реальные blob/mode, а не имя пакета или строка
+версии. В этой ветке весь `src/database` должен быть неизменным. Другие source/
+target blob, обратный переход, добавочные зависимости, удаление, symlink и смена
+mode отклоняются. Одновременный requirements/database update запрещён, даже для
+пары stable leases PR #31. Прежнее исключение PR #31 остаётся в прежних границах.
+Обычные релизы с неизменными защищёнными файлами сохраняют прежнюю политику.
+
+Если manifest целевого commit имеет новый blob, helper до обновления проверяет
+окружение. Это не зависит от diff: **последующие релизы с тем же requirements blob
+тоже обязаны пройти проверку Pillow**. Перед start проверка повторяется по manifest
+фактического HEAD. Для старого manifest Pillow не требуется; неизвестный переход
+по-прежнему отклоняется guard. Ошибка чтения Git не считается разрешением.
+
+Проба использует только `$PROJECT/.venv/bin/python -I -B` и проверяет фактический
+`sys.prefix`, distribution `Pillow==12.3.0`, `PIL.__version__`, импорты `PIL.Image`,
+`ImageOps`, `ImageDraw`, `_imaging` и соответствие `Image.core`, затем PNG/JPEG
+round-trip изображения 2×2 в памяти (format/size/mode/pixel). Лимит пробы 60 секунд,
+затем отдельный лимит 60 секунд для `pip check`; прежний preflight pip check сохранён.
+Системный Python не подставляется. Сеть, установка пакетов, приложение и production
+SQLite/HTML не используются, bytecode не записывается. Выводятся только фиксированные
+категории отказа, без traceback/версий окружения/значений секретов.
+
+`finish()` после EXIT/HUP/INT/TERM проверяет зависимости **фактического чистого
+checkout** перед прежним best-effort start. При новом manifest и неисправном Pillow
+start не запрашивается; выводится причина и безопасные systemd properties. Прежний
+checkout может быть запущен без Pillow. Дополнительных попыток старта, rollback Git
+или восстановления SQLite/HTML нет. В stopped-service recovery error trap, как и
+раньше, не добавляет start. Протоколы check/deploy/check-recovery/recover, admission,
+locks, hold, таймауты остановки/старта и readiness остаются прежними.
+
+До будущего выпуска по отдельно утверждённому плану необходимо:
+
+1. Подтвердить платформу и ABI фактической `.venv`. Получить совместимый официальный
+   wheel Pillow 12.3.0, сверить заранее утверждённый SHA256; не собирать пакет на VM.
+2. Через существующий доверенный административный канал и runbook bootstrap установить
+   reviewed helper из конкретного commit: SHA256, `bash -n`, защищённая root-owned
+   backup-копия, существующий deployment lock, атомарная замена, `root:root 0755`,
+   итоговая проверка hash/type/permissions. Не менять forced command или sudoers.
+3. В согласованном A* после полного stop защитить существующую `.venv` отдельной
+   проверенной приватной резервной копией: SQLite snapshot её не заменяет. Установить
+   только проверенный wheel в существующую `.venv`, без обновления других пакетов,
+   проверить Pillow и pip check. Helper этого не делает.
+4. Пройти прежние G4/G9/G13 и выполнить существующий Actions deployment на exact
+   объединённый SHA. Если A* уже остановил службу, использовать только предусмотренную
+   runbook передачу stopped-service helper, не обычный deploy для running service.
+
+До этого Oracle не объявляется готовым. При отказе до Git update допустим только
+согласованный возврат того же previous с проверенным прежним окружением; после update
+нужна существующая forward-recovery процедура. Восстановление production-данных
+без отдельного разрешения не выполнять.
+
+Адресные offline-проверки: `bash -n deploy/oracle_deploy.sh`, тесты `deploy/tests`,
+существующие `test_oracle_deployment.py` и `test_oracle_recovery.py` в workflow
+**Deployment guard tests**. Runtime-тесты создают временную изолированную `.venv`
+без pip bootstrap и используют синтетические PIL/pip-модули; Pillow не устанавливается.
+Это проверка самой пробы/путей отказа, не проверка production wheel или Oracle.

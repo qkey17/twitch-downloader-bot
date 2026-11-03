@@ -54,6 +54,8 @@ finish() {
             dirty=$(git_cmd -C "$PROJECT" status --porcelain --untracked-files=no 2>/dev/null) || dirty=unknown
             if [[ -n "$dirty" || ( "$head" != "$previous" && "$head" != "$target" ) ]]; then
                 note 'Recovery start withheld: checkout is inconsistent. Manual repair is required.'
+            elif ! check_runtime_dependencies "$head"; then
+                note 'Recovery start withheld: dependencies for the actual checkout are not ready.'
             elif sudo -n /usr/bin/systemctl --no-block start "$UNIT" >/dev/null 2>&1; then
                 note 'Recovery start requested. This does NOT mean deployment succeeded.'
             else
@@ -224,6 +226,15 @@ check_database_transition() {
         return
     fi
     local old_entry new_entry
+    # PR #54: only this exact requirements transition, with NO database changes.
+    old_entry=$(git_cmd ls-tree "$previous" -- requirements.txt) || fail 'Could not inspect previous requirements blob.'
+    new_entry=$(git_cmd ls-tree "$target" -- requirements.txt) || fail 'Could not inspect target requirements blob.'
+    if [[ "$old_entry" == $'100644 blob 384fc51190b284c4dd1ed4efa321bdcb7284bb46\trequirements.txt' &&
+          "$new_entry" == $'100644 blob 5b606d55a0ba9a793ca91248e971598ab9ffaaca\trequirements.txt' ]]; then
+        git_cmd diff --quiet "$previous" "$target" -- src/database ||
+            fail 'The reviewed Pillow transition must not change database files.'
+        return
+    fi
     old_entry=$(git_cmd ls-tree "$previous" -- src/database/db_results.py) || fail 'Could not inspect previous registry blob.'
     new_entry=$(git_cmd ls-tree "$target" -- src/database/db_results.py) || fail 'Could not inspect target registry blob.'
     [[ "$old_entry" == $'100644 blob 220c8817cb1e473b60ccae3bb57f615bb44af48e\tsrc/database/db_results.py' &&
@@ -231,6 +242,72 @@ check_database_transition() {
         fail 'Dependency/database changes require manual maintenance and backups.'
     git_cmd diff --quiet "$previous" "$target" -- requirements.txt src/database \
         ':(exclude)src/database/db_results.py' || fail 'Other dependency/database changes require manual maintenance and backups.'
+}
+
+check_runtime_dependencies() {
+    # Called for target admission AND every actual-checkout start, including EXIT.
+    # Do not key this on a diff: later releases retain the same Pillow manifest.
+    local entry result=0
+    entry=$(git_cmd ls-tree "$1" -- requirements.txt 2>/dev/null) || {
+        note 'Dependency check failed: could not inspect requirements.'; return 1;
+    }
+    [[ "$entry" == *$' blob 5b606d55a0ba9a793ca91248e971598ab9ffaaca\trequirements.txt' ]] || return 0
+    [[ "$entry" == $'100644 blob 5b606d55a0ba9a793ca91248e971598ab9ffaaca\trequirements.txt' ]] || {
+        note 'Dependency check failed: unexpected Pillow manifest mode.'; return 1;
+    }
+    timeout 60 "$PROJECT/.venv/bin/python" -I -B - "$PROJECT/.venv" >/dev/null 2>&1 <<'PY' || result=$?
+import io
+import sys
+from pathlib import Path
+from importlib.metadata import PackageNotFoundError, version
+
+if Path(sys.prefix).resolve() != Path(sys.argv[1]).resolve():
+    sys.exit(40)
+try:
+    installed = version('Pillow')
+except PackageNotFoundError:
+    sys.exit(41)
+except Exception:
+    sys.exit(42)
+if installed != '12.3.0':
+    sys.exit(42)
+try:
+    import PIL
+    if PIL.__version__ != '12.3.0':
+        sys.exit(42)
+    from PIL import Image, ImageOps, ImageDraw, _imaging
+    if Image.core is not _imaging:
+        sys.exit(43)
+except Exception:
+    sys.exit(43)
+try:
+    with Image.new('RGB', (2, 2), (32, 64, 96)) as image:
+        for fmt in ('PNG', 'JPEG'):
+            with io.BytesIO() as buffer:
+                image.save(buffer, format=fmt)
+                buffer.seek(0)
+                with Image.open(buffer) as decoded:
+                    decoded.load()
+                    if decoded.size != (2, 2) or decoded.mode != 'RGB' or decoded.format != fmt:
+                        sys.exit(44)
+                    if any(abs(a - b) > 3 for a, b in zip(decoded.getpixel((0, 0)), (32, 64, 96))):
+                        sys.exit(44)
+except Exception:
+    sys.exit(44)
+PY
+    case "$result" in
+        0) ;;
+        40) note 'Dependency check failed: unexpected virtual environment.';;
+        41) note 'Dependency check failed: Pillow distribution is missing.';;
+        42) note 'Dependency check failed: Pillow and PIL must both be 12.3.0.';;
+        43) note 'Dependency check failed: Pillow Python/native imports failed.';;
+        44) note 'Dependency check failed: Pillow PNG/JPEG round-trip failed.';;
+        *) note 'Dependency check failed: Pillow probe failed or timed out.';;
+    esac
+    (( result == 0 )) || return 1
+    timeout 60 "$PROJECT/.venv/bin/python" -I -B -m pip check >/dev/null 2>&1 || {
+        note 'Dependency check failed: pip check failed.'; return 1;
+    }
 }
 
 check_target() {
@@ -246,6 +323,7 @@ check_target() {
     git_cmd merge-base --is-ancestor "$previous" "$target" || fail 'Refusing a downgrade or divergent update.'
     # Dependencies and schema changes need a separately reviewed maintenance plan.
     check_database_transition
+    check_runtime_dependencies "$target" || fail 'The selected requirements need a working Pillow 12.3.0 environment.'
     # Check command status before reading NUL-delimited paths; process substitution
     # would silently accept an empty list when Git fails.
     manifest=$(mktemp "$STATE_DIR/paths.XXXXXXXX") || fail 'Could not create a private path manifest.'
@@ -302,6 +380,7 @@ update_and_start() {
     timeout 60 "$PROJECT/.venv/bin/python" -c 'import src.main' >/dev/null 2>&1 || fail 'New source imports failed.'
     stage=start
     if (( emergency )); then recovery_idle; stage=start; fi
+    check_runtime_dependencies HEAD || fail 'Dependencies for the actual checkout are not ready; startup withheld.'
     sudo -n /usr/bin/systemctl --no-block start "$UNIT" >/dev/null 2>&1 || fail 'Could not request service startup.'
     deadline=$((SECONDS + START_TIMEOUT))
     while :; do
