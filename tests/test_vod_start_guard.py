@@ -49,6 +49,11 @@ class StartGuardTests(unittest.TestCase):
         self.assertEqual(before,{p:p.read_bytes() for p in before})
         self.record(state,True)
         with start_guard() as allowed:self.assertFalse(allowed)
+        from src.vod_scheduler import Scheduler
+        manager=Scheduler(SimpleNamespace(bot_data={}))
+        job,error=manager.reserve(1,'123')
+        self.assertIsNone(job);self.assertIn('обслуживание',error)
+        self.assertEqual({},manager.jobs)
         self.record(state,False)
         with (state/'offsite.lock').open('r+b') as f:
             fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB)

@@ -3,7 +3,7 @@ import asyncio
 import re
 from dataclasses import dataclass
 from telegram import InputMediaPhoto
-from telegram.error import BadRequest
+from telegram.error import BadRequest, Forbidden
 from src.handlers.handlers_vod_info import preview_url, _placeholder, _diagnostic
 from src.twitch_api.videos import fetch_video_thumbnail
 
@@ -61,6 +61,66 @@ async def _delete(bot, chat_id, message_id):
 async def cleanup_card(bot, chat_id, shown):
     if shown is not None and shown.retired_id is not None:
         await _delete(bot, chat_id, shown.retired_id)
+
+
+async def finish_error_card(context, chat_id, message_id, text, record=None):
+    """Bounded terminal edit; never duplicate an ambiguously delivered error."""
+    def current():
+        data = getattr(context, 'user_data', {})
+        job = data.get('_vod_job')
+        return (data.get('download_ui') is record
+                and (record is None or ((record.get('chat'), record.get('message')) == (chat_id,message_id)
+                     and (job is None or record.get('operation') == job.id))))
+    if not current():
+        return False
+    photo = bool(record and record.get('photo'))
+    definitive = False
+    async def edit(as_photo):
+        async with asyncio.timeout(5):
+            if as_photo:
+                await context.bot.edit_message_caption(chat_id=chat_id,message_id=message_id,
+                                                       caption=text,reply_markup=None)
+            else:
+                await context.bot.edit_message_text(chat_id=chat_id,message_id=message_id,
+                                                    text=text,reply_markup=None)
+    try:
+        try:
+            await edit(photo)
+        except BadRequest as exc:
+            reason = str(exc).lower()
+            wrong_surface = ('no caption' in reason if photo else 'no text' in reason)
+            if not wrong_surface or not current():
+                raise
+            # A media timeout can leave either text or photo. Only a definite
+            # type rejection permits one alternate edit on the same message.
+            await edit(not photo)
+            if record is not None:
+                record['photo'] = not photo
+        return True
+    except BadRequest as exc:
+        if 'message is not modified' in str(exc).lower():
+            return True
+        definitive = True
+    except Forbidden:
+        definitive = True
+    except Exception:
+        pass  # Includes delivery timeouts: a new message could duplicate delivery.
+    if not current():
+        return False
+    try:
+        async with asyncio.timeout(5):
+            await context.bot.edit_message_reply_markup(chat_id=chat_id,message_id=message_id,reply_markup=None)
+    except Exception:
+        _diagnostic('terminal_keyboard_cleanup_failed')
+    if definitive and current():
+        try:
+            async with asyncio.timeout(5):
+                await context.bot.send_message(chat_id=chat_id,text=text)
+            return True
+        except Exception:
+            pass  # Never retry an uncertain fallback send.
+    _diagnostic('terminal_card_delivery_failed')
+    return False
 
 
 async def send_card(context, chat_id, text, keyboard, item, *, current=lambda: True, on_sent=None):

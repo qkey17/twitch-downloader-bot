@@ -1,7 +1,6 @@
 # handlers_vod.py
 import logging
 import asyncio
-import html
 from src.resource_usage import OperationTelemetry, observe_operation, record_failure, stage
 import json
 import re
@@ -317,6 +316,19 @@ async def prepare_vod_choice(message, context, user_id, vod_id, *, is_current=No
     client_id = get_client_id()
     session = context.application.bot_data["aiohttp"]
 
+    # List/info preparation shares the same bounded places as direct input.
+    # Direct input already owns a ticket; transfer it once in reserve().
+    from src.vod_scheduler import scheduler, INPUT_TICKET
+    manager = scheduler(context.application)
+    existing = INPUT_TICKET.get()
+    ticket = token = None
+    if existing is None or existing[0] is not manager or not existing[1]:
+        ticket = manager.prepare_input()
+        if ticket is None:
+            await message.reply_text('Очередь недоступна. Повторите запрос позже.')
+            return 'busy'
+        token = INPUT_TICKET.set(ticket)
+
     # Both entry handlers are non-blocking in PTB. Serialize this user's
     # preparation without reserving the global download slot.
     lookup = object()
@@ -364,6 +376,9 @@ async def prepare_vod_choice(message, context, user_id, vod_id, *, is_current=No
     finally:
         if context.user_data.get("vod_link_lookup") is lookup:
             context.user_data.pop("vod_link_lookup", None)
+        if ticket is not None:
+            manager.release_input(ticket)
+            INPUT_TICKET.reset(token)
 
 
 # ------ Cancel pending download (кнопка отмены в прогрессе) ------
@@ -519,18 +534,33 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
     context.user_data['download_ui'] = ui
     context.shared_user_data['download_ui'] = ui
     from src.workers.worker_progress import _build_progress_card, cancel_keyboard
-    queue_text = (f'Чат VOD {html.escape(str(vod_id))} ожидает в очереди.\n'
-                  'Обработка начнётся автоматически.')
+    from .handlers_vod_info import information_text, preview_url
+    from src.ui.ui_formatters import _fmt_len
+    meta = initial_meta or {}
     if regenerate:
         context.user_data.pop("vod_result_choice",None)
     try:
-        initial_text = _build_progress_card(initial_meta or {}, vod_url, 0, 0, False)
-        if manager.active >= 2 or len(manager.queue) > 2:
-            initial_text = queue_text
+        queue_text = information_text((meta.get('channel') or '—')[:120],
+                                      (meta.get('title') or 'Без названия')[:240],
+                                      _fmt_len(meta.get('length_seconds')),meta.get('created_at'))
+        queue_text += '\n🕒 В очереди — обработка начнётся автоматически'
+        initial_text = queue_text
         await q.message.edit_text(
-            text=initial_text, parse_mode='HTML', reply_markup=cancel_keyboard(context)
+            text=initial_text, parse_mode='HTML', reply_markup=cancel_keyboard(context,waiting=True)
         )
         ui.update(message=q.message.message_id, last_text=initial_text)
+        # Deliver optional media before arming: activation cannot race this edit,
+        # and cancellation waits for delivery. Never look up another thumbnail.
+        from src.ui.result_preview import render_card, caption_fits
+        url = preview_url(meta.get('thumbnail_preview_url',meta.get('thumbnail_url'))
+                          or getattr(q.message,'thumbnail_url',None))
+        waiting = manager.active >= 2 or bool(manager.queue and manager.queue[0] is not job)
+        if waiting and url and caption_fits(queue_text) and not job.cancelled:
+            ui['photo'] = True  # A timeout may follow a successful remote edit.
+            shown = await render_card(context.bot,ui['chat'],queue_text,cancel_keyboard(context,waiting=True),url,
+                                      message_id=ui['message'],keep_text=True)
+            if shown is not None:
+                ui['photo'] = shown.photo or shown.media_uncertain
     except BaseException as exc:
         telemetry.fail(exc)
         try:
@@ -575,7 +605,12 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
     except BaseException as exc:
         telemetry.fail(exc)
         try:
-            await _restore_start_prompt(q.message,context,vod_id,regenerate, modern=modern)
+            if modern or ui.get('photo'):
+                from src.ui.result_preview import finish_error_card
+                await finish_error_card(context,ui['chat'],ui['message'],
+                                        'Не удалось начать обработку. Выберите VOD заново.',ui)
+            else:
+                await _restore_start_prompt(q.message,context,vod_id,regenerate, modern=modern)
         finally:
             finish_download(context, operation_id)
             manager.drop(job, 'error')
@@ -593,13 +628,6 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
             logging.getLogger(__name__).warning('Download navigation context unavailable')
     if get_pending(root_context) is expected_pending:
         clear_pending(root_context)
-    if job.state == 'waiting' and initial_text != queue_text:
-        # A hold/resource guard can also leave the first job waiting. Serialize
-        # this delivery with activation so a late queue edit cannot hide progress.
-        from src.workers.worker_progress import safe_edit_html
-        async with ui['ui_lock']:
-            if job.state == 'waiting':
-                await safe_edit_html(context,ui['chat'],ui['message'],queue_text)
     return True
 
 
@@ -678,6 +706,7 @@ async def _runner(
             item=item,
             html_url=html_url,
             ready=dict(id=getattr(publication,'id',None), vod_id=vod_id), owner_id=user_id,
+            photo=bool(ui and ui.get('photo')),
         )
 
     except RuntimeError as e:
@@ -687,18 +716,15 @@ async def _runner(
         record_failure(e)
         await _record_generation_failure(publication,e)
         if str(e) == "CHAT_EMPTY":
-            try:
-                await context.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=progress_message_id,
-                    text="У этого VOD нет чата."
-                )
-            except Exception:
-                pass
+            from src.ui.result_preview import finish_error_card
+            await finish_error_card(context,chat_id,progress_message_id,'У этого VOD нет чата.',ui)
             return
         if str(e) == CANCELLED_MESSAGE:
             cancelled = True
         else:
+            from src.ui.result_preview import finish_error_card
+            await finish_error_card(context,chat_id,progress_message_id,
+                                    'Не удалось обработать чат VOD. Повторите попытку.',ui)
             raise
 
     except Exception as e:
@@ -716,17 +742,8 @@ async def _runner(
             error_text = "Время ожидания истекло. Повторите попытку позже."
         else:
             error_text = "Не удалось обработать чат VOD. Повторите попытку."
-        try:
-            await context.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=progress_message_id,
-                text=error_text,
-            )
-        except Exception:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=error_text,
-            )
+        from src.ui.result_preview import finish_error_card
+        await finish_error_card(context,chat_id,progress_message_id,error_text,ui)
     except BaseException as exc:
         await _record_generation_failure(publication,exc)
         raise

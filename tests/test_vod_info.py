@@ -163,6 +163,33 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(source.message_id,mid); self.assertIn('Загрузка чата',self.by_id[mid].text)
         self.assertIsNone(self.record(view))
 
+    async def test_first_process_with_another_owned_job_reaches_scheduler(self):
+        await self.process_with_owned_jobs(1)
+
+    async def test_first_process_with_two_owned_jobs_queues_then_starts(self):
+        await self.process_with_owned_jobs(2)
+
+    async def process_with_owned_jobs(self,count):
+        from src.vod_scheduler import scheduler
+        manager=scheduler(self.context.application)
+        release=asyncio.Event();others=[]
+        for i in range(count):
+            other,_=manager.reserve(7,str(987654321+i));manager.arm(other,release.wait);others.append(other)
+        self.context.user_data.update(vod_busy=True,vod_jobs={j.id:j for j in others})
+        source,view=await self.setup_list('');await self.show(source,view)
+        entered=asyncio.Event()
+        async def run(**kw):entered.set()
+        self.runner.side_effect=run
+        try:
+            await info.info_callback(self.process_update(view),self.context)
+            if count==2:
+                self.runner.assert_not_awaited()
+                queued=next(j for j in manager.jobs.values() if j.vod=='123456789')
+                self.assertEqual('waiting',queued.state)
+            release.set();await asyncio.wait_for(entered.wait(),2)
+            self.runner.assert_awaited_once()
+        finally:await manager.close()
+
     async def test_old_date_racing_info_process_cannot_start_twice(self):
         source,view = await self.setup_list(''); await self.show(source,view)
         entered,release = asyncio.Event(),asyncio.Event(); original = self.metadata.return_value

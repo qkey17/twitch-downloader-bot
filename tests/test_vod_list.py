@@ -318,7 +318,9 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             await chat.prepare_chat(message, self.context, 7, '123456789', edit=True)
         self.assertNotIn('vod_global_operation', self.app.bot_data)
         self.assertFalse(self.context.user_data.get('vod_busy'))
-        self.assertNotIn('казуал', message.edit_text.await_args.args[0])
+        terminal = self.context.bot.edit_message_text.await_args.kwargs
+        self.assertEqual('Не удалось начать обработку. Выберите VOD заново.',terminal['text'])
+        self.assertIsNone(terminal['reply_markup'])
 
     async def test_back_during_metadata_prevents_start(self):
         self.browser = VodListBrowser()

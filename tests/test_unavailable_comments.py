@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 import unittest
 
 import aiohttp
+from telegram.error import BadRequest
 
 import test_result_callbacks as registry_fixture
 from test_twitch_api_reliability import _FakeSession, _Response, _ResponseContext
@@ -50,7 +51,7 @@ class UnavailableCommentsTests(unittest.IsolatedAsyncioTestCase):
         session.post.side_effect = responses
         self.application.bot_data['aiohttp'] = session
         if fallback:
-            context.bot.edit_message_text.side_effect = OSError('mock Telegram edit failure')
+            context.bot.edit_message_text.side_effect = BadRequest("Message can't be edited")
         operation = begin_download(context)
         before = {row['id'] for row in self.rows()}
         with patch.object(download_worker, 'gql_fetch_comments', fetch_comments.gql_fetch_comments), \
