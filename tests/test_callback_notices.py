@@ -77,7 +77,7 @@ class NoticeTests(unittest.IsolatedAsyncioTestCase):
             source, view = await self.open(20)
             q = self.update(callback(view,'pages'), source, owner=8 if reason=='foreign' else 7)
             if reason=='expired':self.now += 601
-            if reason=='replaced':await self.open(30,'other')
+            if reason=='replaced':await self.open(20,'other')  # Replacing this exact message consumes its actions
             if reason=='revision':self.browser._sessions[view.session_id].revision += 1
             if reason=='message':q.callback_query.message=self.message(999)
             if reason=='malformed':q.callback_query.data += ':invalid'
@@ -219,7 +219,9 @@ class NoticeTests(unittest.IsolatedAsyncioTestCase):
         row=dict(history_id=1,vod_url='https://www.twitch.tv/videos/1')
         q=self.update('ui:histvod:h1',self.message())
         async def answer():
-            self.context.user_data['history_view']=dict(chat=10,message_id=99,owner=7,history_id=2)
+            from src.ui.card_context import for_message
+            scoped=for_message(self.context,7,10,q.callback_query.message.message_id)
+            scoped.user_data['history_view']=dict(chat=10,message_id=99,owner=7,history_id=2)
         q.callback_query.answer.side_effect=answer
         with patch.object(hc.config,'HISTORY_ENABLED',True),patch.object(hf.db,'get_history_entry_for_user',return_value=row):
             await hc.history_vod_callback(q,self.context)
@@ -286,9 +288,9 @@ class InfoNoticeTests(unittest.IsolatedAsyncioTestCase):
             q=self.update(f'ui:vi:{view.session_id}:{card.nonce}:process',self.card,owner=8 if reason=='owner' else 7)
             if reason=='nonce':q.callback_query.data=q.callback_query.data.replace(card.nonce,'0'*16)
             if reason=='revision':self.browser._sessions[view.session_id].revision+=1
-            if reason=='expiry':self.now+=301
+            if reason=='expiry':self.now+=601
             if reason=='message':q.callback_query.message=self.message(999)
-            if reason=='replaced':await self.open(30,'other')
+            if reason=='replaced':await self.open(20,'other')  # Replacing this exact message consumes its actions
             before=source.edit_text.await_count
             nonce=card.nonce
             await info.info_callback(q,self.context)

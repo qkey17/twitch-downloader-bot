@@ -76,6 +76,15 @@ class NavigationCards(unittest.IsolatedAsyncioTestCase):
         self.context.bot.send_photo.assert_awaited_once()
         self.runner.assert_not_awaited()
 
+    async def test_reusing_exact_message_consumes_its_previous_offer(self):
+        source,view=await self.open(20);await self.pick(source,view)
+        choice=for_message(self.context,7,10,20).user_data['chat_choice']
+        await self.open(20,'another')
+        request=self.update(f'ui:chat:open:{choice["token"]}',source)
+        await chat.chat_callback(request,self.context)
+        request.callback_query.answer.assert_awaited_once_with('Кнопка больше неактуальна',show_alert=False)
+        self.context.bot.send_photo.assert_not_awaited()
+
     async def test_different_vods_and_users_keep_exact_generation_downloads(self):
         sender=NS(send=AsyncMock(return_value=SendResult(SendStatus.SENT)),closing=False)
         self.app.running=True;self.app.bot_data[SENDER_KEY]=sender

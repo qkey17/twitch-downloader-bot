@@ -52,7 +52,7 @@ class ReadyOfferTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(chat.vod.db,'add_user_history') as history:
             selected=await self.pick(source,view)
         self.assertIsInstance(selected,VodSelection)
-        self.assertEqual(ready_offer_text(ready),source.edit_text.await_args.args[0])
+        self.assertEqual(ready_offer_text(ready),source.edit_text.await_args.kwargs['text'])
         rows=source.edit_text.await_args.kwargs['reply_markup'].inline_keyboard
         self.assertEqual(['Получить готовый чат','Обработать чат заново','Вернуться к списку'],[r[0].text for r in rows])
         self.assertEqual('HTML',source.edit_text.await_args.kwargs['parse_mode'])
@@ -79,7 +79,7 @@ class ReadyOfferTests(unittest.IsolatedAsyncioTestCase):
         old_rows=source.edit_text.await_args.kwargs['reply_markup'].inline_keyboard
         back=await lists.channel_vods_callback(self.update(old_rows[2][0].callback_data,source),self.context)
         await self.pick(source,back,1)
-        self.assertIn('Second',source.edit_text.await_args.args[0])
+        self.assertIn('Second',source.edit_text.await_args.kwargs['text'])
         self.assertEqual('2',self.context.user_data['chat_choice']['vod_id'])
         before=self.context.bot.edit_message_text.await_count
         for row in old_rows[:2]:await chat.chat_callback(self.update(row[0].callback_data,source),self.context)
@@ -125,7 +125,7 @@ class ReadyOfferTests(unittest.IsolatedAsyncioTestCase):
         source,view=await self.setup_offer()
         self.ready.side_effect=[self.ready_result(),None]
         await self.pick(source,view)
-        self.assertIn('недоступен',source.edit_text.await_args.args[0])
+        self.assertIn('недоступен',source.edit_text.await_args.kwargs['text'])
         self.assertEqual('Вернуться к списку',source.edit_text.await_args.kwargs['reply_markup'].inline_keyboard[0][0].text)
         self.runner.assert_not_awaited();self.metadata.assert_not_awaited()
 

@@ -116,7 +116,11 @@ def retire_download_selection(context, record):
 
 
 async def _open_and_show(message, context, owner_id, login):
-    from src.ui.card_context import bind
+    from src.ui.card_context import bind,for_message
+    context=for_message(context,owner_id,message.chat_id,message.message_id)
+    # Reusing this exact message consumes its old screen, never another card.
+    context.user_data.pop('chat_choice',None)
+    context.user_data.pop('chat_request',None)
     bind(context,message.chat_id,message.message_id)
     browser = get_channel_browser(context.application)
     view = await browser.open(context.application.bot_data['aiohttp'],owner_id,login,
