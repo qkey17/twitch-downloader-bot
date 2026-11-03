@@ -45,7 +45,9 @@ class Coordinator:
             if not self.app.running or self.shutting_down:
                 return self.response('unavailable')
             sender = self.app.bot_data.get('tdb_html_sender')
+            jobs = self.app.bot_data.get('tdb_vod_scheduler')
             if (self.token is not None or self.app.bot_data.get('vod_global_operation') is not None
+                    or (jobs is not None and jobs.active)
                     or (sender is not None and sender.active)):
                 return self.response('busy')
             # No await may occur between the busy check and closing admission.
@@ -89,6 +91,9 @@ class Coordinator:
         self.committed = False
         if self.app.running and not self.shutting_down:
             await self.resume(self.app)
+            jobs = self.app.bot_data.get('tdb_vod_scheduler')
+            if jobs is not None:
+                jobs.pump()
 
     def inherit(self, token):
         self.token, self.owner, self.committed = token, None, True

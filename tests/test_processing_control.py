@@ -116,7 +116,7 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
             await asyncio.gather(*self.tasks)
         await asyncio.sleep(0)  # Run task completion callbacks as PTB does.
 
-    async def test_two_users_cannot_start_together_and_next_can_start_after_success(self):
+    async def test_two_users_start_together_and_keep_independent_results(self):
         context1, update1 = self.request(1)
         context2, update2 = self.request(2, "234567890")
         release = asyncio.Event()
@@ -133,16 +133,12 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
                 handlers_vod.vod_format_chosen(update2, context2),
             )
             await entered.wait()
-            self.assertEqual(1, download.await_count)
+            self.assertEqual(2, download.await_count)
             self.assertTrue(is_busy(context1))
-            self.assertFalse(is_busy(context2))
-            self.assertIn("Сейчас обрабатывается чат VOD", update2.message.reply_text.await_args.args[0])
-            self.assertIsNotNone(context2.user_data.get("vod_pending"))
+            self.assertTrue(is_busy(context2))
+            self.assertIsNone(context2.user_data.get("vod_pending"))
             release.set()
             await self.finish_tasks()
-            await handlers_vod.vod_format_chosen(update2, context2)
-            await self.finish_tasks()
-            self.assertEqual(2, download.await_count)
         self.assertFalse(is_busy(context1))
         self.assertFalse(is_busy(context2))
         self.assertIsNotNone(db.get_cache("123456789", "html_online"))
@@ -164,7 +160,7 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
             try:
                 await entered.wait()
                 await handlers_vod.vod_format_chosen(update2, second)
-                self.assertIn("Сейчас обрабатывается чат VOD", update2.message.reply_text.await_args.args[0])
+                self.assertIn("Этот VOD уже обрабатывается", update2.message.reply_text.await_args.args[0])
                 self.application.create_task.assert_not_called()
             finally:
                 release.set()

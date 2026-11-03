@@ -9,7 +9,7 @@ from src.vod_list import VodListBrowser, ListView, VodInformation, PREFIX, build
 from src.ui.callbacks import CallbackReply
 from src.ui.ui_labels import STALE_LIST_NOTICE, STALE_ACTION_NOTICE, PROCESSING_NOTICE
 from .handlers_chat import prepare_chat
-from .handlers_state import is_busy
+from .handlers_state import input_busy as is_busy
 from src.ui.ui_channel_vods import build_channel_vod_card
 from .handlers_vod import prepare_vod_choice, results
 
@@ -104,7 +104,7 @@ async def _prepare_selection(query, message, context, browser, session, result, 
 async def restore_cancelled_selection(context, record):
     """Use only a still-live bounded session; never recreate an expired token."""
     from types import SimpleNamespace
-    from .handlers_state import is_busy
+    from .handlers_state import input_busy as is_busy
     from .handlers_vod_info import show_info, preview_info
     origin = record.get('origin')
     browser = context.application.bot_data.get(_STORE_KEY)

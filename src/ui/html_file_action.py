@@ -1,4 +1,4 @@
-"""One bounded, message-bound capability per user for an existing ready HTML."""
+"""Message-bound ready HTML capabilities: one navigation card, bounded job cards."""
 import asyncio
 import re
 import secrets
@@ -15,6 +15,8 @@ from src.ui.ui_labels import CHAT_GENERIC, VOD_LINK, STALE_ACTION_NOTICE, DOWNLO
 from src.ui.result_actions import stack_actions
 
 KEY = 'html_file_action'
+JOB_CARDS = 'job_html_file_actions'
+MAX_JOB_CARDS = 20
 PREFIX = 'ui:htmlfile:'
 TTL = 900
 NOTICES = {
@@ -43,10 +45,13 @@ def keyboard(context, owner, chat, ready, original, *, history_id=None):
     """Caller has already selected/authorized this ready row, not a user path."""
     if (owner is None or not ready or not re.fullmatch('[0-9a-f]{32}', str(ready.get('id', '')))):
         return stack_actions(original)
+    if hasattr(context,'shared_user_data'):
+        previous=context.user_data.get(KEY)
+        if previous:context.shared_user_data.get(JOB_CARDS,{}).pop(previous['token'],None)
     token = secrets.token_hex(12)
     record = dict(token=token, owner=owner, chat=chat, message=None, vod=ready['vod_id'],
                   generation=ready['id'], history=history_id, created=time.monotonic())
-    context.user_data[KEY] = record  # Revoke previous card; never accumulate tokens.
+    context.user_data[KEY] = record  # Revoke the previous card in this UI context.
     first, vod, extra = [], [], []
     for row in original.inline_keyboard if original else ():
         rest=[]
@@ -65,7 +70,10 @@ def rendering(context, chat, message, markup):
     attached = any(b.callback_data == PREFIX+record['token']
                    for row in (markup.inline_keyboard if markup else ()) for b in row)
     if not attached:
-        if (record['chat'],record['message']) == (chat,message):context.user_data.pop(KEY,None)
+        if (record['chat'],record['message']) == (chat,message):
+            context.user_data.pop(KEY,None)
+            if hasattr(context,'shared_user_data'):
+                context.shared_user_data.get(JOB_CARDS,{}).pop(record['token'],None)
         return None
     return record
 
@@ -78,10 +86,24 @@ def bind(context, record, shown):
                               ('chat_request','ready_preview_request','history_view','history_file_card'))
         state=context.user_data.get('history_view')
         record['history_request']=state.get('request') if state else None
+        if hasattr(context,'shared_user_data'):
+            # A completed job card has its own immutable generation/message;
+            # another job or navigation must not revoke its download action.
+            from types import SimpleNamespace
+            record['fence']=tuple((k,None) for k,_ in record['fence'])
+            record['history_request']=None
+            cards=context.shared_user_data.setdefault(JOB_CARDS,{})
+            for token,view in list(cards.items()):
+                if time.monotonic()-view.user_data[KEY]['created']>TTL:cards.pop(token)
+            if record['token'] not in cards and len(cards)>=MAX_JOB_CARDS:cards.pop(next(iter(cards)))
+            cards[record['token']]=SimpleNamespace(application=context.application,bot=context.bot,user_data={KEY:record})
 
 
 async def file_callback(update, context):
-    q=update.callback_query;reply=CallbackReply(q);record=context.user_data.get(KEY)
+    q=update.callback_query;reply=CallbackReply(q)
+    token=(q.data or '')[len(PREFIX):] if (q.data or '').startswith(PREFIX) else ''
+    context=context.user_data.get(JOB_CARDS,{}).get(token,context)
+    record=context.user_data.get(KEY)
     def valid():
         if (not record or context.user_data.get(KEY) is not record or q.message is None
                 or q.data != PREFIX+record['token'] or time.monotonic()-record['created'] > TTL

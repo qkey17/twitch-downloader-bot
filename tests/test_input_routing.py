@@ -279,11 +279,13 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
         first = self.task(inputs.text_input(self.request('123456789'), self.context))
         await asyncio.wait_for(entered.wait(), 1)
         second = self.request('999')
-        await inputs.text_input(second, self.context)
-        self.assertIn('Дождитесь завершения предыдущего запроса.', second.message.reply_text.await_args.args[0])
+        waiting = self.task(inputs.text_input(second, self.context))
+        await asyncio.sleep(0)
+        self.assertFalse(waiting.done())
         self.metadata.assert_awaited_once()
         release.set()
         await first
+        await waiting
         self.assertEqual('123456789', self.context.user_data['vod_pending']['vod_id'])
 
     async def test_missing_vod_or_metadata_error_cleans_input_route_for_retry(self):

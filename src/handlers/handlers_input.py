@@ -1,5 +1,6 @@
 """Automatic text routing and explicit commands, without input-wait modes."""
 import time
+import asyncio
 from src.ui.callbacks import CallbackReply
 from src.ui.ui_labels import STALE_ACTION_NOTICE
 
@@ -51,6 +52,27 @@ def _active_route(context):
 
 
 async def _dispatch(message, context, owner_id, value):
+    if value.kind != 'vod':
+        return await _dispatch_one(message,context,owner_id,value)
+    from src.vod_scheduler import scheduler, INPUT_TICKET
+    manager = scheduler(context.application)
+    ticket = manager.prepare_input()
+    if ticket is None:
+        await message.reply_text('Очередь недоступна. Повторите запрос позже.')
+        return
+    lock = context.user_data.setdefault('vod_prepare_lock', asyncio.Lock())
+    token = INPUT_TICKET.set(ticket)
+    try:
+        # Serialize only this user's brief metadata/UI preparation, never the VOD.
+        # Rapid consecutive links wait here instead of replacing/dropping one another.
+        async with lock:
+            return await _dispatch_one(message,context,owner_id,value)
+    finally:
+        manager.release_input(ticket)
+        INPUT_TICKET.reset(token)
+
+
+async def _dispatch_one(message, context, owner_id, value):
     if _active_route(context) is not None:
         await message.reply_text(_BUSY)
         return

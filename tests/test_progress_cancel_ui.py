@@ -231,14 +231,14 @@ class ProgressCancelTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(is_cancelled(self.context, newer))
         await self.cancel(); await self.done()
 
-    async def test_late_cancel_signal_does_not_replace_successful_result(self):
+    async def test_accepted_cancel_before_commit_cannot_publish_late_worker_result(self):
         source, view = await self.regenerate()
-        self.success = True
-        await self.cancel(); await self.done()
-        self.assertNotIn(view.session_id, self.browser._sessions)
-        calls = self.context.bot.edit_message_text.await_args_list
-        self.assertFalse(any('отменена' in k.kwargs.get('text','') for k in calls))
-        self.assertEqual(42, self.publication.complete())
+        self.success = True  # A worker which ignores cancellation still cannot commit.
+        with patch.object(self.publication, 'complete') as complete:
+            await self.cancel(); await self.done()
+            complete.assert_not_called()
+        self.assertFalse(is_busy(self.context))
+        self.assertTrue(self.closed)
 
     async def test_worker_error_and_task_cancel_never_claim_user_cancellation(self):
         for error in (ValueError('synthetic'), asyncio.CancelledError()):

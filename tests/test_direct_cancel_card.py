@@ -11,7 +11,7 @@ import test_progress_cancel_ui as fixture
 import test_result_registry as registry_fixture
 from src.database import db_results as results, db_core
 from src.handlers import handlers_chat as chat, handlers_vod as vod, handlers_input as inputs
-from src.handlers.handlers_state import is_busy, is_cancelled
+from src.handlers.handlers_state import is_busy, is_cancelled, input_busy
 from src.ui import result_preview as preview
 from callback_assertions import assert_stale
 
@@ -152,24 +152,26 @@ class DirectCancelTests(unittest.IsolatedAsyncioTestCase):
         record = await self.direct(); await self.cancel()
         source = self.message(81,'987654321')
         await inputs.text_input(SimpleNamespace(message=source,effective_user=SimpleNamespace(id=7)),self.context)
-        before = self.context.bot.edit_message_text.await_count
+        newer = self.context.user_data['download_ui']
+        self.assertNotEqual(record['operation'],newer['operation'])
+        self.assertFalse(self.context.user_data['vod_jobs'][newer['operation']].cancelled)
         await self.done()
         self.assertNotIn('chat_choice',self.context.user_data)
-        self.assertEqual(before,self.context.bot.edit_message_text.await_count)
-        self.assertEqual(1,self.worker.await_count)
+        self.assertEqual(2,self.worker.await_count)
 
-    async def test_late_cancellation_signal_does_not_replace_successful_result(self):
+    async def test_accepted_cancel_cannot_commit_a_late_successful_worker(self):
         await self.direct(); self.success = True; await self.cancel()
-        with patch.object(chat,'restore_direct_cancelled',new=AsyncMock()) as restore:
+        with patch.object(self.publication,'complete') as complete:
             await self.done()
-        restore.assert_not_awaited(); self.assertNotIn('chat_choice',self.context.user_data)
+            complete.assert_not_called()
+        self.assertIn('chat_choice',self.context.user_data)
 
     async def test_partial_metadata_uses_known_id_and_bounded_failed_thumbnail_lookup(self):
         record = await self.direct(); record['meta'] = {}
         await self.cancel()
         async def failed(*args):
             self.assertIn('chat_choice',self.context.user_data)
-            self.assertFalse(is_busy(self.context))
+            self.assertFalse(input_busy(self.context))
             raise TimeoutError()
         with patch.object(preview,'fetch_video_thumbnail',new=AsyncMock(side_effect=failed)) as lookup:
             await self.done()
@@ -204,7 +206,7 @@ class DirectCancelTests(unittest.IsolatedAsyncioTestCase):
         async def slow(*args): entered.set(); await release.wait(); return URL
         with patch.object(chat,'resolve_preview',new=AsyncMock(side_effect=slow)):
             self.release.set(); await asyncio.wait_for(entered.wait(),1)
-            self.assertFalse(is_busy(self.context)); self.entered.clear(); self.release.clear()
+            self.assertFalse(input_busy(self.context)); self.entered.clear(); self.release.clear()
             await chat.chat_callback(self.action(),self.context); await asyncio.wait_for(self.entered.wait(),1)
             newer = self.context.user_data['download_ui']
             release.set(); await asyncio.wait_for(self.tasks[0],1)
