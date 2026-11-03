@@ -121,9 +121,12 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
         context2, update2 = self.request(2, "234567890")
         release = asyncio.Event()
         entered = asyncio.Event()
+        started = set()
 
         async def worker(**kwargs):
-            entered.set()
+            started.add(kwargs['vod_id'])
+            if len(started) == 2:
+                entered.set()
             await release.wait()
             return self.result()
 
@@ -132,7 +135,7 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
                 handlers_vod.vod_format_chosen(update1, context1),
                 handlers_vod.vod_format_chosen(update2, context2),
             )
-            await entered.wait()
+            await asyncio.wait_for(entered.wait(), 3)
             self.assertEqual(2, download.await_count)
             self.assertTrue(is_busy(context1))
             self.assertTrue(is_busy(context2))
