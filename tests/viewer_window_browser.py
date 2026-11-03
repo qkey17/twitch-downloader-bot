@@ -111,6 +111,10 @@ function sample(){
                     from viewer_notice_cases import check_notices
                     await check_notices(call,evaluate,wait,out,args,errors,requests)
                     return
+                if args.images:
+                    from viewer_image_cases import check_images
+                    await check_images(call,evaluate,wait,out,args,errors,requests)
+                    return
                 if args.panel:
                     from viewer_panel_cases import check_panel
                     await check_panel(call,evaluate,wait,out,args,errors,requests)
@@ -258,5 +262,5 @@ if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--output',required=True);parser.add_argument('--baseline',default='1a089003b84fdb12c13d419aef16c01d53d8df83');parser.add_argument('--chrome',default=r'C:\Program Files\Google\Chrome\Application\chrome.exe');parser.add_argument('--sizes',nargs='+',type=int,default=[10000,25000,100000]);parser.add_argument('--widths',nargs='+',type=int,default=[320,390,1440]);parser.add_argument('--scrubber',action='store_true',help='Logical navigation and gesture regressions, without performance matrix')
     parser.add_argument('--panel',action='store_true',help='Focused mobile panel visual checks and animation profile')
     parser.add_argument('--controls',action='store_true',help='Mobile control row, mode switches and endpoint gestures; no profiling')
-    parser.add_argument('--notices',action='store_true',help='Conservative notice rendering/search/copy/PNG in mixed virtual chat; no profiling')
+    parser.add_argument('--images',action='store_true',help='Focused embedded preview checks only');parser.add_argument('--notices',action='store_true',help='Conservative notice rendering/search/copy/PNG in mixed virtual chat; no profiling')
     asyncio.run(run(parser.parse_args()),loop_factory=asyncio.SelectorEventLoop)

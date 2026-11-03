@@ -1,4 +1,4 @@
-"""Small repository assets and trusted Twitch image selectors; no image processing."""
+"""Bounded image resources and trusted Twitch selectors."""
 from pathlib import Path
 import re
 from urllib.parse import urlsplit
@@ -10,6 +10,11 @@ LIVE = ASSETS / 'live-vod.png'
 
 def telegram_image(source):
     """Explicit small multipart upload for repository covers, never a file:// URI."""
+    from .channel_image import ChannelImage, MAX_OUTPUT
+    if isinstance(source, ChannelImage):
+        from telegram import InputFile
+        if len(source.data)>MAX_OUTPUT:raise ValueError("Card image too large")
+        return InputFile(source.data,filename="channel.png",attach=True)
     if not isinstance(source, Path):
         return source
     if source not in (DEFAULT, LIVE):
@@ -45,3 +50,12 @@ def vod_image(value=None, *, live=False):
 def item_image(item):
     return vod_image(item.get('thumbnail_preview_url', item.get('thumbnail_url')),
                      live=item.get('is_live') is True or item.get('captured_during_live') is True)
+
+
+def fallback_data(live=False):
+    """Only repository PNGs can become embedded viewer data, never metadata URLs."""
+    import base64
+    path=LIVE if live else DEFAULT
+    with path.open('rb') as file:data=file.read(32769)
+    if len(data)>32768 or not data.startswith(b'\x89PNG\r\n\x1a\n'):raise ValueError('Invalid fallback resource')
+    return 'data:image/png;base64,'+base64.b64encode(data).decode('ascii')

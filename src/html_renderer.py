@@ -37,6 +37,8 @@ def write_viewer_html(output, chat_rows, title, channel, vod_url, created_at=Non
                       cancel_check=None, captured_during_live=False, duration_seconds=None):
     """Write the same template/payload incrementally, with one row in memory."""
     template = Path(__file__).with_name("viewer_template.html").read_text(encoding="utf-8")
+    from src.ui.card_images import fallback_data
+    template = template.replace("{{VOD_FALLBACK_PNG}}",fallback_data(False)).replace("{{LIVE_FALLBACK_PNG}}",fallback_data(True))
     prefix, marker, suffix = template.partition("{{CHAT_DATA_JSON}}")
     if not marker or marker in suffix:
         raise ValueError("Viewer template must contain exactly one data marker")
