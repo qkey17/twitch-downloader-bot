@@ -14,7 +14,7 @@ git() {
         else
             printf '100644 blob 5b606d55a0ba9a793ca91248e971598ab9ffaaca\trequirements.txt\n'
         fi
-        return
+        return 0  # Bare return inside a signal trap can inherit its signal status.
     fi
     fixture_git "$@"
 }
