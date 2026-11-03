@@ -65,7 +65,9 @@ class ResultCallbacksTestCase(unittest.IsolatedAsyncioTestCase):
         update=SimpleNamespace(message=message,effective_message=message,callback_query=query,
                                effective_user=SimpleNamespace(id=user_id))
         context=SimpleNamespace(application=self.application,user_data={},
-                                bot=SimpleNamespace(send_message=AsyncMock(),edit_message_text=AsyncMock()))
+                                bot=SimpleNamespace(send_message=AsyncMock(),edit_message_text=AsyncMock(),
+                                    send_photo=AsyncMock(return_value=SimpleNamespace(message_id=100)),
+                                    edit_message_media=AsyncMock(),edit_message_caption=AsyncMock()))
         return update,context
 
     async def choose(self,update,context):
@@ -87,7 +89,7 @@ class ResultCallbacksTestCase(unittest.IsolatedAsyncioTestCase):
             open_data,regen=await self.choose(update,context)
             update.callback_query.data=open_data
             await handlers_vod.vod_result_callback(update,context)
-        self.assertIn(old.filename,context.bot.send_message.await_args.kwargs['text'])
+        self.assertIn(old.filename,context.bot.send_photo.await_args.kwargs['caption'])
         self.assertTrue(all(len(data.encode('utf-8'))<=64 for data in (open_data,regen)))
         self.application.create_task.assert_not_called()
 
@@ -121,7 +123,7 @@ class ResultCallbacksTestCase(unittest.IsolatedAsyncioTestCase):
         latest=self.ready('latest')
         update.callback_query.data=open_data
         await handlers_vod.vod_result_callback(update,context)
-        text=context.bot.send_message.await_args.kwargs['text']
+        text=context.bot.send_photo.await_args.kwargs['caption']
         self.assertIn(latest.filename,text)
         self.assertNotIn(old.filename,text)
         self.assertTrue(old.path().exists())
@@ -147,7 +149,7 @@ class ResultCallbacksTestCase(unittest.IsolatedAsyncioTestCase):
             open_data,_=await self.choose(update,context)
             update.callback_query.data=open_data
             await handlers_vod.vod_result_callback(update,context)
-            self.assertIn(old.filename,context.bot.send_message.await_args.kwargs['text'])
+            self.assertIn(old.filename,context.bot.send_photo.await_args.kwargs['caption'])
             self.assertTrue(is_busy(other))
         finally:
             finish_download(other,operation)
