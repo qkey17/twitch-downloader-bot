@@ -11,6 +11,7 @@ from src.vod_list import callback
 from src.ui import result_preview as renderer,html_file_action as files
 from src.ui.card_context import for_message
 from src.ui.card_images import DEFAULT,LIVE
+from test_card_images import avatar_http
 from src.html_sender import SENDER_KEY,SendStatus,SendResult
 from src.vod_scheduler import scheduler
 
@@ -29,7 +30,7 @@ class MediaCards(unittest.IsolatedAsyncioTestCase):
         self.bot=NS(id=42,token='123:synthetic-media-key')
         for name in ('send_photo','send_message','edit_message_media','edit_message_caption','edit_message_text','delete_message','edit_message_reply_markup'):
             setattr(self.bot,name,AsyncMock(side_effect=lambda _name=name,**kw:self.api(_name,**kw)))
-        self.app=NS(bot_data={'aiohttp':object()},running=True,create_task=self.task)
+        self.app=NS(bot_data={'aiohttp':avatar_http()},running=True,create_task=self.task)
         self.ctx=NS(bot=self.bot,user_data={},application=self.app,args=[])
         self.ready={};self.gates={};self.started={}
         self.meta=NS(title='Title',channel='Channel',length_seconds=3723,created_at='2026-01-02T03:04:00Z',thumbnail_preview_url=PREVIEW,is_live=False)
@@ -89,19 +90,19 @@ class MediaCards(unittest.IsolatedAsyncioTestCase):
     def saved(self,v='1'):return dict(id='a'*32,vod_id=v,cache_id=None,meta=dict(vars(self.meta)),stats={},html_ref='https://public.invalid/public_html/chat_'+'a'*32+'.html')
 
     async def test_channel_avatar_vod_back_and_pages_keep_one_original_message(self):
-        m,v=await self.open();self.assertEqual(101,m.message_id);self.assertEqual(AVATAR,m.image)
+        m,v=await self.open();self.assertEqual(101,m.message_id);self.assertEqual('channel.png',m.image)
         self.assertEqual(1,sum(n.startswith('send_') for n,k in self.calls))
         await self.select(m,v);session=lists.get_channel_browser(self.app)._sessions[v.session_id]
         self.assertEqual(PREVIEW,m.image)
         c=session.info_card;await info.info_callback(self.update(m,f'ui:vi:{session.token}:{c.nonce}:back'),self.ctx)
-        self.assertEqual(AVATAR,m.image)
+        self.assertEqual('channel.png',m.image)
         from dataclasses import replace
         other=PREVIEW.replace('/x/','/another/')
         session.vods[1]=replace(session.vods[1],thumbnail_url=other)
         await self.select(m,lists.get_channel_browser(self.app)._view(session),1)
         self.assertEqual(other,m.image)
         c=session.info_card;await info.info_callback(self.update(m,f'ui:vi:{session.token}:{c.nonce}:back'),self.ctx)
-        self.assertEqual(AVATAR,m.image)
+        self.assertEqual('channel.png',m.image)
         before=self.bot.edit_message_media.await_count
         await lists.channel_vods_callback(self.update(m,callback(lists.get_channel_browser(self.app)._view(session),'next')),self.ctx)
         self.assertEqual(before,self.bot.edit_message_media.await_count);self.fetch.assert_awaited_once()
@@ -168,14 +169,14 @@ class MediaCards(unittest.IsolatedAsyncioTestCase):
     async def test_avatar_rejection_uses_cover_without_processing_or_repeated_fetch(self):
         original=self.bot.edit_message_media.side_effect
         async def media(**kw):
-            if kw['media'].media==AVATAR:raise BadRequest('Unsupported original format')
+            if image_name(kw['media'].media)=='channel.png':raise BadRequest('Unsupported original format')
             return original(**kw)
         self.bot.edit_message_media.side_effect=media
         m,v=await self.open();self.assertEqual('vod.png',m.image)
-        attempted=sum(c.kwargs['media'].media==AVATAR for c in self.bot.edit_message_media.await_args_list)
+        attempted=sum(image_name(c.kwargs['media'].media)=='channel.png' for c in self.bot.edit_message_media.await_args_list)
         self.assertEqual(1,attempted)
         await lists.channel_vods_callback(self.update(m,callback(v,'next')),self.ctx)
-        self.assertEqual(attempted,sum(c.kwargs['media'].media==AVATAR for c in self.bot.edit_message_media.await_args_list))
+        self.assertEqual(attempted,sum(image_name(c.kwargs['media'].media)=='channel.png' for c in self.bot.edit_message_media.await_args_list))
         self.fetch.assert_awaited_once();self.assertEqual(101,m.message_id)
 
     async def test_profile_image_metadata_is_optional_and_original_url_is_unchanged(self):
@@ -236,12 +237,12 @@ class MediaCards(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(shown.message_id,ctx.card.message)
         self.assertIn(shown.message_id,self.messages)
 
-    async def test_static_assets_are_small_png_1280x720_without_runtime_image_dependency(self):
+    async def test_static_assets_are_small_png_720x405(self):
         import struct
         from src.ui.card_images import telegram_image
         for path in (DEFAULT,LIVE):
             data=path.read_bytes()
             self.assertLess(len(data),10000);self.assertEqual(b'\x89PNG\r\n\x1a\n',data[:8])
-            self.assertEqual((1280,720),struct.unpack('>II',data[16:24]))
+            self.assertEqual((720,405),struct.unpack('>II',data[16:24]))
             upload=telegram_image(path);self.assertEqual(data,upload.input_file_content)
         with self.assertRaises(ValueError):telegram_image(Path('untrusted.png'))

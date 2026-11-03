@@ -1193,9 +1193,24 @@ function safeVodUrl(value){
 }
 const livePreview = meta.captured_during_live === true;
 const vodLink = safeVodUrl(meta.vod_url);
+// Trusted build-time constants, never data URIs supplied by Twitch metadata.
+const fallbackPreview = livePreview ? "{{LIVE_FALLBACK_PNG}}" : "{{VOD_FALLBACK_PNG}}";
+function safeThumbnail(value){
+  if(typeof value!=="string" || value.length>1024) return "";
+  value=value.replace(/%?\{width\}/g,"720").replace(/%?\{height\}/g,"405");
+  try{
+    const u=new URL(value);
+    if(u.protocol!=="https:" || u.host!=="static-cdn.jtvnw.net" || u.username || u.password
+       || u.search || u.hash || !/^\/cf_vods\/[A-Za-z0-9_./-]+\.(?:jpe?g|png)$/.test(u.pathname)
+       || value.includes("..") || value.includes("\\")) return "";
+    return u.href;
+  }catch(e){return "";}
+}
+const safePreview = safeThumbnail(meta.thumbnail_preview_url);
+const safeFull = safeThumbnail(meta.thumbnail_full_url);
 
 function openVodOverlay(){
-  if(livePreview ? !vodLink : (!meta.thumbnail_full_url && !meta.thumbnail_preview_url)) return;
+  if(livePreview && !vodLink) return;
 
   const token = ++vodOverlayToken;
   if(vodOverlay){
@@ -1290,11 +1305,11 @@ function openVodOverlay(){
   };
   full.onerror = ()=>{
     if(token !== vodOverlayToken || vodOverlay !== overlay || !overlay.isConnected) return;
-    loader.classList.remove("snapshot-loader");
-    loader.textContent = "Не удалось загрузить изображение";
+    preview.src = fallbackPreview;
+    loader.remove();
     actions.classList.add("is-ready");
   };
-  full.src = meta.thumbnail_full_url || meta.thumbnail_preview_url;
+  full.src = safeFull || safePreview || fallbackPreview;
 }
 
 elVodCard.addEventListener("click", openVodOverlay);
@@ -1306,17 +1321,13 @@ if(livePreview && !vodLink){
   elVodCard.tabIndex = -1;
 }
 
-const previewUrl = livePreview ? "" : (meta.thumbnail_preview_url || meta.thumbnail_full_url || "");
-
-if(previewUrl){
-  elVodPreviewImg.src = previewUrl;
-  elVodPreviewImg.style.display = "block";
-  elVodPreviewImg.addEventListener("error", ()=>{
-    elVodPreviewImg.style.display = "none";
-  }, { once: true });
-}else{
-  elVodPreviewImg.style.display = "none";
-}
+const previewUrl = safePreview || safeFull || fallbackPreview;
+elVodPreviewImg.style.display = "block";
+elVodPreviewImg.addEventListener("error", ()=>{
+  // One fallback assignment only, even if the browser cannot decode the resource.
+  elVodPreviewImg.src = fallbackPreview;
+}, {once:true});
+elVodPreviewImg.src = previewUrl;
 
 requestAnimationFrame(fitVodTitle);
 window.addEventListener("resize", ()=>requestAnimationFrame(fitVodTitle));

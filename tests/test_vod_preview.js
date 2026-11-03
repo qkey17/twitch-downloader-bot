@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const template = fs.readFileSync(path.join(__dirname, '../src/viewer_template.html'), 'utf8');
+const template = fs.readFileSync(path.join(__dirname, '../src/viewer_template.html'), 'utf8').replaceAll('{{VOD_FALLBACK_PNG}}','data:image/png;base64,VOD').replaceAll('{{LIVE_FALLBACK_PNG}}','data:image/png;base64,LIVE');
 const code = template.slice(template.indexOf('let vodOverlay ='), template.indexOf('requestAnimationFrame(fitVodTitle);', template.indexOf('let vodOverlay =')));
 function setup(meta) {
   const created = [];
@@ -27,7 +27,7 @@ function setup(meta) {
   vm.runInContext(code, context);
   return {context, body, images, opened, document, card, thumbnail, created};
 }
-const metadata = {thumbnail_full_url: 'https://synthetic.invalid/full', vod_url: 'https://www.twitch.tv/videos/123456789'};
+const metadata = {thumbnail_full_url: 'https://static-cdn.jtvnw.net/cf_vods/test/full.jpg', vod_url: 'https://www.twitch.tv/videos/123456789'};
 test('button has exact label without emote, opens existing URL and overlay closes', () => {
   const {context, body, images, opened} = setup(metadata);
   context.openVodOverlay();
@@ -41,8 +41,8 @@ test('button has exact label without emote, opens existing URL and overlay close
   assert.equal(body.style.overflow, 'hidden');
   overlay.events.click(); assert.equal(overlay.isConnected, false); assert.equal(body.style.overflow, '');
 });
-test('absent preview does not open overlay; absent VOD URL is not invented', () => {
-  const empty = setup({}); empty.context.openVodOverlay(); assert.equal(empty.body.children.length, 0);
+test('absent preview uses embedded cover; absent VOD URL is not invented', () => {
+  const empty = setup({}); empty.context.openVodOverlay(); assert.equal(empty.body.children.length, 1); assert.equal(empty.images[0].src,'data:image/png;base64,VOD');
   const missingUrl = setup({thumbnail_preview_url: metadata.thumbnail_full_url});
   missingUrl.context.openVodOverlay();
   assert.equal(missingUrl.body.children[0].children[0].children[2].children.length, 0);
@@ -58,7 +58,7 @@ test('LIVE opens the shared dialog without any image even with stale thumbnails'
     assert.equal(panel.role, 'dialog'); assert.equal(panel['aria-modal'], 'true');
     assert.equal(s.images.length, 0);
     assert.equal(s.created.filter(x=>x.tag==='img').length, 1); // Only original page placeholder.
-    assert.equal(s.thumbnail.src, undefined);
+    assert.equal(s.thumbnail.src,thumbnail_full_url || 'data:image/png;base64,LIVE');
     const button=panel.children[0].children[0];
     assert.equal(button.textContent, '🔗 Ссылка на VOD');
     assert.equal(s.document.activeElement, button);
@@ -100,14 +100,25 @@ test('missing, malicious and non-Twitch LIVE links cannot open a dialog or reque
     assert.equal(s.body.children.length,0);
     assert.equal(s.card['aria-disabled'],'true');
     assert.equal(s.card.tabIndex,-1);
-    assert.equal(s.images.length,0); assert.equal(s.thumbnail.src,undefined);
+    assert.equal(s.images.length,0); assert.equal(s.thumbnail.src,metadata.thumbnail_full_url);
     assert.deepEqual(s.opened,[]);
   }
 });
 test('image error and stale image callbacks preserve existing handling', () => {
   const {context, body, images} = setup(metadata);
   context.openVodOverlay(); const panel = body.children[0].children[0];
-  images[0].onerror(); assert.equal(panel.children[1].textContent, 'Не удалось загрузить изображение');
+  images[0].onerror(); assert.equal(panel.children[0].src,'data:image/png;base64,VOD');
   body.children[0].events.click();
-  images[0].onload(); assert.equal(panel.children[0].src, undefined);
+  images[0].onload(); assert.equal(panel.children[0].src,'data:image/png;base64,VOD');
+});
+
+test('trusted preview priority and bounded fallback reject arbitrary data and URLs',()=>{
+ for(const captured_during_live of [false,true]){
+   const valid=setup({...metadata,captured_during_live});assert.equal(valid.thumbnail.src,metadata.thumbnail_full_url);
+   valid.thumbnail.events.error();assert.equal(valid.thumbnail.src,'data:image/png;base64,'+(captured_during_live?'LIVE':'VOD'));
+   for(const url of ['javascript:alert(1)','data:image/png;base64,evil','https://localhost/a.png','https://vod-secure.twitch.tv/_404/404_processing_720x405.png']){
+     const s=setup({thumbnail_preview_url:url,captured_during_live});
+     assert.equal(s.thumbnail.src,'data:image/png;base64,'+(captured_during_live?'LIVE':'VOD'));
+   }
+ }
 });

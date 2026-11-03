@@ -78,22 +78,39 @@ Opening an already-ready HTML now edits the offer's original message; the former
 intentional fresh-final send/delete path is removed. The exact-generation signed
 download and its separate streaming document message are unchanged.
 
-The existing Get Users response supplies optional `profile_image_url`. Only a
-bounded HTTPS Twitch CDN user-picture URL is accepted, and its exact original
-string is passed to Telegram. The application does not fetch, resize, crop,
-reencode or change the format/aspect ratio of the avatar. Telegram controls its
-own photo delivery/normalization; identical delivered bytes cannot be promised.
-An unsupported original avatar uses a separate neutral cover, never a transformed
-avatar. No file-size probe or image download is added; Telegram rejects images
-outside its supported limits and the renderer handles that definite refusal.
+The existing Get Users response supplies optional `profile_image_url`. Its original
+trusted HTTPS Twitch CDN URL remains in metadata. The approved image-style change
+composes that avatar into a 720×405 PNG: centered 240 px circle, central crop without
+stretch, LANCZOS interpolation and antialiased mask, original cover background
+`#1c1e24`. A small 2x canvas keeps the circle exactly centered on an odd-height raster.
+No title, logo, border or decoration is added. Telegram may normalize photo delivery.
 
-List → VOD changes media to the safe existing thumbnail. Back changes media to
-the original channel avatar retained in the bounded browser snapshot. Pagination
-reuses that avatar without another channel lookup. Missing/placeholder previews
-use `live-vod.png` for confirmed current LIVE or saved LIVE capture, otherwise
-`vod.png`. Both repository covers are 1280×720 PNGs under 10 KB; only those two
-known paths are read, with a 32 KiB cap, and uploaded as multipart `InputFile`.
-There is no image-processing dependency, remote image cache or new persistence.
+Avatar requests reuse the application's aiohttp session, never follow redirects,
+cap response time at 3 seconds and bytes at 2 MiB (including unknown content length).
+Only PNG/JPEG/WebP/GIF decoders are enabled, animation is rejected, dimensions are
+at most 2048 per side / 4 Mpix, and output is capped at 192 KiB. Pillow==12.3.0 is
+the single new dependency. Decode/composition runs in a thread, one per application;
+cancellation waits for the decoder before releasing its slot. No pending decode
+queue is built: concurrent cache misses use the neutral fallback.
+
+An in-memory LRU holds at most 16 results, successful images for 10 minutes and
+failures for one minute. The existing bounded browser session keeps its selected
+composition until its unchanged expiry. Back restores it; pages do not refetch or
+reprocess it. No new files, SQLite tables or permanent media store are introduced.
+
+List → VOD changes media to the existing safe thumbnail. Missing/placeholder
+previews use `live-vod.png` for confirmed current LIVE or saved LIVE capture,
+otherwise `vod.png`. Both covers are 720×405 PNGs under 10 KB. The LIVE cover adds
+a compact muted-red label, while the ordinary VOD cover retains white text.
+Only those two repository paths are uploaded, with a 32 KiB cap; compositions use
+bounded multipart PNG uploads. Normal Twitch previews remain untouched.
+
+The HTML generator embeds the same two covers as trusted build-time PNG constants
+in the existing viewer template, once per document, never from metadata data URIs.
+The viewer chooses an allowlisted Twitch thumbnail, otherwise the corresponding
+LIVE/VOD constant; an image error assigns the fallback once. LIVE still uses saved
+capture metadata, not absence of a picture. Modal link/close/focus behavior, card
+geometry and other UI controls remain. Existing HTML files are not rewritten.
 
 Each existing `CardContext` remembers only its observed message surface/source
 and one rejected-source/fallback pair. Same-source transitions edit the caption,

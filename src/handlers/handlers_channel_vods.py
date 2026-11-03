@@ -45,9 +45,10 @@ def _ui_lock(session):
 
 async def _render_list(message, view, session, *, bot=None, current=lambda: True, context=None):
     from src.ui.result_preview import render_card
-    from src.ui.card_images import avatar_url, DEFAULT
+    from src.ui.card_images import DEFAULT
+    from src.ui.channel_image import channel_image
     text,keyboard = build_list(view) if isinstance(view,ListView) else build_channel_vod_card(view)
-    image = avatar_url(getattr(view.channel,'profile_image_url',None)) or DEFAULT
+    image = await channel_image(context,session,getattr(view.channel,'profile_image_url',None)) if context else DEFAULT
     shown = await render_card(bot,message.chat_id,text,keyboard,image,message_id=message.message_id,
                               photo=getattr(session,'photo',False),current=current,file_context=context)
     if shown is not None:
