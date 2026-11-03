@@ -83,10 +83,9 @@ class MediaCards(unittest.IsolatedAsyncioTestCase):
         if kw['context'].user_data['_vod_job'].cancelled:raise RuntimeError('Загрузка была отменена.')
         return vars(self.meta),{},[],kw['publication'].ref
     async def settle(self,v):
-        for _ in range(30):
-            if v in self.started:break
-            await asyncio.sleep(0)
-        await asyncio.wait_for(self.started[v].wait(),1)
+        # Share the worker's event instead of racing a fixed number of loop turns.
+        started=self.started.setdefault(v,asyncio.Event())
+        await asyncio.wait_for(started.wait(),1)
     def saved(self,v='1'):return dict(id='a'*32,vod_id=v,cache_id=None,meta=dict(vars(self.meta)),stats={},html_ref='https://public.invalid/public_html/chat_'+'a'*32+'.html')
 
     async def test_channel_avatar_vod_back_and_pages_keep_one_original_message(self):
