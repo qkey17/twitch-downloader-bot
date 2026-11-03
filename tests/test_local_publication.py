@@ -138,7 +138,7 @@ class LocalCompletionMessageTestCase(unittest.IsolatedAsyncioTestCase):
             "html_url": html_ref,
         }
         bot = SimpleNamespace(edit_message_text=AsyncMock())
-        context = SimpleNamespace(bot=bot)
+        context = SimpleNamespace(bot=bot,user_data={})
 
         with patch.object(handlers_vod, "HTML_PUBLISH_MODE", "local"), \
              patch.object(handlers_vod.results,"Publication",PublicationStub), \

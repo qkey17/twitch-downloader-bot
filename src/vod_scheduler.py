@@ -1,5 +1,6 @@
 """One event-loop-owned FIFO; queued jobs own no task, spool or publication."""
 import asyncio
+import logging
 from collections import deque
 from dataclasses import dataclass
 import uuid
@@ -35,6 +36,7 @@ class Scheduler:
         self.waker = None
         self.close_task = None
         self.preparing = 0
+        self.notifications = set()
         self.admission = admission
 
     @property
@@ -81,9 +83,9 @@ class Scheduler:
         if job.id not in self.jobs:
             return
         job.factory = factory
-        self.pump()
+        self.pump(admitting=job)
 
-    def pump(self):
+    def pump(self, *, admitting=None):
         from .maintenance import admission_closed
         from .vod_start_guard import start_guard
         while self.queue and not self.closing and self.active < ACTIVE_LIMIT:
@@ -102,10 +104,17 @@ class Scheduler:
                 coro = self._run(job)
                 try:
                     job.task = self.app.create_task(coro)
-                except BaseException:
+                except BaseException as exc:
                     coro.close()
                     self.drop(job, 'error')
-                    raise
+                    if job is admitting or not isinstance(exc,Exception):
+                        raise  # Only this admission may restore its own prompt.
+                    logging.getLogger(__name__).error('Queued VOD task registration failed')
+                    if job.context is not None:
+                        task = asyncio.create_task(self._notify_start_failure(job))
+                        self.notifications.add(task)
+                        task.add_done_callback(self.notifications.discard)
+                    continue
                 job.task.add_done_callback(lambda task, j=job: self._done(j, task))
         if self.queue and not self.closing and (self.waker is None or self.waker.done()):
             self.waker = asyncio.create_task(self._wake())
@@ -117,6 +126,17 @@ class Scheduler:
                 self.pump()
         finally:
             self.waker = None
+
+    async def _notify_start_failure(self, job):
+        ui = job.context.user_data.get('download_ui')
+        if ui is None:
+            return
+        try:
+            async with asyncio.timeout(5):
+                await job.context.bot.edit_message_text(chat_id=ui['chat'],message_id=ui['message'],
+                    text='Не удалось начать обработку. Выберите VOD заново.',reply_markup=None)
+        except Exception:
+            logging.getLogger(__name__).warning('Could not deliver queued VOD startup failure')
 
     async def _run(self, job):
         try:
@@ -202,6 +222,7 @@ class Scheduler:
                 tasks.append(job.task)
         if self.waker:
             tasks.append(self.waker)
+        tasks.extend(self.notifications)
         await asyncio.gather(*tasks, return_exceptions=True)
 
 

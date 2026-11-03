@@ -146,3 +146,21 @@ class SchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.scheduler.cancel(job)
         for ticket in tickets:self.scheduler.release_input(ticket)
         self.assertEqual(0,self.scheduler.preparing)
+
+    async def test_queued_startup_failure_cannot_release_another_admitting_job(self):
+        first,error=self.scheduler.reserve(1,'1');self.assertIsNone(error)
+        second=self.add(2)  # Cannot pass the first, still unarmed, FIFO entry.
+        registered=0;release=asyncio.Event()
+        def create(coro):
+            nonlocal registered
+            registered+=1
+            if registered==2:raise RuntimeError('synthetic queued startup failure')
+            return asyncio.create_task(coro)
+        self.app.create_task=create
+        async def work():await release.wait()
+        with self.assertLogs('src.vod_scheduler',level='ERROR'):
+            self.scheduler.arm(first,work)
+        self.assertEqual('running',first.state);self.assertEqual('error',second.state)
+        self.assertEqual(1,self.scheduler.active);self.assertIn(first.id,self.scheduler.jobs)
+        release.set();await first.task;await asyncio.sleep(0)
+        self.assertEqual('success',first.state)

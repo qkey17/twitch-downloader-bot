@@ -113,6 +113,34 @@ class QueueIntegration(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(vod.pending_cancel_callback(u,ctx),1)
             worker.assert_not_called();self.assertEqual('cancelled',job.state)
 
+    async def test_failed_queued_registration_notifies_own_card_and_keeps_first_slot(self):
+        from src.vod_scheduler import scheduler
+        first,u1=self.request(1,'123456789');second,u2=self.request(2,'234567890')
+        editing=asyncio.Event();delivery=asyncio.Event();release=asyncio.Event()
+        async def slow(**kw):editing.set();await delivery.wait()
+        u1.message.edit_text.side_effect=slow
+        create=self.application.create_task.side_effect;calls=0
+        def register(coro):
+            nonlocal calls
+            calls+=1
+            if calls==2:raise RuntimeError('synthetic registration failure')
+            return create(coro)
+        self.application.create_task.side_effect=register
+        async def work(**kw):await release.wait();return self.result()
+        with patch.object(vod,'download_and_send',side_effect=work):
+            starting=asyncio.create_task(vod._start_download(u1,first,'123456789'))
+            await asyncio.wait_for(editing.wait(),1)
+            await vod._start_download(u2,second,'234567890')
+            manager=scheduler(self.application);a,b=list(manager.jobs.values())
+            with self.assertLogs('src.vod_scheduler',level='ERROR'):
+                delivery.set();await starting
+            await asyncio.gather(*manager.notifications)
+            self.assertEqual(1,manager.active);self.assertEqual('error',b.state)
+            self.assertIn('Не удалось начать',second.bot.edit_message_text.await_args.kwargs['text'])
+            self.assertIsNone(second.bot.edit_message_text.await_args.kwargs['reply_markup'])
+            release.set();await a.task;await asyncio.sleep(0)
+            self.assertEqual('success',a.state)
+
     async def test_rapid_direct_links_are_not_dropped_during_metadata(self):
         ctx,u1=self.request(1,'123456789');_,u2=self.request(1,'234567890')
         ctx.user_data.pop('vod_pending',None)  # Direct input has no legacy format prompt.
