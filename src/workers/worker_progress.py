@@ -12,10 +12,10 @@ from src.ui.ui_labels import CANCEL
 from src.live_capture import WARNING, captured_live
 
 
-def cancel_keyboard(context):
+def cancel_keyboard(context, *, waiting=False):
     record = context.user_data.get('download_ui')
     data = CB_PENDING_CANCEL + ':' + record['operation'] if record else CB_PENDING_CANCEL
-    return InlineKeyboardMarkup([[InlineKeyboardButton(CANCEL, callback_data=data)]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton('Отмена' if waiting else CANCEL, callback_data=data)]])
 
 
 async def safe_edit_html(context, chat_id: int, message_id: int, text: str):
@@ -26,13 +26,18 @@ async def safe_edit_html(context, chat_id: int, message_id: int, text: str):
     keyboard = cancel_keyboard(context)
 
     try:
-        await context.bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=text,
-            parse_mode="HTML",
-            reply_markup=keyboard,
-        )
+        kwargs=dict(chat_id=chat_id,message_id=message_id,parse_mode='HTML',reply_markup=keyboard)
+        if owned and record.get('photo'):
+            try:
+                await context.bot.edit_message_caption(caption=text,**kwargs)
+            except BadRequest as exc:
+                if 'no caption' not in str(exc).lower():
+                    raise
+                # An ambiguous media timeout may have left the original text.
+                await context.bot.edit_message_text(text=text,**kwargs)
+                record['photo'] = False
+        else:
+            await context.bot.edit_message_text(text=text,**kwargs)
         if owned and context.user_data.get('download_ui') is record:
             record['last_text'] = text
     except RetryAfter as e:

@@ -20,6 +20,88 @@ class QueueIntegration(unittest.IsolatedAsyncioTestCase):
         await stop_scheduler(self.application)
         await fixture.ProcessingControlTestCase.asyncTearDown(self)
 
+    async def exercise_entry_order(self,order):
+        releases={};started={};requests=[]
+        async def work(**kw):
+            v=kw['vod_id'];started[v].set();await releases[v].wait();return self.result()
+        meta=dict(channel='Channel',title='<Title>',length_seconds=3723,created_at='2026-01-02T03:04:05Z',messages=9999,unique_users=8888)
+        with patch.object(vod,'get_client_id',return_value='synthetic'),patch.object(vod,'fetch_vod_meta',return_value=SimpleNamespace(**meta)),patch.object(vod.results,'get_ready_result',return_value=None),patch.object(vod,'download_and_send',side_effect=work):
+            try:
+                for i,route in enumerate(order):
+                    v=str(123456789+i);ctx,u=self.request(1,v)
+                    if requests:ctx.user_data=requests[0][0].user_data
+                    ctx.user_data.pop('vod_pending',None)
+                    u.message.message_id=50+i;u.message.reply_text=AsyncMock(return_value=u.message)
+                    releases[v]=asyncio.Event();started[v]=asyncio.Event();requests.append((ctx,u,v))
+                    if route=='first':await inputs.text_input(u,ctx)
+                    else:await vod._start_download(u,ctx,v,regenerate=True,initial_meta=meta)
+                for _,_,v in requests[:2]:await asyncio.wait_for(started[v].wait(),2)
+                from src.vod_scheduler import scheduler
+                manager=scheduler(self.application);self.assertEqual(2,manager.active)
+                if len(requests)==3:
+                    ctx,u,v=requests[2];self.assertFalse(started[v].is_set())
+                    text=u.message.edit_text.await_args.kwargs['text']
+                    for value in ('Channel','&lt;Title&gt;','01:02:03','2 янв 2026 03:04 UTC','🕒 В очереди — обработка начнётся автоматически'):self.assertIn(value,text)
+                    for value in ('9999','8888','💬','👥'):self.assertNotIn(value,text)
+                    kb=u.message.edit_text.await_args.kwargs['reply_markup'];self.assertEqual([['Отмена']],[[b.text for b in row] for row in kb.inline_keyboard])
+                    releases[requests[0][2]].set();await asyncio.wait_for(started[v].wait(),2)
+                    self.assertEqual(3,len(started));self.assertEqual(2,manager.active)
+            finally:
+                for event in releases.values():event.set()
+                await asyncio.gather(*self.tasks)
+
+    async def test_three_first_direct_requests_use_two_slots_and_fifo(self):
+        await self.exercise_entry_order(['first','first','first'])
+
+    async def test_closed_admission_refuses_before_waiting_card_or_worker(self):
+        from src.maintenance import GATE_KEY
+        ctx,u=self.request();self.application.bot_data[GATE_KEY]='maintenance'
+        with patch.object(vod,'download_and_send') as worker,patch.object(vod.results,'Publication') as publication:
+            self.assertFalse(await vod._start_download(u,ctx,'123456789'))
+            u.message.edit_text.assert_not_awaited()
+            worker.assert_not_called();publication.assert_not_called()
+            self.assertNotIn('vod_jobs',ctx.user_data)
+
+    async def test_ambiguous_queue_preview_keeps_text_progress_fallback(self):
+        from telegram.error import BadRequest
+        from src.workers.worker_progress import safe_edit_html
+        ctx,u=self.request()
+        ctx.user_data['download_ui']=dict(chat=1,message=20,operation='a'*32,photo=True)
+        ctx.bot.edit_message_caption=AsyncMock(side_effect=BadRequest('There is no caption in the message to edit'))
+        await safe_edit_html(ctx,1,20,'progress')
+        ctx.bot.edit_message_text.assert_awaited_once()
+        self.assertFalse(ctx.user_data['download_ui']['photo'])
+
+    async def test_first_then_regeneration_then_first(self):
+        await self.exercise_entry_order(['first','regen','first'])
+
+    async def test_regeneration_then_first_then_regeneration(self):
+        await self.exercise_entry_order(['regen','first','regen'])
+
+    async def test_queue_preview_finishes_before_activation_caption_without_new_message(self):
+        from src.vod_scheduler import scheduler
+        manager=scheduler(self.application);release=asyncio.Event()
+        for v in ('1','2'):
+            j,_=manager.reserve(9,v);manager.arm(j,release.wait)
+        ctx,u=self.request();media_entered=asyncio.Event();media_release=asyncio.Event()
+        ctx.bot.edit_message_caption=AsyncMock()
+        async def media(**kw):media_entered.set();await media_release.wait()
+        ctx.bot.edit_message_media=AsyncMock(side_effect=media)
+        url='https://static-cdn.jtvnw.net/cf_vods/example/thumb/720x405.jpeg'
+        working=asyncio.Event();finish=asyncio.Event()
+        async def work(**kw):working.set();await finish.wait();return self.result()
+        with patch.object(vod,'download_and_send',side_effect=work):
+            task=asyncio.create_task(vod._start_download(u,ctx,'123456789',initial_meta=dict(channel='C',title='T',thumbnail_preview_url=url)))
+            await asyncio.wait_for(media_entered.wait(),2)
+            job=next(iter(ctx.user_data['vod_jobs'].values()));release.set();await asyncio.sleep(0)
+            self.assertEqual('waiting',job.state)  # Media delivery still owns admission.
+            media_release.set();await task;await asyncio.wait_for(working.wait(),2)
+            text=ctx.bot.edit_message_caption.await_args.kwargs['caption']
+            self.assertIn('Загрузка чата',text);self.assertNotIn('В очереди',text)
+            self.assertEqual(u.message.message_id,ctx.bot.edit_message_caption.await_args.kwargs['message_id'])
+            ctx.bot.send_message.assert_not_awaited()
+            finish.set();await job.task;await asyncio.sleep(0)
+
     async def test_one_user_three_cards_owners_cancel_and_late_callback(self):
         ctx,u1=self.request(1,'123456789');other,u2=self.request(1,'234567890')
         third,u3=self.request(1,'345678901')
@@ -38,7 +120,7 @@ class QueueIntegration(unittest.IsolatedAsyncioTestCase):
             await started['123456789'].wait();await started['234567890'].wait()
             jobs=list(ctx.user_data['vod_jobs'].values());a,b,c=jobs
             self.assertEqual('waiting',c.state);self.assertFalse(started[c.vod].is_set())
-            self.assertIn(c.vod,u3.message.edit_text.await_args.kwargs['text'])
+            self.assertIn('🕒 В очереди — обработка начнётся автоматически',u3.message.edit_text.await_args.kwargs['text'])
             self.assertIsNot(workers[a.vod].user_data,workers[b.vod].user_data)
             self.assertEqual(a.id,workers[a.vod].user_data['download_ui']['operation'])
             u1.callback_query.data=vod.CB_PENDING_CANCEL+':'+a.id
@@ -109,7 +191,7 @@ class QueueIntegration(unittest.IsolatedAsyncioTestCase):
             await vod._start_download(u,ctx,'123456789')
             job=next(iter(ctx.user_data['vod_jobs'].values()))
             self.assertEqual('waiting',job.state)
-            self.assertIn('ожидает в очереди',ctx.bot.edit_message_text.await_args.kwargs['text'])
+            self.assertIn('🕒 В очереди',u.message.edit_text.await_args.kwargs['text'])
             u.callback_query.data=vod.CB_PENDING_CANCEL+':'+job.id
             await asyncio.wait_for(vod.pending_cancel_callback(u,ctx),1)
             worker.assert_not_called();self.assertEqual('cancelled',job.state)

@@ -389,6 +389,8 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
                         await asyncio.wait_for(entered.wait(), 1)
                         choice = self.context.user_data['chat_choice']
                         await asyncio.wait_for(self.act(choice, action, message), 1)
+                        if action == 'regen':
+                            await asyncio.gather(*(t for t in self.tasks if t is not selecting))
                         before = list(self.events)
                         release.set(); await asyncio.wait_for(selecting, 1)
                         self.assertEqual(before, self.events)

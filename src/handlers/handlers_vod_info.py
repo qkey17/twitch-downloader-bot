@@ -12,7 +12,7 @@ from src.live_capture import WARNING
 from src.channel_browser import VodSelection
 from src.ui.ui_channel_vods import _duration
 from src.ui.ui_formatters import _fmt_dt_utc
-from .handlers_state import is_busy, is_globally_busy
+from .handlers_state import input_busy as is_busy, is_globally_busy
 from src.ui.callbacks import CallbackReply
 from src.ui.ui_labels import STALE_ACTION_NOTICE, PROCESSING_NOTICE
 from src.ui.ui_labels import CREATE_CHAT, BACK_TO_LIST

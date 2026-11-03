@@ -67,6 +67,10 @@ class Scheduler:
         from .maintenance import admission_closed
         if self.closing or admission_closed(self.app):
             return None, 'Сейчас проводится обслуживание. Повторите запрос позже.'
+        from .vod_start_guard import start_guard
+        with start_guard(check_resources=False) as allowed:
+            if not allowed:
+                return None, 'Сейчас проводится обслуживание. Повторите запрос позже.'
         legacy = self.app.bot_data.get('vod_global_operation')
         if legacy is not None and legacy not in self.jobs:
             return None, 'Сейчас обрабатывается чат VOD. Повторите попытку позже.'

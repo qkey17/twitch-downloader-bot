@@ -12,7 +12,7 @@ from .file_lock import try_lock_file
 
 
 @contextmanager
-def start_guard():
+def start_guard(*, check_resources=True):
     from . import config
     with ExitStack() as stack:
         try:
@@ -65,7 +65,7 @@ def start_guard():
                         raise ValueError('invalid_admission_state')
                     if name == 'hold' and data['value'] is not False or name != 'hold' and data['value'] is not None:
                         raise ValueError('admission_closed')
-            for value in (config.SPOOL_DIR, config.OUT_DIR, config.PUBLIC_HTML_DIR):
+            for value in ((config.SPOOL_DIR, config.OUT_DIR, config.PUBLIC_HTML_DIR) if check_resources else ()):
                 if not value:
                     continue
                 path = Path(value)

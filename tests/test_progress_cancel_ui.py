@@ -296,7 +296,7 @@ class ProgressCancelTests(unittest.IsolatedAsyncioTestCase):
     async def test_photo_start_sends_full_progress_directly_without_replaying_offer(self):
         await self.regenerate()
         self.context.bot.send_message.assert_awaited_once()
-        self.assertIn('<b>Загрузка чата…</b>', self.context.bot.send_message.await_args.kwargs['text'])
+        self.assertIn('🕒 В очереди — обработка начнётся автоматически', self.context.bot.send_message.await_args.kwargs['text'])
         self.assertNotIn('Чат VOD уже готов', self.context.bot.send_message.await_args.kwargs['text'])
         self.assertTrue(is_busy(self.context))  # Slow worker has an immediate usable Cancel.
         await self.cancel(); await self.done()
