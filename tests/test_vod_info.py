@@ -264,7 +264,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         source.edit_reply_markup.assert_not_awaited();self.assertIs(card,self.record(view))
         await self.back(view)
         self.assertTrue(self.browser.is_current(new));self.assertIsNotNone(message.keyboard)
-        self.assertIn('Время указано по UTC',self.by_id[self.browser._sessions[view.session_id].message_id].text)
+        self.assertNotIn('Время указано по UTC',self.by_id[self.browser._sessions[view.session_id].message_id].text)
 
 
     async def test_session_change_during_text_delivery_discards_late_result(self):
@@ -338,7 +338,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
         query.callback_query.answer.side_effect = answer
         await info.info_callback(query,self.context)
         query.callback_query.answer.assert_awaited_once()
-        self.assertIn('Время указано по UTC',self.by_id[30].text)
+        self.assertNotIn('Время указано по UTC',self.by_id[30].text)
         self.assertIsNotNone(self.by_id[30].keyboard)
 
     async def test_new_channel_during_metadata_preserves_old_download(self):

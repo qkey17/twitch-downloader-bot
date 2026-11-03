@@ -104,7 +104,7 @@ class NavigationCards(unittest.IsolatedAsyncioTestCase):
         card=self.browser._sessions[view.session_id].info_card
         self.now+=301
         await info.info_callback(self.update(f'ui:vi:{view.session_id}:{card.nonce}:back',source),self.context)
-        self.assertIn('Время указано по UTC',self.by_id[self.browser._sessions[view.session_id].message_id].text)
+        self.assertNotIn('Время указано по UTC',self.by_id[self.browser._sessions[view.session_id].message_id].text)
 
 
 class JobCards(unittest.IsolatedAsyncioTestCase):

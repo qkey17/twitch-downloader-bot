@@ -137,7 +137,7 @@ def build_list(view):
         texts = {'not_found': 'Канал не найден. Проверьте имя или ссылку.',
                  'empty': 'У канала нет опубликованных VODs.'}
         return texts.get(view.status, 'Не удалось загрузить полный список VODs. Повторите попытку позже.'), None
-    text = f'🟣 {html.escape(view.channel.display_name)}\nВремя указано по UTC'
+    text = f'🟣 {html.escape(view.channel.display_name)}'
     if not view.items:
         return text+'\nУ канала нет опубликованных VODs.', None
     button = lambda label, action, n=None: InlineKeyboardButton(label, callback_data=callback(view, action, n))
@@ -157,9 +157,9 @@ def build_list(view):
         rows.append([button(BACK_TO_LIST, 'back')])
     else:
         for n in range(view.page*5, min(len(view.items), (view.page+1)*5)):
-            label = _fmt_dt_utc(view.items[n].created_at).removesuffix(' UTC')
+            label = _fmt_dt_utc(view.items[n].created_at)
             if view.items[n].id in view.live_vod_ids:
-                label += ' 🔴 (LIVE)'
+                label = '🔴LIVE'
             rows.append([button(label, 'info', n)])
         nav = []
         if view.page:

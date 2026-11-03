@@ -83,6 +83,9 @@ phase=A; probes=0
 fail(){ echo "REFUSED: $1" >&2; exit 17; }
 note(){ echo "$1" >&2; }
 fake_systemctl(){ :; }
+# This fixture tests lifecycle/recovery decisions, not real Python dependencies.
+# Pillow import/native/codec failures are covered by the dedicated guard tests.
+check_runtime_dependencies(){ return 0; }
 git_cmd(){ if [[ "$1" == rev-parse ]]; then echo "$target"; fi; }
 timeout(){
  if [[ "$*" == *'merge --ff-only'* ]]; then echo FAST_FORWARD >&7; fi

@@ -43,15 +43,15 @@ class ListTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((count+4)//5, view.page_count)
                 text, kb = build_list(view)
                 self.assertNotIn('+', text)
-                self.assertEqual('🟣 Channel\nВремя указано по UTC' + ('\nУ канала нет опубликованных VODs.' if count==0 else ''),text)
-                self.assertEqual(1,text.count('UTC'))
+                self.assertEqual('🟣 Channel' + ('\nУ канала нет опубликованных VODs.' if count==0 else ''),text)
+                self.assertEqual(0,text.count('UTC'))
                 self.assertEqual(max(1, (count+99)//100), self.fetch_vods.await_count)
                 if count:
                     rows = kb.inline_keyboard
                     self.assertEqual(min(count, 5)+(count > 5), len(rows))
                     for row in rows[:-1] if count > 5 else rows:
                         self.assertEqual(1, len(row))
-                        self.assertEqual('2 янв 2026 03:04', row[0].text)
+                        self.assertEqual('2 янв 2026 03:04 UTC', row[0].text)
                         self.assertIn(':info:', row[0].callback_data)
                     if count > 5:
                         self.assertEqual(f'Стр. 1/{view.page_count}', rows[-1][0].text)
