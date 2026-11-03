@@ -605,7 +605,12 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
     except BaseException as exc:
         telemetry.fail(exc)
         try:
-            await _restore_start_prompt(q.message,context,vod_id,regenerate, modern=modern)
+            if modern or ui.get('photo'):
+                from src.ui.result_preview import finish_error_card
+                await finish_error_card(context,ui['chat'],ui['message'],
+                                        'Не удалось начать обработку. Выберите VOD заново.',ui)
+            else:
+                await _restore_start_prompt(q.message,context,vod_id,regenerate, modern=modern)
         finally:
             finish_download(context, operation_id)
             manager.drop(job, 'error')
@@ -711,18 +716,15 @@ async def _runner(
         record_failure(e)
         await _record_generation_failure(publication,e)
         if str(e) == "CHAT_EMPTY":
-            try:
-                await context.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=progress_message_id,
-                    text="У этого VOD нет чата."
-                )
-            except Exception:
-                pass
+            from src.ui.result_preview import finish_error_card
+            await finish_error_card(context,chat_id,progress_message_id,'У этого VOD нет чата.',ui)
             return
         if str(e) == CANCELLED_MESSAGE:
             cancelled = True
         else:
+            from src.ui.result_preview import finish_error_card
+            await finish_error_card(context,chat_id,progress_message_id,
+                                    'Не удалось обработать чат VOD. Повторите попытку.',ui)
             raise
 
     except Exception as e:
@@ -740,17 +742,8 @@ async def _runner(
             error_text = "Время ожидания истекло. Повторите попытку позже."
         else:
             error_text = "Не удалось обработать чат VOD. Повторите попытку."
-        try:
-            await context.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=progress_message_id,
-                text=error_text,
-            )
-        except Exception:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=error_text,
-            )
+        from src.ui.result_preview import finish_error_card
+        await finish_error_card(context,chat_id,progress_message_id,error_text,ui)
     except BaseException as exc:
         await _record_generation_failure(publication,exc)
         raise

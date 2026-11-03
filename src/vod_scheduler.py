@@ -135,12 +135,9 @@ class Scheduler:
         ui = job.context.user_data.get('download_ui')
         if ui is None:
             return
-        try:
-            async with asyncio.timeout(5):
-                await job.context.bot.edit_message_text(chat_id=ui['chat'],message_id=ui['message'],
-                    text='Не удалось начать обработку. Выберите VOD заново.',reply_markup=None)
-        except Exception:
-            logging.getLogger(__name__).warning('Could not deliver queued VOD startup failure')
+        from .ui.result_preview import finish_error_card
+        await finish_error_card(job.context,ui['chat'],ui['message'],
+                                'Не удалось начать обработку. Выберите VOD заново.',ui)
 
     async def _run(self, job):
         try:
