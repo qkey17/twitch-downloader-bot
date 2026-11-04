@@ -1,6 +1,7 @@
 """Active HTML-only entry; shares metadata checks and download lifecycle."""
 from src.ui.card_context import callback_context
 import secrets
+import logging
 import re
 import time
 import asyncio
@@ -84,6 +85,16 @@ async def restore_cancelled_card(context, record):
     """Restore the card's own VOD; navigation cache is optional, never authority."""
     if context.user_data.get('download_ui') is not record or is_busy(context):return False
     ready = record['cancel_ready'] if 'cancel_ready' in record else vod.results.get_ready_result(record['vod_id'])
+    if ready and 'cancel_ready' in record:
+        # Revalidate the cancelled card's snapshot, never substitute the newly
+        # published shared result. Missing legacy snapshots restore Create.
+        try:
+            selected = ready.get('id')
+            candidate = vod.ready_generation(record['vod_id'], selected)
+            ready = candidate if candidate and (selected is not None or candidate.get('html_ref') == ready.get('html_ref')) else None
+        except Exception:
+            ready = None
+            logging.getLogger(__name__).warning('Cancel snapshot unavailable')
     meta = dict(record.get('meta') or {})
     if ready:
         ready = dict(ready,meta=meta | {k:v for k,v in ready.get('meta',{}).items() if v is not None and v!=''})
@@ -239,7 +250,7 @@ async def chat_callback(update, context):
     if parts[2] in ('regen', 'create') and vod.vod_conflict(context, choice['vod_id'], regenerate=parts[2]=='regen'):
         await reply.send(VOD_BUSY_NOTICE)
         return
-    if is_busy(context) or (parts[2] in ('regen', 'create') and vod.is_globally_busy(context, choice['vod_id'] if parts[2]=='create' else None)):
+    if is_busy(context) or (parts[2] in ('regen', 'create') and vod.is_globally_busy(context, choice['vod_id'])):
         await reply.send(PROCESSING_NOTICE)
         return
     if context.user_data.get('vod_link_lookup'):
@@ -304,7 +315,7 @@ async def chat_callback(update, context):
             if not valid():
                 await reply.send(STALE_ACTION_NOTICE)
                 return
-            if is_busy(context) or vod.is_globally_busy(context) or context.user_data.get('vod_link_lookup'):
+            if is_busy(context) or vod.is_globally_busy(context, choice['vod_id']) or context.user_data.get('vod_link_lookup'):
                 await reply.send(PROCESSING_NOTICE)
                 return  # Already acknowledged; never send a second answer on a race.
             message = q.message
@@ -332,6 +343,7 @@ async def chat_callback(update, context):
                                             download_origin=choice.get('download_origin'), on_download=choice.get('on_download'),
                                             on_bind=choice.get('on_bind'),
                                             direct_vod=choice.get('direct', False), ui_lock=choice.get('ui_lock'),
+                                            current=valid,
                                             thumbnail_url=choice.get('thumbnail_url'),photo=choice.get('photo',False))
             request = SimpleNamespace(callback_query=SimpleNamespace(message=start_message), effective_user=update.effective_user)
             try:

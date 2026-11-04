@@ -311,7 +311,7 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(entered.wait(), 1)
             operation = self.context.user_data['vod_active_operation']
             self.assertTrue(self.context.user_data['vod_busy'])
-            await vod.pending_cancel_callback(self.update('ui:pending_cancel:'+operation, self.by_id[choice['message']]), self.context)
+            await vod.pending_cancel_callback(self.update('ui:pending_cancel:'+self.context.user_data['download_ui']['cancel_token'], self.by_id[choice['message']]), self.context)
             self.assertTrue(is_cancelled(self.context, operation))
             self.assertEqual(operation, self.app.bot_data['vod_global_operation'])
         finally:

@@ -34,10 +34,15 @@ class Participants:
         self.latest = None
         self.accepting = True
 
-    def add(self, owner):
-        if not self.accepting or owner in self.members or len(self.members) >= PARTICIPANT_LIMIT:
+    def add(self, owner, participation_id=None):
+        if not self.accepting or len(self.members) >= PARTICIPANT_LIMIT:
             return None
-        part = self.members[owner] = Participant(owner)
+        part = Participant(owner)
+        if participation_id is not None:
+            part.id = participation_id
+        if part.id in self.members:
+            return None
+        self.members[part.id] = part
         return part
 
     def bind(self, part, context):
