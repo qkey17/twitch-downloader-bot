@@ -39,4 +39,4 @@ def label_for_fmt(fmt: Optional[str]) -> str:
 def ready_chat_label(ready):
     return GET_READY_INCOMPLETE_CHAT if generation_capture(ready) else GET_READY_CHAT
 
-VOD_BUSY_NOTICE = "Этот VOD уже в работе"
+VOD_BUSY_NOTICE = "Чат уже находится в обработке"

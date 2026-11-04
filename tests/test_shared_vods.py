@@ -17,6 +17,10 @@ import test_single_message_media as media
 import test_result_registry as registry
 
 
+def participant(job, owner):
+    return next(p for p in job.participants.members.values() if p.owner == owner)
+
+
 class SharedCards(unittest.IsolatedAsyncioTestCase):
     _setupAsyncioRunner=media.MediaCards._setupAsyncioRunner
     task=media.MediaCards.task
@@ -166,7 +170,7 @@ class SharedCards(unittest.IsolatedAsyncioTestCase):
             self.gates['1'].set();await asyncio.wait_for(entered.wait(),2)
             b,mb=await self.request(8)
             await self.cancel(8,mb)
-            self.assertFalse(job.cancelled);self.assertTrue(job.participants.members[8].active)
+            self.assertFalse(job.cancelled);self.assertTrue(participant(job,8).active)
             release.set();await self.finish(job)
             self.assertEqual({7,8},{c.args[0] for c in history.call_args_list})
             self.assertIn(self.publications[0].ref,str(mb.reply_markup))
@@ -195,7 +199,7 @@ class SharedCards(unittest.IsolatedAsyncioTestCase):
         async def caption(**kw):
             if kw['message_id']==ma.message_id and kw.get('caption')=='checkpoint':
                 slow.set();await release.wait()
-            if kw['message_id']==mb.message_id and job.participants.members[8].context.user_data['download_ui']['phase']=='ready':other_final.set()
+            if kw['message_id']==mb.message_id and participant(job,8).context.user_data['download_ui']['phase']=='ready':other_final.set()
             return original(**kw)
         self.bot.edit_message_caption.side_effect=caption
         job.participants.progress('checkpoint');await asyncio.wait_for(slow.wait(),2)
@@ -262,7 +266,7 @@ class SharedCards(unittest.IsolatedAsyncioTestCase):
         a,new=await self.request()
         token=a.user_data['download_ui']['cancel_token'];self.assertNotEqual(old,token)
         await self.cancel(7,new,old)
-        self.assertTrue(job.participants.members[7].active);await self.finish(job)
+        self.assertTrue(participant(job,7).active);await self.finish(job)
 
     async def test_slow_first_initial_card_does_not_prevent_other_member_starting_worker(self):
         blocked=asyncio.Event();release=asyncio.Event();original=self.bot.edit_message_media.side_effect
@@ -327,7 +331,7 @@ class SharedCards(unittest.IsolatedAsyncioTestCase):
         session=lists.get_channel_browser(self.app)._sessions[view.session_id]
         card=session.info_card
         await info.info_callback(self.update(m,f'ui:vi:{session.token}:{card.nonce}:process',owner=8),ctx)
-        self.assertIn(8,job.participants.members)
+        self.assertTrue(any(p.owner==8 for p in job.participants.members.values()))
         self.assertEqual(20,len(manager.queue));self.assertEqual(1,self.worker_calls)
         await self.finish(job)
 
@@ -336,7 +340,7 @@ class SharedCards(unittest.IsolatedAsyncioTestCase):
         manager=scheduler(self.app)
         with patch.object(manager,'pump'):
             await self.request()
-        job=next(iter(manager.jobs.values()));consumer=job.participants.members[7].task
+        job=next(iter(manager.jobs.values()));consumer=participant(job,7).task
         await manager.close()
         self.assertTrue(consumer.done());self.assertFalse(manager.jobs)
         self.assertFalse(manager.notifications);self.assertEqual(0,self.worker_calls)
@@ -356,12 +360,12 @@ class AtomicScheduler(unittest.IsolatedAsyncioTestCase):
             job,_=self.manager.reserve(1,'1',compatibility=self.key)
             if join_first:
                 other,_=self.manager.reserve(2,'1',compatibility=self.key);self.assertIs(job,other)
-                self.manager.cancel_participant(job,1);self.assertFalse(job.cancelled)
-                self.manager.cancel_participant(job,2)
+                self.manager.cancel_participant(job,participant(job,1).id);self.assertFalse(job.cancelled)
+                self.manager.cancel_participant(job,participant(job,2).id)
             else:
-                self.manager.cancel_participant(job,1)
+                self.manager.cancel_participant(job,participant(job,1).id)
                 other,_=self.manager.reserve(2,'1',compatibility=self.key);self.assertIsNot(job,other)
-                self.manager.cancel_participant(other,2)
+                self.manager.cancel_participant(other,participant(other,2).id)
             self.assertFalse(self.manager.jobs)
 
     async def test_limit_compatibility_regeneration_and_admission(self):
@@ -381,7 +385,7 @@ class AtomicScheduler(unittest.IsolatedAsyncioTestCase):
         for n in range(1,23):
             job,error=self.manager.reserve(n,str(n),compatibility=(str(n),'html_online','local'))
             self.assertIsNone(error);events[n]=asyncio.Event();entered[n]=asyncio.Event()
-            job.participants.members[n].ready.set()
+            participant(job,n).ready.set()
             async def work(n=n):
                 starts.append(n);entered[n].set();await events[n].wait()
             self.manager.arm(job,work)

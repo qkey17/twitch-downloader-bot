@@ -72,7 +72,7 @@ class Scheduler:
             if len(ticket)>2 and ticket[2]:self.join_preparing -= 1
             else:self.preparing -= 1
 
-    def reserve(self, owner, vod, *, compatibility=None):
+    def reserve(self, owner, vod, *, compatibility=None, participation_id=None):
         ticket = INPUT_TICKET.get()
         if ticket is not None and ticket[0] is self:
             self.release_input(ticket)  # Transfer the bounded input place to this job.
@@ -91,7 +91,7 @@ class Scheduler:
             group = existing.participants
             if (compatibility is not None and compatibility == existing.compatibility
                     and group is not None and group.accepting and not existing.cancelled):
-                if group.add(owner) is not None:
+                if group.add(owner, participation_id) is not None:
                     return existing, None
                 return None, 'Лимит участников обработки достигнут или вы уже участвуете.'
             return None, 'Этот VOD уже обрабатывается или ожидает в очереди.'
@@ -102,7 +102,7 @@ class Scheduler:
         if compatibility is not None:
             from .vod_participants import Participants
             job.participants = Participants()
-            job.participants.add(owner)
+            job.participants.add(owner, participation_id)
         self.jobs[job.id] = job
         self.queue.append(job)
         return job, None
@@ -219,16 +219,25 @@ class Scheduler:
         from .handlers.handlers_state import finish_download
         finish_download(context, job.id)
         root = context.shared_user_data
-        root.get('vod_jobs', {}).pop(job.id, None)
+        # Multiple cards of one owner may still use this shared job. Releasing
+        # one card must not discard the owner's cancellation lookup for another.
+        others = job.participants is not None and any(
+            p.context is not None and p.context is not context
+            and p.owner == getattr(context, 'participant_owner', job.owner)
+            and p.context.user_data.get('vod_busy')
+            for p in job.participants.members.values())
+        if not others:
+            root.get('vod_jobs', {}).pop(job.id, None)
         root['vod_busy'] = bool(root.get('vod_jobs'))
         ui = root.get('download_ui')
-        if ui and ui.get('operation') == job.id:
+        if ui is not None and (ui is context.user_data.get('download_ui')
+                               or not others and ui.get('operation') == job.id):
             root.pop('download_ui', None)
             root.pop('vod_active_operation', None)
 
-    def cancel_participant(self, job, owner):
+    def cancel_participant(self, job, participation_id):
         group = job.participants
-        part = group.members.get(owner) if group is not None else None
+        part = group.members.get(participation_id) if group is not None else None
         if self.jobs.get(job.id) is not job or part is None or not part.active or job.committing:
             return None
         part.active = False

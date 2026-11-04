@@ -396,14 +396,16 @@ async def pending_cancel_callback(update: Update, context: ContextTypes.DEFAULT_
     job = jobs.get(match[1]) if match else None
     if job is None and match:
         job = next((j for j in jobs.values() if j.participants is not None
-                    and (p:=j.participants.members.get(update.effective_user.id)) is not None and p.id==match[1]),None)
+                    and match[1] in j.participants.members),None)
     if job is not None:
         group = job.participants
-        part = group.members.get(update.effective_user.id) if group is not None else None
+        part = group.members.get(match[1]) if group is not None and match else None
         target = part.context if part is not None else job.context
         record = target.user_data.get('download_ui') if target is not None else None
         if (not record or not q.message or record['owner'] != update.effective_user.id
-                or group is not None and (part is None or not part.active or part.id!=match[1])
+                or group is not None and (part is None or not part.active or part.owner!=update.effective_user.id)
+                or record['operation'] != job.id
+                or target.user_data.get('vod_active_operation') != job.id
                 or (record['chat'],record['message']) != (q.message.chat_id,q.message.message_id)):
             await reply.send(STALE_ACTION_NOTICE);return
         if not await reply.send():return
@@ -415,7 +417,7 @@ async def pending_cancel_callback(update: Update, context: ContextTypes.DEFAULT_
             except Exception:
                 cancel_ready=None
                 logging.getLogger(__name__).warning('Cancel restore metadata unavailable')
-            part = manager.cancel_participant(job,update.effective_user.id)
+            part = manager.cancel_participant(job,part.id)
             if part is None:return
             record['cancel_ready']=cancel_ready
             await group.detach(part)
@@ -428,7 +430,7 @@ async def pending_cancel_callback(update: Update, context: ContextTypes.DEFAULT_
             finally:
                 manager.release_context(job,target)
                 if target.user_data.get('download_ui') is record:target.user_data.pop('download_ui',None)
-                if group.members.get(part.owner) is part:group.members.pop(part.owner)
+                if group.members.get(part.id) is part:group.members.pop(part.id)
             return
         waiting = job.state == 'waiting'
         if not manager.cancel(job):return
@@ -528,12 +530,17 @@ async def vod_format_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _start_download(update,context,vod_id)
 
 
+def compatibility_key(vod_id, regenerate=False):
+    key = (vod_id, 'html_online', HTML_PUBLISH_MODE)
+    return key + ('regeneration',) if regenerate else key
+
+
 def vod_conflict(context, vod_id, *, regenerate=False):
-    """Read existing jobs only; compatible first-request joins remain eligible."""
+    """Read existing jobs only; compatible first-request and regeneration joins remain eligible."""
     manager = context.application.bot_data.get('tdb_vod_scheduler')
     if manager is None:
         return False
-    key = None if regenerate else (vod_id, 'html_online', HTML_PUBLISH_MODE)
+    key = compatibility_key(vod_id, regenerate)
     for job in manager.jobs.values():
         if job.vod == vod_id and not job.processing_done:
             return not (key is not None and job.compatibility == key and job.participants is not None
@@ -553,30 +560,24 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
     expected_pending = get_pending(context)
     owner = update.effective_user.id
     manager = scheduler(context.application)
-    key = None if regenerate else (vod_id,'html_online',HTML_PUBLISH_MODE)
-    job, refusal = manager.reserve(owner,vod_id,compatibility=key)
+    key = compatibility_key(vod_id, regenerate)
+    participation_id = secrets.token_hex(16)
+    job, refusal = manager.reserve(owner,vod_id,compatibility=key,participation_id=participation_id)
     if job is None:
         if callback_reply is not None:
-            if refusal == 'Этот VOD уже обрабатывается или ожидает в очереди.':
+            if refusal in ('Этот VOD уже обрабатывается или ожидает в очереди.',
+                           'Лимит участников обработки достигнут или вы уже участвуете.'):
                 from src.ui.ui_labels import VOD_BUSY_NOTICE
                 await callback_reply.send(VOD_BUSY_NOTICE)
                 return False
             await callback_reply.send()
         await update.callback_query.message.reply_text(refusal)
         return False
-    if callback_reply is not None:
-        # Only the regeneration route defers acknowledgement until reserve.
-        try:
-            if not await callback_reply.send():
-                manager.drop(job, 'error')
-                return False
-        except BaseException:
-            manager.drop(job, 'error')
-            raise
     joined = job.context is not None
     group = job.participants
-    part = group.members[owner] if group is not None else None
+    part = group.members[participation_id] if group is not None else None
     context = JobContext(context,job)
+    context.participant_owner = owner
     if not joined:job.context = context
     context.shared_user_data.setdefault('vod_jobs',{})[job.id] = job
     context.user_data['ready_preview_request'] = object()
@@ -624,7 +625,19 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
     # pump() still refuses to run it until at least one active card is ready.
     if group is not None and not joined:job.factory = runner_coro
     startup_error = None
+    ack_pending = callback_reply is not None
+    admission_lost = False
+    def initial_current():
+        return (manager.jobs.get(job.id) is job and not job.cancelled
+                and (part is None or part.active) and getattr(q.message,'current',lambda:True)())
     try:
+        if callback_reply is not None:
+            if not await callback_reply.send():
+                raise RuntimeError('callback_ack_failed')
+            ack_pending = False
+        if not initial_current():
+            admission_lost = True
+            raise RuntimeError('admission_closed')
         queue_text = information_text((meta.get('channel') or '—')[:120],
                                       (meta.get('title') or 'Без названия')[:240],
                                       _fmt_len(meta.get('length_seconds')),meta.get('created_at'))
@@ -638,8 +651,12 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
             image=item_image(dict(meta,thumbnail_preview_url=thumbnail) if thumbnail is not None else meta)
             if not job.cancelled and (part is None or part.active):
                 shown=await render_card(context.bot,ui['chat'],text,cancel_keyboard(context,waiting=waiting),image,
-                                        message_id=ui['message'],photo=ui['photo'],file_context=context)
-                if shown is None:raise RuntimeError('queue_media_delivery_unknown')
+                                        message_id=ui['message'],photo=ui['photo'],file_context=context,current=initial_current)
+                if shown is None:
+                    if not initial_current():
+                        admission_lost = True
+                        raise RuntimeError('admission_closed')
+                    raise RuntimeError('queue_media_delivery_unknown')
                 ui.update(photo=shown.photo,message=shown.message_id)
                 on_bind=getattr(q.message,'on_bind',None)
                 if on_bind:on_bind(shown)
@@ -657,7 +674,8 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
             telemetry.fail(exc)
             manager.drop(job,'error')
         try:
-            await _restore_start_prompt(q.message,context,vod_id,regenerate,modern=modern,owner_id=owner)
+            if not ack_pending and not admission_lost:
+                await _restore_start_prompt(q.message,context,vod_id,regenerate,modern=modern,owner_id=owner)
         finally:
             manager.release_context(job,context)
             if context.user_data.get('download_ui') is ui:context.user_data.pop('download_ui',None)
@@ -678,8 +696,10 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
                 manager.drop(job,'error')
             raise
     if startup_error is not None:
-        if group is not None and group.members.get(owner) is part:
-            group.members.pop(owner)
+        if group is not None and group.members.get(part.id) is part:
+            group.members.pop(part.id)
+        if str(startup_error) in ('callback_ack_failed','admission_closed'):
+            return False
         raise startup_error
     if not job.cancelled and (part is None or part.active):
         on_download=getattr(q.message,'on_download',None)
@@ -769,11 +789,14 @@ async def _runner(
                 if members is None:
                     db.add_user_history(user_id, cache_id)
                 else:
-                    for part in members:
-                        try:await run_blocking(db.add_user_history,part.owner,cache_id)
+                    failed_owners = set()
+                    for owner in dict.fromkeys(p.owner for p in members):
+                        try:await run_blocking(db.add_user_history,owner,cache_id)
                         except Exception:
-                            part.history_failed=True
+                            failed_owners.add(owner)
                             logging.getLogger(__name__).error('Participant history write failed')
+                    for part in members:
+                        part.history_failed = part.owner in failed_owners
 
         item = _make_item(meta, stats, vod_url, fmt)
         html_url = html_result_ref

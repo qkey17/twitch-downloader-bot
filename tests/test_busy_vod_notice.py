@@ -90,9 +90,7 @@ class BusyNotice(unittest.IsolatedAsyncioTestCase):
                 if queued:
                     await self.request(8,'2');await self.entered('2')
                     await self.request(9,'3');await self.entered('3')
-                ctx,m,data=await self.offer()
-                first=self.update(m,data)
-                await chat.chat_callback(first,ctx)
+                ctx,m=await self.request()
                 job=next(j for j in scheduler(self.app).jobs.values() if j.vod=='1')
                 if not queued:await self.entered()
                 self.assertEqual('waiting' if queued else 'running',job.state)
@@ -100,20 +98,19 @@ class BusyNotice(unittest.IsolatedAsyncioTestCase):
                 before=list(self.calls);publications=len(self.publications);jobs=dict(scheduler(self.app).jobs)
                 q=self.update(other,data)
                 await chat.chat_callback(q,ctx)
-                q.callback_query.answer.assert_awaited_once_with('Этот VOD уже в работе',show_alert=False)
+                q.callback_query.answer.assert_awaited_once_with('Чат уже находится в обработке',show_alert=False)
                 self.assertEqual(before,self.calls)
                 self.assertEqual(jobs,scheduler(self.app).jobs)
                 self.assertFalse(job.cancelled)
                 self.assertEqual(publications,len(self.publications))
-                first.callback_query.answer.assert_awaited_once_with()
                 # Drain this scenario without initiating further work.
                 for j in list(scheduler(self.app).jobs.values()):
                     self.gates.setdefault(j.vod,asyncio.Event()).set()
                 while scheduler(self.app).jobs:await asyncio.sleep(.01)
-                self.started.clear();self.gates.clear()
+                self.started.clear();self.gates.clear();self.ready.clear()
 
     async def test_common_starter_conflict_answers_once_without_message(self):
-        await self.request(regen=True);job=await self.entered()
+        await self.request();job=await self.entered()
         ctx=self.context(8);m=self.message(4000,'1');u=self.update(m)
         reply=CallbackReply(u.callback_query);before=list(self.calls)
         self.assertFalse(await vod._start_download(u,ctx,'1',True,modern=True,callback_reply=reply))

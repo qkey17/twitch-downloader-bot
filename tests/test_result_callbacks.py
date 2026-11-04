@@ -430,7 +430,7 @@ class ResultCallbacksTestCase(unittest.IsolatedAsyncioTestCase):
             await handlers_vod.vod_result_callback(update,context)
             try:
                 await asyncio.wait_for(entered.wait(),2)
-                update.callback_query.data = 'ui:pending_cancel:' + context.user_data['vod_active_operation']
+                update.callback_query.data = 'ui:pending_cancel:' + context.user_data['download_ui']['cancel_token']
                 await handlers_vod.pending_cancel_callback(update,context)
                 self.assertTrue(is_busy(context))
             finally:
