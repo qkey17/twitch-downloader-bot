@@ -116,7 +116,7 @@ class ResultCallbacksTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(is_busy(context))
         self.assertEqual(0,db.get_history_count(1))
 
-    async def test_old_open_callback_resolves_latest_generation(self):
+    async def test_offered_open_callback_keeps_selected_generation(self):
         old=self.ready()
         update,context=self.request()
         open_data,_=await self.choose(update,context)
@@ -124,8 +124,8 @@ class ResultCallbacksTestCase(unittest.IsolatedAsyncioTestCase):
         update.callback_query.data=open_data
         await handlers_vod.vod_result_callback(update,context)
         text=context.bot.send_photo.await_args.kwargs['caption']
-        self.assertIn(latest.filename,text)
-        self.assertNotIn(old.filename,text)
+        self.assertIn(old.filename,text)
+        self.assertNotIn(latest.filename,text)
         self.assertTrue(old.path().exists())
 
     async def test_missing_ready_file_offers_creation_without_broken_url(self):

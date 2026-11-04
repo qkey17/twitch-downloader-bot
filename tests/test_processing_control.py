@@ -164,8 +164,11 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
             try:
                 await entered.wait()
                 await handlers_vod.vod_format_chosen(update2, second)
-                self.assertIn("Этот VOD уже обрабатывается", update2.message.reply_text.await_args.args[0])
-                self.application.create_task.assert_not_called()
+                update2.message.reply_text.assert_not_awaited()
+                manager=self.application.bot_data['tdb_vod_scheduler']
+                self.assertEqual(1,len(manager.jobs))
+                self.assertEqual(2,len(next(iter(manager.jobs.values())).participants.members))
+                self.application.create_task.assert_called_once()
             finally:
                 release.set()
                 await start

@@ -122,7 +122,7 @@ async def create_from_choice(query, context, choice):
         return context.user_data.get('chat_choice') is choice and choice['current']()
     try:
         async with choice['ui_lock']:
-            if not current() or is_busy(context) or vod.is_globally_busy(context):
+            if not current() or is_busy(context) or vod.is_globally_busy(context, choice['vod_id']):
                 return
             message = query.message
         # No await between the owned screen check and prepare_chat claiming a
@@ -147,7 +147,7 @@ async def offer_chat(message, context, owner, ready, current, back, on_start=Non
                   on_bind=getattr(message, 'on_bind', None), photo=bool(photo or getattr(message,'photo',False)),
                   download_origin=getattr(message, 'download_origin', None),
                   on_download=getattr(message, 'on_download', None), meta=ready['meta'],
-                  direct=bool(getattr(message, 'direct_vod', False)), create=create,
+                  direct=bool(getattr(message, 'direct_vod', False)), create=create,generation=ready.get('id'),
                   image_live=getattr(message,'image_live',False))
     rows = [[InlineKeyboardButton(ready_chat_label(ready), callback_data=f'ui:chat:open:{token}')],
             [InlineKeyboardButton(RECREATE_CHAT, callback_data=f'ui:chat:regen:{token}')]]
@@ -236,7 +236,7 @@ async def chat_callback(update, context):
     if not valid():
         await reply.send(STALE_ACTION_NOTICE)
         return
-    if is_busy(context) or (parts[2] in ('regen', 'create') and vod.is_globally_busy(context)):
+    if is_busy(context) or (parts[2] in ('regen', 'create') and vod.is_globally_busy(context, choice['vod_id'] if parts[2]=='create' else None)):
         await reply.send(PROCESSING_NOTICE)
         return
     if context.user_data.get('vod_link_lookup'):
@@ -285,7 +285,7 @@ async def chat_callback(update, context):
             shown = await show_ready(q.message, context, update.effective_user.id, choice['vod_id'],
                              current=lambda: context.user_data.get('chat_choice') is choice and choice['current'](),
                              ui_lock=choice.get('ui_lock'), on_photo=terminal_photo,
-                             thumbnail_url=choice.get('thumbnail_url'), photo=choice.get('photo', False))
+                             thumbnail_url=choice.get('thumbnail_url'), photo=choice.get('photo', False), generation=choice.get('generation'))
             if shown and context.user_data.get('chat_choice') is choice and not choice.get('media_final'):
                 terminal_photo()  # A final text card also consumes old actions.
         finally:
@@ -352,13 +352,13 @@ async def chat_callback(update, context):
         await cleanup_card(context.bot, choice['chat'], replaced)
 
 
-async def show_ready(message, context, user_id, vod_id, *, current=lambda: True, ui_lock=None, on_photo=None, thumbnail_url=None, photo=None):
-    """Resolve the current usable generation using existing access/history rules."""
+async def show_ready(message, context, user_id, vod_id, *, current=lambda: True, ui_lock=None, on_photo=None, thumbnail_url=None, photo=None, generation=None):
+    """Resolve the selected usable generation using existing access/history rules."""
     if not current():
         return
     request = object()
     context.user_data['ready_preview_request'] = request
-    ready = vod.results.get_ready_result(vod_id)
+    ready = vod.ready_generation(vod_id,generation)
     if not ready:
         async with ui_lock or nullcontext():
             if not current() or context.user_data.get('ready_preview_request') is not request:

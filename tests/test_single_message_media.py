@@ -146,7 +146,7 @@ class MediaCards(unittest.IsolatedAsyncioTestCase):
                 job=next(j for j in manager.jobs.values() if j.vod=='1');self.assertEqual(PREVIEW,m.image)
                 if queued:self.assertIn('В очереди',m.caption)
                 blockers.set();await self.settle('1')
-                await vod.pending_cancel_callback(self.update(m,'ui:pending_cancel:'+job.id),self.ctx)
+                await vod.pending_cancel_callback(self.update(m,'ui:pending_cancel:'+job.context.user_data['download_ui'].get('cancel_token',job.id)),self.ctx)
                 self.gates['1'].set();await job.task;await asyncio.sleep(0)
                 self.assertIn('Обработать чат',str(m.reply_markup));mid=m.message_id
                 self.gates.clear();self.started.clear()
@@ -205,7 +205,7 @@ class MediaCards(unittest.IsolatedAsyncioTestCase):
         job=next(iter(scheduler(self.app).jobs.values()));m=self.messages[self.number];await self.settle('1')
         other,view=await self.open(31);body=other.caption;image=other.image
         lists.get_channel_browser(self.app)._sessions.clear()
-        await vod.pending_cancel_callback(self.update(m,'ui:pending_cancel:'+job.id),self.ctx)
+        await vod.pending_cancel_callback(self.update(m,'ui:pending_cancel:'+job.context.user_data['download_ui'].get('cancel_token',job.id)),self.ctx)
         self.gates['1'].set();await job.task;await asyncio.sleep(0)
         self.assertEqual(body,other.caption);self.assertEqual(image,other.image)
         self.assertEqual(PREVIEW,m.image);self.assertIn('Обработать чат',str(m.reply_markup))
