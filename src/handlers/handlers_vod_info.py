@@ -167,7 +167,7 @@ async def info_callback(update, context):
     if not valid_card():
         await reply.send(STALE_ACTION_NOTICE)
         return
-    if match[3] == 'process' and (is_busy(context) or is_globally_busy(context)):
+    if match[3] == 'process' and (is_busy(context) or is_globally_busy(context, session.vods[session.info_card.index].id)):
         await reply.send(PROCESSING_NOTICE)
         return
     if not await reply.send():
@@ -197,7 +197,7 @@ async def info_callback(update, context):
                     return
                 take_info(session)
                 return
-            if is_busy(context) or is_globally_busy(context):
+            if is_busy(context) or is_globally_busy(context, session.vods[card.index].id):
                 return
             source = card.message
             result = await browser.handle_callback(context.application.bot_data['aiohttp'], session.owner_id,

@@ -89,7 +89,7 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
     def request(self, user_id=1, vod_id="123456789"):
         context = SimpleNamespace(
             application=self.application, user_data={},
-            bot=SimpleNamespace(edit_message_text=AsyncMock(), send_message=AsyncMock(),send_photo=AsyncMock(side_effect=BadRequest('Unsupported fixture photo')),edit_message_media=AsyncMock(side_effect=BadRequest('Unsupported fixture photo'))),
+            bot=SimpleNamespace(token='123:synthetic-offer-test-key',edit_message_text=AsyncMock(), send_message=AsyncMock(),send_photo=AsyncMock(side_effect=BadRequest('Unsupported fixture photo')),edit_message_media=AsyncMock(side_effect=BadRequest('Unsupported fixture photo'))),
         )
         message = SimpleNamespace(
             chat_id=user_id, message_id=20, edit_text=AsyncMock(), reply_text=AsyncMock(),reply_photo=AsyncMock(side_effect=BadRequest('Unsupported fixture photo')),
@@ -164,8 +164,11 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
             try:
                 await entered.wait()
                 await handlers_vod.vod_format_chosen(update2, second)
-                self.assertIn("Этот VOD уже обрабатывается", update2.message.reply_text.await_args.args[0])
-                self.application.create_task.assert_not_called()
+                update2.message.reply_text.assert_not_awaited()
+                manager=self.application.bot_data['tdb_vod_scheduler']
+                self.assertEqual(1,len(manager.jobs))
+                self.assertEqual(2,len(next(iter(manager.jobs.values())).participants.members))
+                self.application.create_task.assert_called_once()
             finally:
                 release.set()
                 await start
@@ -317,7 +320,7 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
         context, update = self.request()
         with patch.object(config, "HISTORY_ENABLED", True), \
              patch.object(handlers_vod.results,"get_ready_result",return_value={
-                 'vod_id':'123456789','cache_id':cache_id,'meta':{'title':'cached'},'stats':{},'html_ref':None,
+                 'id':'a'*32,'vod_id':'123456789','cache_id':cache_id,'meta':{'title':'cached'},'stats':{},'html_ref':None,
              }):
             await handlers_vod.vod_format_chosen(update, context)
         self.assertEqual(1, db.get_history_count(1))

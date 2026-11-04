@@ -98,7 +98,7 @@ class ProgressCancelTests(unittest.IsolatedAsyncioTestCase):
 
     async def cancel(self):
         record = self.context.user_data['download_ui']
-        q = self.update('ui:pending_cancel:'+record['operation'], self.by_id[record['message']])
+        q = self.update('ui:pending_cancel:'+record.get('cancel_token',record['operation']), self.by_id[record['message']])
         await vod.pending_cancel_callback(q, self.context)
         q.callback_query.answer.assert_awaited_once()
         return record

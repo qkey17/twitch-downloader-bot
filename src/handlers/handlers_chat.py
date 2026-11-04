@@ -83,7 +83,7 @@ def direct_information_text(meta, vod_id):
 async def restore_cancelled_card(context, record):
     """Restore the card's own VOD; navigation cache is optional, never authority."""
     if context.user_data.get('download_ui') is not record or is_busy(context):return False
-    ready = vod.results.get_ready_result(record['vod_id'])
+    ready = record['cancel_ready'] if 'cancel_ready' in record else vod.results.get_ready_result(record['vod_id'])
     meta = dict(record.get('meta') or {})
     if ready:
         ready = dict(ready,meta=meta | {k:v for k,v in ready.get('meta',{}).items() if v is not None and v!=''})
@@ -122,7 +122,7 @@ async def create_from_choice(query, context, choice):
         return context.user_data.get('chat_choice') is choice and choice['current']()
     try:
         async with choice['ui_lock']:
-            if not current() or is_busy(context) or vod.is_globally_busy(context):
+            if not current() or is_busy(context) or vod.is_globally_busy(context, choice['vod_id']):
                 return
             message = query.message
         # No await between the owned screen check and prepare_chat claiming a
@@ -147,7 +147,7 @@ async def offer_chat(message, context, owner, ready, current, back, on_start=Non
                   on_bind=getattr(message, 'on_bind', None), photo=bool(photo or getattr(message,'photo',False)),
                   download_origin=getattr(message, 'download_origin', None),
                   on_download=getattr(message, 'on_download', None), meta=ready['meta'],
-                  direct=bool(getattr(message, 'direct_vod', False)), create=create,
+                  direct=bool(getattr(message, 'direct_vod', False)), create=create,generation=ready.get('id'),
                   image_live=getattr(message,'image_live',False))
     rows = [[InlineKeyboardButton(ready_chat_label(ready), callback_data=f'ui:chat:open:{token}')],
             [InlineKeyboardButton(RECREATE_CHAT, callback_data=f'ui:chat:regen:{token}')]]
@@ -236,7 +236,7 @@ async def chat_callback(update, context):
     if not valid():
         await reply.send(STALE_ACTION_NOTICE)
         return
-    if is_busy(context) or (parts[2] in ('regen', 'create') and vod.is_globally_busy(context)):
+    if is_busy(context) or (parts[2] in ('regen', 'create') and vod.is_globally_busy(context, choice['vod_id'] if parts[2]=='create' else None)):
         await reply.send(PROCESSING_NOTICE)
         return
     if context.user_data.get('vod_link_lookup'):
@@ -285,7 +285,7 @@ async def chat_callback(update, context):
             shown = await show_ready(q.message, context, update.effective_user.id, choice['vod_id'],
                              current=lambda: context.user_data.get('chat_choice') is choice and choice['current'](),
                              ui_lock=choice.get('ui_lock'), on_photo=terminal_photo,
-                             thumbnail_url=choice.get('thumbnail_url'), photo=choice.get('photo', False))
+                             thumbnail_url=choice.get('thumbnail_url'), photo=choice.get('photo', False), generation=choice.get('generation'))
             if shown and context.user_data.get('chat_choice') is choice and not choice.get('media_final'):
                 terminal_photo()  # A final text card also consumes old actions.
         finally:
@@ -352,13 +352,13 @@ async def chat_callback(update, context):
         await cleanup_card(context.bot, choice['chat'], replaced)
 
 
-async def show_ready(message, context, user_id, vod_id, *, current=lambda: True, ui_lock=None, on_photo=None, thumbnail_url=None, photo=None):
-    """Resolve the current usable generation using existing access/history rules."""
+async def show_ready(message, context, user_id, vod_id, *, current=lambda: True, ui_lock=None, on_photo=None, thumbnail_url=None, photo=None, generation=None):
+    """Resolve the selected usable generation using existing access/history rules."""
     if not current():
         return
     request = object()
     context.user_data['ready_preview_request'] = request
-    ready = vod.results.get_ready_result(vod_id)
+    ready = vod.ready_generation(vod_id,generation)
     if not ready:
         async with ui_lock or nullcontext():
             if not current() or context.user_data.get('ready_preview_request') is not request:
@@ -388,7 +388,23 @@ async def legacy_open_callback(update, context):
     if not match or q.message is None:
         await reply.send(STALE_ACTION_NOTICE)
         return
-    key = (update.effective_user.id, q.message.chat_id, q.message.message_id, match[1])
+    await _open_selected(update, context, match[1])
+
+
+@callback_context
+async def ready_open_callback(update, context):
+    from src.ui.ready_open_action import selection
+    selected = selection(update, context)
+    if selected is None:
+        await CallbackReply(update.callback_query).send(STALE_ACTION_NOTICE)
+        return
+    await _open_selected(update, context, *selected)
+
+
+async def _open_selected(update, context, vod_id, generation=None):
+    q = update.callback_query
+    reply = CallbackReply(q)
+    key = (update.effective_user.id, q.message.chat_id, q.message.message_id, generation or vod_id)
     active = context.user_data.get('download_ui')
     if active and (active['chat'], active['message']) == key[1:3]:
         await reply.send(STALE_ACTION_NOTICE)
@@ -397,7 +413,7 @@ async def legacy_open_callback(update, context):
     if old and old['key'] == key and not pending_expired(old):
         await reply.send(ACTION_DONE_NOTICE if old['done'] else ACTION_PENDING_NOTICE if old.get('pending') else STALE_ACTION_NOTICE)
         return
-    if not vod.results.get_ready_result(match[1]):
+    if not vod.ready_generation(vod_id, generation):
         await reply.send(READY_UNAVAILABLE)
         return
     record = dict(key=key, created_at=time.time(), done=False, pending=True)
@@ -407,7 +423,7 @@ async def legacy_open_callback(update, context):
             context.user_data.pop('legacy_open', None)
         return
     try:
-        shown = await show_ready(q.message, context, update.effective_user.id, match[1],
+        shown = await show_ready(q.message, context, update.effective_user.id, vod_id, generation=generation,
                          current=lambda: context.user_data.get('legacy_open') is record)
         record['done'] = bool(shown)
     finally:

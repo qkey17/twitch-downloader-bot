@@ -30,7 +30,8 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
     task = fixture.ChannelSelectionTests.task
     message = fixture.ChannelSelectionTests.message
     callback = fixture.ChannelSelectionTests.update
-    ready_result = fixture.ChannelSelectionTests.ready_result
+    def ready_result(self):
+        return dict(fixture.ChannelSelectionTests.ready_result(self), id='a'*32)
 
     def request(self, text='', *, args=None, owner=7, number=None):
         if number is None:

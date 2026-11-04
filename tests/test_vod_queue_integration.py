@@ -124,7 +124,7 @@ class QueueIntegration(unittest.IsolatedAsyncioTestCase):
             self.assertIn('🕒 В очереди — обработка начнётся автоматически',u3.message.edit_text.await_args.kwargs['text'])
             self.assertIsNot(workers[a.vod].user_data,workers[b.vod].user_data)
             self.assertEqual(a.id,workers[a.vod].user_data['download_ui']['operation'])
-            u1.callback_query.data=vod.CB_PENDING_CANCEL+':'+a.id
+            u1.callback_query.data=vod.CB_PENDING_CANCEL+':'+a.context.user_data['download_ui'].get('cancel_token',a.id)
             u1.effective_user.id=999
             await vod.pending_cancel_callback(u1,ctx);self.assertFalse(a.cancelled)
             u1.effective_user.id=1
@@ -148,7 +148,7 @@ class QueueIntegration(unittest.IsolatedAsyncioTestCase):
             for ctx,u in requests:await vod._start_download(u,ctx,u.message.text.rsplit('/',1)[-1])
             await entered.wait()
             ctx,u=requests[2];job=next(iter(ctx.user_data['vod_jobs'].values()))
-            u.callback_query.data=vod.CB_PENDING_CANCEL+':'+job.id
+            u.callback_query.data=vod.CB_PENDING_CANCEL+':'+job.context.user_data['download_ui'].get('cancel_token',job.id)
             await vod.pending_cancel_callback(u,ctx)
             self.assertEqual('cancelled',job.state);self.assertEqual(2,len(calls))
             release.set();await asyncio.gather(*self.tasks);await asyncio.sleep(0)
@@ -161,7 +161,7 @@ class QueueIntegration(unittest.IsolatedAsyncioTestCase):
         with patch.object(vod,'download_and_send') as worker:
             starter=asyncio.create_task(vod._start_download(u,ctx,'123456789'))
             await entered.wait();job=next(iter(ctx.user_data['vod_jobs'].values()))
-            u.callback_query.data=vod.CB_PENDING_CANCEL+':'+job.id
+            u.callback_query.data=vod.CB_PENDING_CANCEL+':'+job.context.user_data['download_ui'].get('cancel_token',job.id)
             cancelling=asyncio.create_task(vod.pending_cancel_callback(u,ctx));await asyncio.sleep(0)
             self.assertFalse(cancelling.done());self.assertTrue(job.cancelled)
             release.set();await starter;await cancelling
@@ -172,7 +172,7 @@ class QueueIntegration(unittest.IsolatedAsyncioTestCase):
         with patch.object(vod,'download_and_send') as worker,patch.object(vod.results,'Publication') as publication:
             await vod._start_download(u,ctx,'123456789')
             job=next(iter(ctx.user_data['vod_jobs'].values()))
-            u.callback_query.data=vod.CB_PENDING_CANCEL+':'+job.id
+            u.callback_query.data=vod.CB_PENDING_CANCEL+':'+job.context.user_data['download_ui'].get('cancel_token',job.id)
             await vod.pending_cancel_callback(u,ctx)
             await job.task;await asyncio.sleep(0)
             publication.assert_not_called();worker.assert_not_called()
@@ -193,7 +193,7 @@ class QueueIntegration(unittest.IsolatedAsyncioTestCase):
             job=next(iter(ctx.user_data['vod_jobs'].values()))
             self.assertEqual('waiting',job.state)
             self.assertIn('🕒 В очереди',u.message.edit_text.await_args.kwargs['text'])
-            u.callback_query.data=vod.CB_PENDING_CANCEL+':'+job.id
+            u.callback_query.data=vod.CB_PENDING_CANCEL+':'+job.context.user_data['download_ui'].get('cancel_token',job.id)
             await asyncio.wait_for(vod.pending_cancel_callback(u,ctx),1)
             worker.assert_not_called();self.assertEqual('cancelled',job.state)
 

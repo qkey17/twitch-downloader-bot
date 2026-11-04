@@ -59,7 +59,10 @@ async def _dispatch(message, context, owner_id, value):
         return await _dispatch_one(message,context,owner_id,value)
     from src.vod_scheduler import scheduler, INPUT_TICKET
     manager = scheduler(context.application)
-    ticket = manager.prepare_input()
+    from src.database import db_results
+    if db_results.get_ready_result(value.value):
+        return await _dispatch_one(message,context,owner_id,value)
+    ticket = manager.prepare_input(value.value)
     if ticket is None:
         await message.reply_text('Очередь недоступна. Повторите запрос позже.')
         return

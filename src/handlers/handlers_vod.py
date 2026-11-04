@@ -166,13 +166,32 @@ async def _send_card_with_buttons(context, chat_id, item, html_url=None, *, read
     await send_card(context, chat_id, text, final_kb, item)
 
 
-async def _offer_ready(message,context,result,edit=False):
+def ready_generation(vod_id, generation=None):
+    current = results.get_ready_result(vod_id)
+    if generation is None or current and current.get('id') == generation:
+        return current
+    from src.ready_html import _row, HtmlUnavailable
+    try:
+        if not isinstance(generation,str) or not re.fullmatch('[0-9a-f]{32}',generation):
+            return None
+        row = _row(vod_id,generation)
+        if results.file_status(row) != 'available' or not results._reference_matches(row):
+            return None
+        row['meta'],row['stats'] = results._payload(row)
+        return row
+    except (HtmlUnavailable,ValueError,TypeError,OSError):
+        return None
+
+
+async def _offer_ready(message,context,result,edit=False, *, owner_id):
     vod_id = result["vod_id"]
     nonce = secrets.token_hex(8)
-    context.user_data["vod_result_choice"] = {"vod_id":vod_id,"nonce":nonce,"created_at":time.time()}
+    context.user_data["vod_result_choice"] = {"vod_id":vod_id,"nonce":nonce,"created_at":time.time(),"generation":result.get("id")}
+    from src.ui.ready_open_action import action
+    open_action = action(context, owner_id, message.chat_id, result)
     text = ready_offer_text(result)
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(ready_chat_label(result),callback_data=f"ui:result:open:{vod_id}")],
+        [InlineKeyboardButton(ready_chat_label(result),callback_data=open_action)],
         [InlineKeyboardButton(RECREATE_CHAT,callback_data=f"ui:result:regen:{vod_id}:{nonce}")],
     ])
     if edit:
@@ -226,7 +245,7 @@ async def vod_result_callback(update,context):
         await q.message.reply_text("Действие устарело. Выберите VOD заново.")
         ready = results.get_ready_result(vod_id)
         if ready:
-            await _offer_ready(q.message,context,ready)
+            await _offer_ready(q.message,context,ready,owner_id=update.effective_user.id)
         return
     await _start_download(update,context,vod_id,regenerate=True)
 
@@ -272,7 +291,7 @@ async def prepare_vod_choice(message, context, user_id, vod_id, *, is_current=No
             return 'ready'
         if config.HISTORY_ENABLED and ready['cache_id'] is not None:
             db.add_user_history(user_id,ready['cache_id'])
-        await _offer_ready(message,context,ready)
+        await _offer_ready(message,context,ready,owner_id=user_id)
         return 'ready'
     if ready_only:
         await message.reply_text(READY_UNAVAILABLE)
@@ -284,7 +303,7 @@ async def prepare_vod_choice(message, context, user_id, vod_id, *, is_current=No
     if input_busy(context) or context.user_data.get("vod_link_lookup"):
         await message.reply_text("Дождитесь завершения предыдущего запроса.")
         return 'busy'
-    if from_channel and is_globally_busy(context):
+    if from_channel and is_globally_busy(context, vod_id):
         await message.reply_text("Сейчас обрабатывается чат VOD. Повторите попытку позже.")
         return 'busy'
 
@@ -298,7 +317,7 @@ async def prepare_vod_choice(message, context, user_id, vod_id, *, is_current=No
     existing = INPUT_TICKET.get()
     ticket = token = None
     if existing is None or existing[0] is not manager or not existing[1]:
-        ticket = manager.prepare_input()
+        ticket = manager.prepare_input(vod_id)
         if ticket is None:
             await message.reply_text('Очередь недоступна. Повторите запрос позже.')
             return 'busy'
@@ -313,7 +332,7 @@ async def prepare_vod_choice(message, context, user_id, vod_id, *, is_current=No
         if (context.user_data.get("vod_link_lookup") is not lookup or not current()
                 or get_pending(context) is not pending):
             return 'stale'
-        if from_channel and is_globally_busy(context):
+        if from_channel and is_globally_busy(context, vod_id):
             await message.reply_text("Сейчас обрабатывается чат VOD. Повторите попытку позже.")
             return 'busy'
 
@@ -323,6 +342,17 @@ async def prepare_vod_choice(message, context, user_id, vod_id, *, is_current=No
                 await message.reply_text('VOD не найден или недоступен.')
             return 'missing'
 
+        ready = results.get_ready_result(vod_id)
+        if ready:
+            clear_pending(context)
+            if immediate:
+                from .handlers_chat import offer_chat
+                await offer_chat(message,context,user_id,ready,current,back,on_start)
+            else:
+                if config.HISTORY_ENABLED and ready['cache_id'] is not None:
+                    db.add_user_history(user_id,ready['cache_id'])
+                await _offer_ready(message,context,ready,owner_id=user_id)
+            return 'ready'
         if immediate:
             from types import SimpleNamespace
             started = await _start_download(SimpleNamespace(callback_query=SimpleNamespace(message=message),
@@ -364,21 +394,48 @@ async def pending_cancel_callback(update: Update, context: ContextTypes.DEFAULT_
     match = re.fullmatch(re.escape(CB_PENDING_CANCEL) + r':([0-9a-f]{32})', q.data or '')
     jobs = context.user_data.get('vod_jobs', {})
     job = jobs.get(match[1]) if match else None
+    if job is None and match:
+        job = next((j for j in jobs.values() if j.participants is not None
+                    and (p:=j.participants.members.get(update.effective_user.id)) is not None and p.id==match[1]),None)
     if job is not None:
-        record = job.context.user_data.get('download_ui')
-        if (not record or not q.message or job.owner != update.effective_user.id
+        group = job.participants
+        part = group.members.get(update.effective_user.id) if group is not None else None
+        target = part.context if part is not None else job.context
+        record = target.user_data.get('download_ui') if target is not None else None
+        if (not record or not q.message or record['owner'] != update.effective_user.id
+                or group is not None and (part is None or not part.active or part.id!=match[1])
                 or (record['chat'],record['message']) != (q.message.chat_id,q.message.message_id)):
             await reply.send(STALE_ACTION_NOTICE);return
         if not await reply.send():return
         from src.vod_scheduler import scheduler
+        manager = scheduler(context.application)
+        if group is not None:
+            if job.committing:return
+            try:cancel_ready=results.get_ready_result(job.vod)
+            except Exception:
+                cancel_ready=None
+                logging.getLogger(__name__).warning('Cancel restore metadata unavailable')
+            part = manager.cancel_participant(job,update.effective_user.id)
+            if part is None:return
+            record['cancel_ready']=cancel_ready
+            await group.detach(part)
+            if job.cancelled and job.state=='running':
+                part.restore_after_close=True
+                return  # Last active cancellation retains its card/slot until safe cleanup.
+            await part.ready.wait()
+            finish_download(target,job.id)
+            try:await _show_cancelled(target,record['chat'],record['message'],record)
+            finally:
+                manager.release_context(job,target)
+                if target.user_data.get('download_ui') is record:target.user_data.pop('download_ui',None)
+                if group.members.get(part.owner) is part:group.members.pop(part.owner)
+            return
         waiting = job.state == 'waiting'
-        if not scheduler(context.application).cancel(job):return
+        if not manager.cancel(job):return
         if waiting:
-            delivery = getattr(job, 'delivery', None)
-            if delivery is not None:
-                await delivery.wait()
-            # Restoration owns its UI lock; do not acquire it recursively here.
-            await _show_cancelled(job.context,record['chat'],record['message'],record)
+            delivery = getattr(job,'delivery',None)
+            if delivery is not None:await delivery.wait()
+            await _show_cancelled(target,record['chat'],record['message'],record)
         return
     if jobs:
         await reply.send(STALE_ACTION_NOTICE);return
@@ -466,7 +523,7 @@ async def vod_format_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         clear_pending(context)
         if config.HISTORY_ENABLED and ready['cache_id'] is not None:
             db.add_user_history(update.effective_user.id,ready['cache_id'])
-        await _offer_ready(q.message,context,ready,edit=True)
+        await _offer_ready(q.message,context,ready,edit=True,owner_id=update.effective_user.id)
         return
     await _start_download(update,context,vod_id)
 
@@ -474,144 +531,140 @@ async def vod_format_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _start_download(update,context,vod_id,regenerate=False, *, modern=False, initial_meta=None):
     from src.vod_scheduler import scheduler
     from src.job_context import JobContext
+    from src.workers.worker_progress import _build_progress_card, cancel_keyboard, safe_edit_html
+    from src.ui.result_preview import render_card, cleanup_card, finish_error_card
+    from src.ui.card_images import item_image
+    from .handlers_vod_info import information_text
+    from src.ui.ui_formatters import _fmt_len
     root_context = context
     expected_pending = get_pending(context)
+    owner = update.effective_user.id
     manager = scheduler(context.application)
-    job, refusal = manager.reserve(update.effective_user.id, vod_id)
+    key = None if regenerate else (vod_id,'html_online',HTML_PUBLISH_MODE)
+    job, refusal = manager.reserve(owner,vod_id,compatibility=key)
     if job is None:
         await update.callback_query.message.reply_text(refusal)
         return False
-    context = JobContext(context, job)
-    job.context = context
-    context.shared_user_data.setdefault('vod_jobs', {})[job.id] = job
+    joined = job.context is not None
+    group = job.participants
+    part = group.members[owner] if group is not None else None
+    context = JobContext(context,job)
+    if not joined:job.context = context
+    context.shared_user_data.setdefault('vod_jobs',{})[job.id] = job
     context.user_data['ready_preview_request'] = object()
     q = update.callback_query
-    vod_url = f"https://www.twitch.tv/videos/{vod_id}"
-    fmt = "html_online"
+    vod_url = f'https://www.twitch.tv/videos/{vod_id}'
     operation_id = begin_download(context)
     context.shared_user_data['vod_active_operation'] = operation_id
     context.shared_user_data['vod_busy'] = True
-    if operation_id is None:
-        await q.message.reply_text("Сейчас обрабатывается чат VOD. Повторите попытку позже.")
-        return False
-    telemetry = OperationTelemetry(operation_id)
-    job.telemetry = telemetry
-    job.delivery = asyncio.Event()
-    telemetry.begin()
-    ui = dict(operation=operation_id, chat=q.message.chat_id, message=q.message.message_id,
-              owner=update.effective_user.id, vod_id=vod_id, regenerate=regenerate,
-              origin=getattr(q.message, 'download_origin', None), request=context.user_data.get('chat_request'),
-              direct=bool(getattr(q.message, 'direct_vod', False)), meta=dict(initial_meta or {}),
-              ui_lock=getattr(q.message, 'ui_lock', None) or asyncio.Lock(),
-              render_lock=asyncio.Lock(),phase='waiting',photo=bool(getattr(q.message,'photo',False)))
-    if getattr(q.message, 'thumbnail_url', None) is not None and not ui['meta'].get('thumbnail_preview_url'):
-        ui['meta']['thumbnail_preview_url'] = q.message.thumbnail_url
+    if not joined:
+        job.telemetry = OperationTelemetry(operation_id)
+        job.telemetry.begin()
+        job.delivery = asyncio.Event()
+    telemetry = job.telemetry
+    delivery = part.ready if part is not None else job.delivery
+    ui = dict(operation=operation_id,chat=q.message.chat_id,message=q.message.message_id,
+              owner=owner,vod_id=vod_id,regenerate=regenerate,
+              origin=getattr(q.message,'download_origin',None),request=context.user_data.get('chat_request'),
+              direct=bool(getattr(q.message,'direct_vod',False)),meta=dict(initial_meta or {}),
+              ui_lock=getattr(q.message,'ui_lock',None) or asyncio.Lock(),render_lock=asyncio.Lock(),
+              phase='waiting',photo=bool(getattr(q.message,'photo',False)))
+    thumbnail = getattr(q.message,'thumbnail_url',None)
+    if thumbnail is not None and not ui['meta'].get('thumbnail_preview_url'):
+        ui['meta']['thumbnail_preview_url'] = thumbnail
     context.user_data['download_ui'] = ui
     context.shared_user_data['download_ui'] = ui
-    from src.workers.worker_progress import _build_progress_card, cancel_keyboard
-    from .handlers_vod_info import information_text
-    from src.ui.ui_formatters import _fmt_len
+    if part is not None:
+        ui['cancel_token']=part.id
+        group.bind(part,context)
     meta = initial_meta or {}
-    if regenerate:
-        context.user_data.pop("vod_result_choice",None)
+    if regenerate:context.user_data.pop('vod_result_choice',None)
+
+    async def runner_coro():
+        ui['phase']='running'
+        if not is_cancelled(context,operation_id):
+            await safe_edit_html(context,ui['chat'],ui['message'],_build_progress_card(meta,vod_url,0,0,False))
+        if is_cancelled(context,operation_id):
+            finish_download(context,operation_id)
+            if group is None:await _show_cancelled(context,ui['chat'],ui['message'],ui)
+            return
+        return await _runner(context=context,chat_id=ui['chat'],progress_message_id=ui['message'],
+                             vod_url=vod_url,vod_id=vod_id,fmt='html_online',user_id=owner,
+                             operation_id=operation_id,_telemetry=telemetry)
+
+    # A successful initial card from ANY participant may arm the same worker.
+    # pump() still refuses to run it until at least one active card is ready.
+    if group is not None and not joined:job.factory = runner_coro
+    startup_error = None
     try:
         queue_text = information_text((meta.get('channel') or '—')[:120],
                                       (meta.get('title') or 'Без названия')[:240],
                                       _fmt_len(meta.get('length_seconds')),meta.get('created_at'))
         queue_text += '\n🕒 В очереди — обработка начнётся автоматически'
-        initial_text = queue_text
-        if not modern:  # Compatibility for the old internal format chooser.
-            await q.message.edit_text(
-                text=initial_text, parse_mode='HTML', reply_markup=cancel_keyboard(context,waiting=True)
-            )
-            ui['message']=q.message.message_id
-        ui['last_text']=initial_text
-        # Deliver image/caption together before arming: activation cannot race this edit,
-        # and cancellation waits for delivery. Never look up another thumbnail.
-        from src.ui.result_preview import render_card, cleanup_card
-        from src.ui.card_images import item_image
-        image=item_image(dict(meta,thumbnail_preview_url=getattr(q.message,'thumbnail_url',None))
-                         if getattr(q.message,'thumbnail_url',None) is not None else meta)
-        if not job.cancelled:
-            shown = await render_card(context.bot,ui['chat'],queue_text,cancel_keyboard(context,waiting=True),image,
-                                      message_id=ui['message'],photo=ui['photo'],file_context=context)
-            if shown is None:raise RuntimeError('queue_media_delivery_unknown')
-            ui.update(photo=shown.photo,message=shown.message_id)
-            on_bind=getattr(q.message,'on_bind',None)
-            if on_bind:on_bind(shown)
-            await cleanup_card(context.bot,ui['chat'],shown)
-
+        text = group.latest if group is not None and group.latest is not None else queue_text
+        waiting = job.state == 'waiting'
+        async with asyncio.timeout(15):
+            if not modern:
+                await q.message.edit_text(text=text,parse_mode='HTML',reply_markup=cancel_keyboard(context,waiting=waiting))
+            ui['last_text']=text
+            image=item_image(dict(meta,thumbnail_preview_url=thumbnail) if thumbnail is not None else meta)
+            if not job.cancelled and (part is None or part.active):
+                shown=await render_card(context.bot,ui['chat'],text,cancel_keyboard(context,waiting=waiting),image,
+                                        message_id=ui['message'],photo=ui['photo'],file_context=context)
+                if shown is None:raise RuntimeError('queue_media_delivery_unknown')
+                ui.update(photo=shown.photo,message=shown.message_id)
+                on_bind=getattr(q.message,'on_bind',None)
+                if on_bind:on_bind(shown)
+                await cleanup_card(context.bot,ui['chat'],shown)
     except BaseException as exc:
-        telemetry.fail(exc)
+        startup_error=exc
+        if part is not None:
+            part.active=False
+            await group.detach(part)
+            # A failed UI must not cancel a worker owned by other participants.
+            if not any(p.active for p in group.members.values()) and not job.committing:
+                if job.state=='waiting':manager.drop(job,'error')
+                else:manager.cancel(job)
+        else:
+            telemetry.fail(exc)
+            manager.drop(job,'error')
         try:
-            await _restore_start_prompt(q.message,context,vod_id,regenerate, modern=modern)
+            await _restore_start_prompt(q.message,context,vod_id,regenerate,modern=modern,owner_id=owner)
         finally:
-            finish_download(context, operation_id)
-            manager.drop(job, 'error')
-            telemetry.finish()
-            if context.user_data.get('download_ui') is ui:
-                context.user_data.pop('download_ui', None)
-            job.delivery.set()
-        raise
-    job.delivery.set()
-    if job.cancelled:
-        if get_pending(root_context) is expected_pending:
-            clear_pending(root_context)
-        return True
-
-    async def runner_coro():
-        from src.workers.worker_progress import safe_edit_html
-        ui['phase']='running'
-        if not is_cancelled(context, operation_id):
-            await safe_edit_html(context, ui['chat'],ui['message'],
-                                 _build_progress_card(initial_meta or {}, vod_url, 0, 0, False))
-        if is_cancelled(context, operation_id):
-            finish_download(context, operation_id)
-            await _show_cancelled(context,ui['chat'],ui['message'],ui)
-            return
-        return await _runner(
-        context=context,
-        chat_id=q.message.chat_id,
-        progress_message_id=ui['message'],
-        vod_url=vod_url,
-        vod_id=vod_id,
-        fmt=fmt,
-        user_id=update.effective_user.id,
-        operation_id=operation_id,
-        _telemetry=telemetry,
-        )
-    try:
-        manager.arm(job, runner_coro)
-    except BaseException as exc:
-        telemetry.fail(exc)
+            manager.release_context(job,context)
+            if context.user_data.get('download_ui') is ui:context.user_data.pop('download_ui',None)
+    finally:
+        delivery.set()
+        if not joined:job.delivery.set()
+    if not job.cancelled and manager.jobs.get(job.id) is job and job.state=='waiting':
         try:
-            if modern or ui.get('photo'):
-                from src.ui.result_preview import finish_error_card
-                await finish_error_card(context,ui['chat'],ui['message'],
-                                        'Не удалось начать обработку. Выберите VOD заново.',ui)
-            else:
-                await _restore_start_prompt(q.message,context,vod_id,regenerate, modern=modern)
-        finally:
-            finish_download(context, operation_id)
-            manager.drop(job, 'error')
-            telemetry.finish()
-            if context.user_data.get('download_ui') is ui:
-                context.user_data.pop('download_ui', None)
-        raise
-
-    on_download = getattr(q.message, 'on_download', None)
-    if on_download:
-        try:
-            on_download()
-        except Exception:
-            ui['origin'] = None
-            logging.getLogger(__name__).warning('Download navigation context unavailable')
-    if get_pending(root_context) is expected_pending:
-        clear_pending(root_context)
+            manager.arm(job,job.factory if group is not None else runner_coro)
+        except BaseException as exc:
+            telemetry.fail(exc)
+            try:
+                if not modern and not ui.get('photo'):
+                    await _restore_start_prompt(q.message,context,vod_id,regenerate,modern=False,owner_id=owner)
+                    await manager._notify_start_failure(job,exclude=context)
+                else:await manager._notify_start_failure(job)
+            finally:
+                manager.drop(job,'error')
+            raise
+    if startup_error is not None:
+        if group is not None and group.members.get(owner) is part:
+            group.members.pop(owner)
+        raise startup_error
+    if not job.cancelled and (part is None or part.active):
+        on_download=getattr(q.message,'on_download',None)
+        if on_download:
+            try:on_download()
+            except Exception:
+                ui['origin']=None
+                logging.getLogger(__name__).warning('Download navigation context unavailable')
+    if get_pending(root_context) is expected_pending:clear_pending(root_context)
     return True
 
 
-async def _restore_start_prompt(message,context,vod_id,regenerate, *, modern=False):
+async def _restore_start_prompt(message,context,vod_id,regenerate, *, modern=False, owner_id):
     if modern:
         await message.edit_text('Не удалось начать обработку. Выберите VOD заново.')
         return
@@ -619,13 +672,21 @@ async def _restore_start_prompt(message,context,vod_id,regenerate, *, modern=Fal
         try:
             ready = results.get_ready_result(vod_id)
             if ready:
-                await _offer_ready(message,context,ready,edit=True)
+                await _offer_ready(message,context,ready,edit=True,owner_id=owner_id)
                 return
         except Exception:
             logging.getLogger(__name__).warning("Could not restore ready-result actions")
         set_pending(context,f"https://www.twitch.tv/videos/{vod_id}",vod_id)
         bind_pending_message(context, message)
     await _restore_format_prompt(message)
+
+
+async def _shared_error(group, text):
+    from src.ui.result_preview import finish_error_card
+    async def deliver(part):
+        ui=part.context.user_data.get('download_ui')
+        if ui:await finish_error_card(part.context,ui['chat'],ui['message'],text,ui)
+    await group.finish(deliver)
 
 
 @observe_operation
@@ -641,6 +702,8 @@ async def _runner(
 ):
     publication = None
     cancelled = False
+    job = context.user_data.get('_vod_job')
+    group = job.participants if job is not None else None
     ui = getattr(context, 'user_data', {}).get('download_ui')
     if ui and ui['operation'] != operation_id:
         ui = None
@@ -673,22 +736,46 @@ async def _runner(
                 # Cancellation linearizes before this fence or is declined.
                 job.committing = True
             cache_id = await run_blocking(publication.complete)
+            members = group.seal() if group is not None else None
             if config.HISTORY_ENABLED:
-                db.add_user_history(user_id, cache_id)
+                if members is None:
+                    db.add_user_history(user_id, cache_id)
+                else:
+                    for part in members:
+                        try:await run_blocking(db.add_user_history,part.owner,cache_id)
+                        except Exception:
+                            part.history_failed=True
+                            logging.getLogger(__name__).error('Participant history write failed')
 
         item = _make_item(meta, stats, vod_url, fmt)
         html_url = html_result_ref
 
-        if ui is not None:ui['phase']='ready'
-        await _edit_progress_message_with_card(
-            context=context,
-            chat_id=chat_id,
-            message_id=progress_message_id,
-            item=item,
-            html_url=html_url,
-            ready=dict(id=getattr(publication,'id',None), vod_id=vod_id), owner_id=user_id,
-            photo=bool(ui and ui.get('photo')),
-        )
+        if group is not None:
+            async def deliver(part):
+                pctx=part.context
+                record=pctx.user_data.get('download_ui')
+                if record is None:return
+                if part.history_failed:
+                    from src.ui.result_preview import finish_error_card
+                    await finish_error_card(pctx,record['chat'],record['message'],
+                                            'Не удалось сохранить историю результата. Повторите запрос позже.',record)
+                    return
+                record['phase']='ready'
+                await _edit_progress_message_with_card(pctx,record['chat'],record['message'],item,html_url,
+                    ready=dict(id=getattr(publication,'id',None),vod_id=vod_id),owner_id=part.owner,
+                    photo=record.get('photo',False))
+            await group.finish(deliver)
+        else:
+            if ui is not None:ui['phase']='ready'
+            await _edit_progress_message_with_card(
+                context=context,
+                chat_id=chat_id,
+                message_id=progress_message_id,
+                item=item,
+                html_url=html_url,
+                ready=dict(id=getattr(publication,'id',None), vod_id=vod_id), owner_id=user_id,
+                photo=bool(ui and ui.get('photo')),
+            )
 
     except RuntimeError as e:
         job = context.user_data.get('_vod_job')
@@ -698,14 +785,15 @@ async def _runner(
         await _record_generation_failure(publication,e)
         if str(e) == "CHAT_EMPTY":
             from src.ui.result_preview import finish_error_card
-            await finish_error_card(context,chat_id,progress_message_id,'У этого VOD нет чата.',ui)
+            if group is not None:await _shared_error(group,'У этого VOD нет чата.')
+            else:await finish_error_card(context,chat_id,progress_message_id,'У этого VOD нет чата.',ui)
             return
         if str(e) == CANCELLED_MESSAGE:
             cancelled = True
         else:
             from src.ui.result_preview import finish_error_card
-            await finish_error_card(context,chat_id,progress_message_id,
-                                    'Не удалось обработать чат VOD. Повторите попытку.',ui)
+            if group is not None:await _shared_error(group,'Не удалось обработать чат VOD. Повторите попытку.')
+            else:await finish_error_card(context,chat_id,progress_message_id,'Не удалось обработать чат VOD. Повторите попытку.',ui)
             raise
 
     except Exception as e:
@@ -724,11 +812,19 @@ async def _runner(
         else:
             error_text = "Не удалось обработать чат VOD. Повторите попытку."
         from src.ui.result_preview import finish_error_card
-        await finish_error_card(context,chat_id,progress_message_id,error_text,ui)
+        if group is not None:await _shared_error(group,error_text)
+        else:await finish_error_card(context,chat_id,progress_message_id,error_text,ui)
     except BaseException as exc:
         await _record_generation_failure(publication,exc)
         raise
     finally:
+        completing = ()
+        if group is not None:
+            # Detached members own their cancellation/failed-admission UI. Do not
+            # clear it underneath a concurrent restore when this worker finishes.
+            completing = tuple(p for p in group.members.values() if p.active or p.restore_after_close)
+            group.stop()
+            await group.drain()
         close_ok = False
         try:
             try:
@@ -740,13 +836,26 @@ async def _runner(
                 job = context.user_data.get('_vod_job')
                 if job is not None:
                     job.processing_done = close_ok
-            if not cancelled and ui is not None:
+                if group is not None:
+                    from .handlers_channel_vods import retire_download_selection
+                    for part in completing:
+                        if part.context is None:continue
+                        pctx=part.context
+                        record=pctx.user_data.get('download_ui')
+                        finish_download(pctx,operation_id)
+                        if record is not None:
+                            if close_ok and part.restore_after_close:
+                                await part.ready.wait()
+                                await _show_cancelled(pctx,record['chat'],record['message'],record)
+                            else:retire_download_selection(pctx,record)
+                            if pctx.user_data.get('download_ui') is record:pctx.user_data.pop('download_ui',None)
+            if group is None and not cancelled and ui is not None:
                 from .handlers_channel_vods import retire_download_selection
                 retire_download_selection(context, ui)
-            if cancelled and released:
+            if group is None and cancelled and released:
                 await _show_cancelled(context, chat_id, progress_message_id, ui)
         finally:
-            if ui is not None and context.user_data.get('download_ui') is ui:
+            if group is None and ui is not None and context.user_data.get('download_ui') is ui:
                 context.user_data.pop('download_ui', None)
 
 

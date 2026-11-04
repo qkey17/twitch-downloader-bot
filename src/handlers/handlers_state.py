@@ -29,7 +29,7 @@ def input_busy(context):
         context.user_data.get('_vod_job') is None and context.user_data.get('vod_jobs'))
 
 
-def is_globally_busy(context: ContextTypes.DEFAULT_TYPE) -> bool:
+def is_globally_busy(context: ContextTypes.DEFAULT_TYPE, vod_id=None) -> bool:
     manager = context.application.bot_data.get('tdb_vod_scheduler')
     legacy = context.application.bot_data.get(_GLOBAL_OPERATION_KEY)
     from src.vod_scheduler import INPUT_TICKET
@@ -37,7 +37,7 @@ def is_globally_busy(context: ContextTypes.DEFAULT_TYPE) -> bool:
     owns_place = ticket is not None and ticket[0] is manager and ticket[1]
     return (admission_closed(context.application)
             or (legacy is not None and (manager is None or legacy not in manager.jobs))
-            or (manager is not None and manager.full and not owns_place))
+            or (manager is not None and manager.full and not owns_place and not manager.joinable(vod_id)))
 
 
 def set_busy(context: ContextTypes.DEFAULT_TYPE, v: bool):

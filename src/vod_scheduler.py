@@ -25,6 +25,8 @@ class Job:
     committing: bool = False
     outcome: str = 'success'
     processing_done: bool = False
+    compatibility: object = None
+    participants: object = None
 
 
 class Scheduler:
@@ -36,6 +38,7 @@ class Scheduler:
         self.waker = None
         self.close_task = None
         self.preparing = 0
+        self.join_preparing = 0
         self.notifications = set()
         self.admission = admission
 
@@ -47,20 +50,29 @@ class Scheduler:
     def full(self):
         return len(self.queue) + self.preparing >= QUEUE_LIMIT
 
-    def prepare_input(self):
+    def joinable(self, vod):
+        return any(j.vod == vod and j.participants is not None and j.participants.accepting
+                   and not j.cancelled and not j.processing_done for j in self.jobs.values())
+
+    def prepare_input(self, vod=None):
         from .maintenance import admission_closed
-        if self.closing or self.full or admission_closed(self.app):
+        if self.closing or admission_closed(self.app):
             return None
-        ticket = [self, True]
-        self.preparing += 1
+        joining = self.joinable(vod)
+        if (self.join_preparing >= QUEUE_LIMIT if joining else self.full):
+            return None
+        ticket = [self, True, joining]
+        if joining:self.join_preparing += 1
+        else:self.preparing += 1
         return ticket
 
     def release_input(self, ticket):
         if ticket[1]:
             ticket[1] = False
-            self.preparing -= 1
+            if len(ticket)>2 and ticket[2]:self.join_preparing -= 1
+            else:self.preparing -= 1
 
-    def reserve(self, owner, vod):
+    def reserve(self, owner, vod, *, compatibility=None):
         ticket = INPUT_TICKET.get()
         if ticket is not None and ticket[0] is self:
             self.release_input(ticket)  # Transfer the bounded input place to this job.
@@ -74,11 +86,23 @@ class Scheduler:
         legacy = self.app.bot_data.get('vod_global_operation')
         if legacy is not None and legacy not in self.jobs:
             return None, 'Сейчас обрабатывается чат VOD. Повторите попытку позже.'
-        if any(j.vod == vod and not j.processing_done for j in self.jobs.values()):
+        existing = next((j for j in self.jobs.values() if j.vod == vod and not j.processing_done), None)
+        if existing is not None:
+            group = existing.participants
+            if (compatibility is not None and compatibility == existing.compatibility
+                    and group is not None and group.accepting and not existing.cancelled):
+                if group.add(owner) is not None:
+                    return existing, None
+                return None, 'Лимит участников обработки достигнут или вы уже участвуете.'
             return None, 'Этот VOD уже обрабатывается или ожидает в очереди.'
         if self.full:
             return None, 'Очередь заполнена. Повторите запрос позже.'
         job = Job(uuid.uuid4().hex, owner, vod)
+        job.compatibility = compatibility
+        if compatibility is not None:
+            from .vod_participants import Participants
+            job.participants = Participants()
+            job.participants.add(owner)
         self.jobs[job.id] = job
         self.queue.append(job)
         return job, None
@@ -97,7 +121,8 @@ class Scheduler:
             if admission_closed(self.app) or (legacy is not None and legacy not in self.jobs):
                 break
             job = self.queue[0]
-            if job.factory is None:
+            if (job.factory is None or job.participants is not None
+                    and not any(p.active and p.ready.is_set() for p in job.participants.members.values())):
                 break  # Initial progress delivery is still owned by admission.
             with (self.admission() if self.admission else start_guard()) as allowed:
                 if not allowed:
@@ -131,13 +156,18 @@ class Scheduler:
         finally:
             self.waker = None
 
-    async def _notify_start_failure(self, job):
-        ui = job.context.user_data.get('download_ui')
-        if ui is None:
-            return
+    async def _notify_start_failure(self, job, *, exclude=None):
+        contexts = [job.context] if job.participants is None else [p.context for p in job.participants.members.values()]
         from .ui.result_preview import finish_error_card
-        await finish_error_card(job.context,ui['chat'],ui['message'],
-                                'Не удалось начать обработку. Выберите VOD заново.',ui)
+        async def notify(context):
+            ui = context.user_data.get('download_ui') if context is not None else None
+            if ui:
+                try:
+                    async with asyncio.timeout(20):
+                        await finish_error_card(context,ui['chat'],ui['message'],
+                                                'Не удалось начать обработку. Выберите VOD заново.',ui)
+                except Exception:logging.getLogger(__name__).warning('Startup card delivery failed')
+        await asyncio.gather(*(notify(context) for context in contexts if context is not exclude))
 
     async def _run(self, job):
         try:
@@ -174,16 +204,37 @@ class Scheduler:
                 self.app.bot_data['vod_global_operation'] = active.id
         if job in self.queue:
             self.queue.remove(job)
-        if job.context is not None:
-            from .handlers.handlers_state import finish_download
-            finish_download(job.context, job.id)
-            root = job.context.shared_user_data
-            root.get('vod_jobs', {}).pop(job.id, None)
-            root['vod_busy'] = bool(root.get('vod_jobs'))
-            ui = root.get('download_ui')
-            if ui and ui.get('operation') == job.id:
-                root.pop('download_ui', None)
-                root.pop('vod_active_operation', None)
+        contexts = [job.context] if job.participants is None else [p.context for p in job.participants.members.values()]
+        if job.participants is not None:
+            job.participants.stop()
+            if any(p.task is not None and not p.task.done() for p in job.participants.members.values()):
+                drain = asyncio.create_task(job.participants.drain())
+                self.notifications.add(drain)
+                drain.add_done_callback(self.notifications.discard)
+        for context in contexts:
+            if context is not None:
+                self.release_context(job, context)
+
+    def release_context(self, job, context):
+        from .handlers.handlers_state import finish_download
+        finish_download(context, job.id)
+        root = context.shared_user_data
+        root.get('vod_jobs', {}).pop(job.id, None)
+        root['vod_busy'] = bool(root.get('vod_jobs'))
+        ui = root.get('download_ui')
+        if ui and ui.get('operation') == job.id:
+            root.pop('download_ui', None)
+            root.pop('vod_active_operation', None)
+
+    def cancel_participant(self, job, owner):
+        group = job.participants
+        part = group.members.get(owner) if group is not None else None
+        if self.jobs.get(job.id) is not job or part is None or not part.active or job.committing:
+            return None
+        part.active = False
+        if not any(p.active for p in group.members.values()):
+            self.cancel(job)
+        return part
 
     def cancel(self, job):
         if self.jobs.get(job.id) is not job or job.committing or job.cancelled:
@@ -225,6 +276,9 @@ class Scheduler:
             tasks.append(self.waker)
         tasks.extend(self.notifications)
         await asyncio.gather(*tasks, return_exceptions=True)
+        # A never-entered worker's done callback can register consumer drainage.
+        while self.notifications:
+            await asyncio.gather(*tuple(self.notifications), return_exceptions=True)
 
 
 def scheduler(app):

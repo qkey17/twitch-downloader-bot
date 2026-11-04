@@ -14,15 +14,18 @@ from src.live_capture import WARNING, captured_live
 
 def cancel_keyboard(context, *, waiting=False):
     record = context.user_data.get('download_ui')
-    data = CB_PENDING_CANCEL + ':' + record['operation'] if record else CB_PENDING_CANCEL
+    data = CB_PENDING_CANCEL + ':' + record.get('cancel_token',record['operation']) if record else CB_PENDING_CANCEL
     return InlineKeyboardMarkup([[InlineKeyboardButton('Отмена' if waiting else CANCEL, callback_data=data)]])
 
 
-async def safe_edit_html(context, chat_id: int, message_id: int, text: str):
+async def safe_edit_html(context, chat_id: int, message_id: int, text: str, *, _local=False):
     from contextlib import nullcontext
     from src.ui.result_preview import edit_surface
     record = context.user_data.get('download_ui')
     job = context.user_data.get('_vod_job')
+    if job is not None and job.participants is not None and not _local:
+        job.participants.progress(text)
+        return
     owned = record and (record['chat'], record['message']) == (chat_id, message_id)
     def current():
         if record is None:

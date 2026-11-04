@@ -126,8 +126,17 @@ class ChannelSelectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(selected_options, direct_options)
         self.assertEqual('123456789', context.user_data['vod_pending']['vod_id'])
 
+    def offered_result(self):
+        return dict(self.ready_result(), id='a'*32)
+
+    async def open_offer(self, prompt, keyboard):
+        from src.handlers.handlers_chat import ready_open_callback
+        prompt.from_user=SimpleNamespace(id=self.context.bot.id)
+        prompt.reply_markup=keyboard
+        await ready_open_callback(self.update(keyboard.inline_keyboard[0][0].callback_data, prompt), self.context)
+
     async def test_ready_html_offers_existing_actions_without_metadata_or_download(self):
-        self.ready.return_value = self.ready_result()
+        self.ready.return_value = self.offered_result()
         await self.select(await self.view())
         prompt, _, kwargs = self.messages[-1]
         keyboard = kwargs['reply_markup']
@@ -137,13 +146,13 @@ class ChannelSelectionTests(unittest.IsolatedAsyncioTestCase):
         self.metadata.assert_not_awaited()
         self.runner.assert_not_awaited()
         self.app.create_task.assert_not_called()
-        await vod.vod_result_callback(self.update(keyboard.inline_keyboard[0][0].callback_data, prompt), self.context)
-        self.context.bot.send_message.assert_awaited_once()
+        await self.open_offer(prompt, keyboard)
+        self.assertEqual(prompt.message_id,self.context.bot.edit_message_text.await_args.kwargs['message_id'])
         self.assertEqual(self.ready_result()['html_ref'],
-                         self.context.bot.send_message.await_args.kwargs['reply_markup'].inline_keyboard[0][0].url)
+                         self.context.bot.edit_message_text.await_args.kwargs['reply_markup'].inline_keyboard[0][0].url)
 
     async def test_regeneration_uses_existing_handler_only_after_explicit_confirmation(self):
-        self.ready.return_value = self.ready_result()
+        self.ready.return_value = self.offered_result()
         await self.select(await self.view())
         prompt, _, options = self.messages[-1]
         self.app.create_task.assert_not_called()
@@ -203,7 +212,7 @@ class ChannelSelectionTests(unittest.IsolatedAsyncioTestCase):
         from src.ui.card_context import for_message
         set_pending(self.context,'https://www.twitch.tv/videos/999','999');bind_pending_message(self.context,self.message(90))
         old=self.context.user_data['vod_pending'];old_state=for_message(self.context,7,10,90)
-        for ready in (None,self.ready_result()):
+        for ready in (None,self.offered_result()):
             self.ready.return_value=ready;result=await self.select(await self.view())
             self.assertIsInstance(result[1],VodSelection)
             self.assertIs(old,old_state.user_data['vod_pending']);self.assertEqual('999',old['vod_id'])
@@ -227,12 +236,12 @@ class ChannelSelectionTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn('Сейчас обрабатывается чат VOD', update.callback_query.message.reply_text.await_args.args[0])
             self.assertNotIn('vod_pending', self.context.user_data)
             self.metadata.assert_not_awaited()
-            self.ready.return_value = self.ready_result()
+            self.ready.return_value = self.offered_result()
             await self.select(await self.view())
             prompt, _, options = self.messages[-1]
             keyboard = options['reply_markup']
-            await vod.vod_result_callback(self.update(keyboard.inline_keyboard[0][0].callback_data, prompt), self.context)
-            self.context.bot.send_message.assert_awaited_once()
+            await self.open_offer(prompt, keyboard)
+            self.assertEqual(prompt.message_id,self.context.bot.edit_message_text.await_args.kwargs['message_id'])
             choice = self.context.user_data['vod_result_choice']
             await vod.vod_result_callback(self.update(keyboard.inline_keyboard[1][0].callback_data, prompt), self.context)
             self.assertIs(choice, self.context.user_data['vod_result_choice'])
