@@ -32,6 +32,11 @@ async def _show_history(context, state, items, page, total_items, request):
                                          list(nav.inline_keyboard if nav else ()))
     else:
         text, keyboard = 'История пуста.', None
+    if item:
+        from src.ui.live_status import observe
+        item = dict(item, live_state=await observe(context,str(item.get('vod_id') or str(item.get('vod_url') or '').rsplit('/',1)[-1])))
+        selected_cards, _ = build_history_page([item],page=0,per_page=1)
+        text = selected_cards[0][0]
     if item.get('fmt') == 'html_online' and state['owner'] is not None:
         from src.ui.html_file_action import keyboard as file_keyboard, lookup
         ready = lookup(item.get('vod_id'))

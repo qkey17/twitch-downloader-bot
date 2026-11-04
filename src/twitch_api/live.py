@@ -40,3 +40,10 @@ async def current_stream(session, user_id, *, fresh=False):
     while len(_cache) > 64:
         _cache.popitem(last=False)
     return value
+
+
+async def stream_observation(session, user_id):
+    """Expose the existing observation time without extending cached LIVE TTL."""
+    value = await current_stream(session, user_id)
+    cached = _cache.get((id(session), user_id))
+    return value, cached[1] if cached and cached[0] is session else time.monotonic()

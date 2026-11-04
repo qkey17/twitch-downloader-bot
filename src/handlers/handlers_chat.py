@@ -14,6 +14,7 @@ from src.ui.callbacks import CallbackReply
 from src.ui.ui_labels import VOD_BUSY_NOTICE, STALE_ACTION_NOTICE, ACTION_DONE_NOTICE, PROCESSING_NOTICE, ACTION_PENDING_NOTICE
 from src.ui.ui_labels import ready_chat_label, RECREATE_CHAT, CREATE_CHAT, BACK_TO_LIST, READY_UNAVAILABLE
 from src.ui.ui_history import ready_offer_text
+from src.ui.live_status import lines
 from src.ui.result_preview import render_card, resolve_preview, caption_fits, cleanup_card, CardMessage
 
 
@@ -68,14 +69,15 @@ async def prepare_chat(message, context, user_id, vod_id, *, is_current=None, ed
         preparing = False
 
 
-def direct_information_text(meta, vod_id):
+def direct_information_text(meta, vod_id, *, live_state=None):
     from .handlers_vod_info import information_text
     from src.ui.ui_formatters import _fmt_len
     def known(key, limit):
         value = meta.get(key)
         return value[:limit] if isinstance(value, str) else None
     text = information_text(known('channel', 120), known('title', 1200),
-                            _fmt_len(meta.get('length_seconds')), known('created_at', 64))
+                            _fmt_len(meta.get('length_seconds')), known('created_at', 64),
+                            is_live=bool(lines({'live_state':live_state})))
     if not known('title', 1200):
         text += f'\nVOD {vod_id}\nhttps://www.twitch.tv/videos/{vod_id}'
     return text
@@ -170,7 +172,9 @@ async def offer_chat(message, context, owner, ready, current, back, on_start=Non
     image_meta=dict(ready['meta'],is_live=choice['image_live'] or ready['meta'].get('is_live') is True)
     if choice['thumbnail_url'] is not None:image_meta['thumbnail_preview_url']=choice['thumbnail_url']
     initial_image=item_image(image_meta)
-    text = direct_information_text(ready['meta'], ready['vod_id']) if create else ready_offer_text(ready)
+    from src.ui.live_status import observe
+    live_state = await observe(context, ready['vod_id'])
+    text = direct_information_text(ready['meta'], ready['vod_id'], live_state=live_state) if create else ready_offer_text(dict(ready, live_state=live_state))
     keyboard = InlineKeyboardMarkup(rows)
     choice.update(text=text, keyboard=keyboard)
     def offer_current():

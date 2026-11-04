@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 import html
 import re
 import time
-from src.twitch_api.live import current_stream, match_stream, TTL
+from src.twitch_api.live import stream_observation, match_stream, TTL
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from src.channel_browser import BrowseView, ChannelBrowser, VodSelection
@@ -79,14 +79,14 @@ class VodListBrowser(ChannelBrowser):
                         page=session.position // 5, page_count=(len(session.vods)+4)//5 if complete else 0,
                         grid=getattr(session, 'grid', False), group=getattr(session, 'group', 0),
                         live_vod_ids=frozenset(v.id for v in session.vods
-                            if time.monotonic()-getattr(session, 'live_checked_at', 0) < TTL
+                            if 0 <= time.monotonic()-getattr(session, 'live_checked_at', 0) < TTL
                             and match_stream(v.stream_id, getattr(session, 'live_stream_id', None)) is True))
 
     async def _refresh_live(self, http, session):
-        stream_id = await current_stream(http, session.channel.id)
+        stream_id, checked_at = await stream_observation(http, session.channel.id)
         if self._live(session):
             session.live_stream_id = stream_id
-            session.live_checked_at = time.monotonic()
+            session.live_checked_at = checked_at
 
     async def handle_callback(self, http, owner, data, chat, message):
         match = _CALLBACK.fullmatch(data or '')

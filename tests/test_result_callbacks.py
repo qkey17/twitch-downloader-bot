@@ -79,10 +79,10 @@ class ResultCallbacksTestCase(unittest.IsolatedAsyncioTestCase):
                                     edit_message_media=AsyncMock(),edit_message_caption=AsyncMock()))
         return update,context
 
-    async def choose(self,update,context):
+    async def choose(self,update,context,label='Получить готовый чат'):
         await handlers_vod.vod_link_entry(update,context)
         keyboard=update.message.reply_text.await_args.kwargs['reply_markup']
-        self.assertEqual(['Получить готовый чат','Обработать чат заново'],
+        self.assertEqual([label,'Обработать чат заново'],
                          [row[0].text for row in keyboard.inline_keyboard])
         self.offer_number += 1
         update.callback_query.message = SimpleNamespace(chat_id=update.message.chat_id,
@@ -114,6 +114,8 @@ class ResultCallbacksTestCase(unittest.IsolatedAsyncioTestCase):
     def final_card(self, context, expected):
         call = context.bot.edit_message_media.await_args
         self.assertIsNotNone(call)
+        from src.ui.live_status import WARNING
+        self.assertEqual(expected.meta.get('captured_during_live') is True, WARNING in call.kwargs['media'].caption)
         if expected.mode == 'local':
             self.assertIn(expected.filename, call.kwargs['media'].caption)
         buttons = [b for row in call.kwargs['reply_markup'].inline_keyboard for b in row]
@@ -170,6 +172,7 @@ class ResultCallbacksTestCase(unittest.IsolatedAsyncioTestCase):
 
     def public_ready(self, text='old'):
         plan=self.plan(mode='public')
+        plan.meta['captured_during_live'] = text=='old'
         self.publish(plan,text)
         plan.complete()
         plan.close()
@@ -183,7 +186,7 @@ class ResultCallbacksTestCase(unittest.IsolatedAsyncioTestCase):
             with self.subTest(order=order):
                 old=self.public_ready()
                 first,context=self.request()
-                open_a,_=await self.choose(first,context)
+                open_a,_=await self.choose(first,context,label='Получить готовый неполный чат')
                 latest=self.public_ready('latest')
                 second,_=self.request()
                 open_b,_=await self.choose(second,context)

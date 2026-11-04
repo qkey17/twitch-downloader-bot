@@ -76,7 +76,9 @@ async def download_and_send(
         safe_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         base_stem = f"vod_{vod_id}_{safe_ts}_{fmt}"
 
-        progress = make_progress_updater(context, chat_id, progress_message_id, meta_dict, vod_url, fmt)
+        from src.ui.live_status import from_metadata
+        progress = make_progress_updater(context, chat_id, progress_message_id,
+                                         dict(meta_dict, live_state=from_metadata(meta)), vod_url, fmt)
 
         last_progress_time = time.monotonic()
         progress_interval_s = 0.5
