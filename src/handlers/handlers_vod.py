@@ -409,8 +409,14 @@ async def pending_cancel_callback(update: Update, context: ContextTypes.DEFAULT_
         from src.vod_scheduler import scheduler
         manager = scheduler(context.application)
         if group is not None:
+            if job.committing:return
+            try:cancel_ready=results.get_ready_result(job.vod)
+            except Exception:
+                cancel_ready=None
+                logging.getLogger(__name__).warning('Cancel restore metadata unavailable')
             part = manager.cancel_participant(job,update.effective_user.id)
             if part is None:return
+            record['cancel_ready']=cancel_ready
             await group.detach(part)
             if job.cancelled and job.state=='running':
                 part.restore_after_close=True
@@ -635,7 +641,10 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
         except BaseException as exc:
             telemetry.fail(exc)
             try:
-                await manager._notify_start_failure(job)
+                if not modern and not ui.get('photo'):
+                    await _restore_start_prompt(q.message,context,vod_id,regenerate,modern=False)
+                    await manager._notify_start_failure(job,exclude=context)
+                else:await manager._notify_start_failure(job)
             finally:
                 manager.drop(job,'error')
             raise
@@ -808,7 +817,11 @@ async def _runner(
         await _record_generation_failure(publication,exc)
         raise
     finally:
+        completing = ()
         if group is not None:
+            # Detached members own their cancellation/failed-admission UI. Do not
+            # clear it underneath a concurrent restore when this worker finishes.
+            completing = tuple(p for p in group.members.values() if p.active or p.restore_after_close)
             group.stop()
             await group.drain()
         close_ok = False
@@ -824,7 +837,7 @@ async def _runner(
                     job.processing_done = close_ok
                 if group is not None:
                     from .handlers_channel_vods import retire_download_selection
-                    for part in group.members.values():
+                    for part in completing:
                         if part.context is None:continue
                         pctx=part.context
                         record=pctx.user_data.get('download_ui')
@@ -841,7 +854,7 @@ async def _runner(
             if group is None and cancelled and released:
                 await _show_cancelled(context, chat_id, progress_message_id, ui)
         finally:
-            if ui is not None and context.user_data.get('download_ui') is ui:
+            if group is None and ui is not None and context.user_data.get('download_ui') is ui:
                 context.user_data.pop('download_ui', None)
 
 

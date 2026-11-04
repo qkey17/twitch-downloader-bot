@@ -109,6 +109,25 @@ class SharedCards(unittest.IsolatedAsyncioTestCase):
         # Old cancellation cannot detach a later participation on the same card/job.
         self.assertNotIn('download_ui',a.user_data)
 
+    async def test_worker_completion_does_not_invalidate_detached_members_cancel_restore(self):
+        a,ma=await self.request();job=await self.entered();await self.request(8)
+        entered=asyncio.Event();release=asyncio.Event();original=chat.restore_cancelled_card
+        async def restore(context,record):
+            entered.set();await release.wait()
+            self.assertIs(record,context.user_data.get('download_ui'))
+            return await original(context,record)
+        with patch.object(chat,'restore_cancelled_card',restore):
+            cancelling=asyncio.create_task(self.cancel(7,ma))
+            try:
+                await asyncio.wait_for(entered.wait(),2)
+                await self.finish(job)
+                release.set();await cancelling
+                self.assertIsNone(a.user_data.get('download_ui'))
+                self.assertNotIn(self.publications[0].ref,str(ma.reply_markup))
+                self.assertIn('Обработать чат',str(ma.reply_markup))
+            finally:
+                release.set();await asyncio.gather(cancelling,return_exceptions=True)
+
     async def test_join_waiting_job_does_not_consume_queue_and_last_waiter_never_runs(self):
         self.app.bot_data[GATE_KEY]='hold'
         self.app.bot_data.pop(GATE_KEY)

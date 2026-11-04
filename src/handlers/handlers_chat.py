@@ -83,7 +83,7 @@ def direct_information_text(meta, vod_id):
 async def restore_cancelled_card(context, record):
     """Restore the card's own VOD; navigation cache is optional, never authority."""
     if context.user_data.get('download_ui') is not record or is_busy(context):return False
-    ready = vod.results.get_ready_result(record['vod_id'])
+    ready = record['cancel_ready'] if 'cancel_ready' in record else vod.results.get_ready_result(record['vod_id'])
     meta = dict(record.get('meta') or {})
     if ready:
         ready = dict(ready,meta=meta | {k:v for k,v in ready.get('meta',{}).items() if v is not None and v!=''})

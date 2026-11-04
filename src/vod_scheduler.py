@@ -156,7 +156,7 @@ class Scheduler:
         finally:
             self.waker = None
 
-    async def _notify_start_failure(self, job):
+    async def _notify_start_failure(self, job, *, exclude=None):
         contexts = [job.context] if job.participants is None else [p.context for p in job.participants.members.values()]
         from .ui.result_preview import finish_error_card
         async def notify(context):
@@ -167,7 +167,7 @@ class Scheduler:
                         await finish_error_card(context,ui['chat'],ui['message'],
                                                 'Не удалось начать обработку. Выберите VOD заново.',ui)
                 except Exception:logging.getLogger(__name__).warning('Startup card delivery failed')
-        await asyncio.gather(*(notify(context) for context in contexts))
+        await asyncio.gather(*(notify(context) for context in contexts if context is not exclude))
 
     async def _run(self, job):
         try:

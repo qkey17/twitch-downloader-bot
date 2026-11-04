@@ -125,7 +125,7 @@ class TaskLifecycleTestCase(unittest.IsolatedAsyncioTestCase):
         start_call = message.edit_text.await_args_list[0].kwargs
         self.assertIn("🕒 В очереди — обработка начнётся автоматически", start_call["text"])
         cancel_button = start_call["reply_markup"].inline_keyboard[0][0]
-        self.assertEqual(handlers_vod.CB_PENDING_CANCEL + ":" + context.user_data["vod_active_operation"], cancel_button.callback_data)
+        self.assertEqual(handlers_vod.CB_PENDING_CANCEL + ":" + context.user_data["download_ui"].get("cancel_token",context.user_data["vod_active_operation"]), cancel_button.callback_data)
         finish_download(context, context.user_data["vod_active_operation"])
 
     async def test_runner_cleans_state_after_success_and_error(self):
