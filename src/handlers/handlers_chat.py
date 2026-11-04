@@ -388,7 +388,23 @@ async def legacy_open_callback(update, context):
     if not match or q.message is None:
         await reply.send(STALE_ACTION_NOTICE)
         return
-    key = (update.effective_user.id, q.message.chat_id, q.message.message_id, match[1])
+    await _open_selected(update, context, match[1])
+
+
+@callback_context
+async def ready_open_callback(update, context):
+    from src.ui.ready_open_action import selection
+    selected = selection(update, context)
+    if selected is None:
+        await CallbackReply(update.callback_query).send(STALE_ACTION_NOTICE)
+        return
+    await _open_selected(update, context, *selected)
+
+
+async def _open_selected(update, context, vod_id, generation=None):
+    q = update.callback_query
+    reply = CallbackReply(q)
+    key = (update.effective_user.id, q.message.chat_id, q.message.message_id, generation or vod_id)
     active = context.user_data.get('download_ui')
     if active and (active['chat'], active['message']) == key[1:3]:
         await reply.send(STALE_ACTION_NOTICE)
@@ -397,7 +413,7 @@ async def legacy_open_callback(update, context):
     if old and old['key'] == key and not pending_expired(old):
         await reply.send(ACTION_DONE_NOTICE if old['done'] else ACTION_PENDING_NOTICE if old.get('pending') else STALE_ACTION_NOTICE)
         return
-    if not vod.results.get_ready_result(match[1]):
+    if not vod.ready_generation(vod_id, generation):
         await reply.send(READY_UNAVAILABLE)
         return
     record = dict(key=key, created_at=time.time(), done=False, pending=True)
@@ -407,7 +423,7 @@ async def legacy_open_callback(update, context):
             context.user_data.pop('legacy_open', None)
         return
     try:
-        shown = await show_ready(q.message, context, update.effective_user.id, match[1],
+        shown = await show_ready(q.message, context, update.effective_user.id, vod_id, generation=generation,
                          current=lambda: context.user_data.get('legacy_open') is record)
         record['done'] = bool(shown)
     finally:

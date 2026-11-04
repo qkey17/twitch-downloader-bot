@@ -33,12 +33,13 @@ class DirectLabels(unittest.IsolatedAsyncioTestCase):
                 ready={'id':'a'*32,'vod_id':'123456789','meta':{'is_live':not bool(flag)},'stats':{}}
                 if flag is not None:ready['meta']['captured_during_live']=flag
                 message=SimpleNamespace(chat_id=5,message_id=6,reply_text=AsyncMock())
-                context=SimpleNamespace(user_data={},bot=SimpleNamespace(edit_message_text=AsyncMock()))
-                await _offer_ready(message,context,ready,edit=edit)
+                context=SimpleNamespace(user_data={},bot=SimpleNamespace(token='123:synthetic-key',edit_message_text=AsyncMock()))
+                await _offer_ready(message,context,ready,edit=edit,owner_id=7)
                 args=context.bot.edit_message_text.await_args if edit else message.reply_text.await_args
                 rows=args.kwargs['reply_markup'].inline_keyboard
                 self.assertEqual(expected,rows[0][0].text)
-                self.assertEqual('ui:result:open:123456789',rows[0][0].callback_data)
+                self.assertTrue(rows[0][0].callback_data.startswith('ui:ready:1'))
+                self.assertEqual(61,len(rows[0][0].callback_data.encode()))
                 self.assertEqual('Обработать чат заново',rows[1][0].text)
                 nonce=context.user_data['vod_result_choice']['nonce']
                 self.assertEqual('ui:result:regen:123456789:'+nonce,rows[1][0].callback_data)

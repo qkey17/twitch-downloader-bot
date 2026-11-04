@@ -183,13 +183,15 @@ def ready_generation(vod_id, generation=None):
         return None
 
 
-async def _offer_ready(message,context,result,edit=False):
+async def _offer_ready(message,context,result,edit=False, *, owner_id):
     vod_id = result["vod_id"]
     nonce = secrets.token_hex(8)
     context.user_data["vod_result_choice"] = {"vod_id":vod_id,"nonce":nonce,"created_at":time.time(),"generation":result.get("id")}
+    from src.ui.ready_open_action import action
+    open_action = action(context, owner_id, message.chat_id, result)
     text = ready_offer_text(result)
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(ready_chat_label(result),callback_data=f"ui:result:open:{vod_id}")],
+        [InlineKeyboardButton(ready_chat_label(result),callback_data=open_action)],
         [InlineKeyboardButton(RECREATE_CHAT,callback_data=f"ui:result:regen:{vod_id}:{nonce}")],
     ])
     if edit:
@@ -210,8 +212,7 @@ async def vod_result_callback(update,context):
     pending = get_pending(context)
     different_pending = pending and not pending_expired(pending) and pending['vod_id'] != vod_id
     if action == 'open':
-        choice=context.user_data.get('vod_result_choice',{})
-        ready = ready_generation(vod_id,choice.get('generation') if choice.get('vod_id')==vod_id else None)
+        ready = results.get_ready_result(vod_id)
         if ready:
             if config.HISTORY_ENABLED and ready['cache_id'] is not None:
                 db.add_user_history(update.effective_user.id,ready['cache_id'])
@@ -244,7 +245,7 @@ async def vod_result_callback(update,context):
         await q.message.reply_text("Действие устарело. Выберите VOD заново.")
         ready = results.get_ready_result(vod_id)
         if ready:
-            await _offer_ready(q.message,context,ready)
+            await _offer_ready(q.message,context,ready,owner_id=update.effective_user.id)
         return
     await _start_download(update,context,vod_id,regenerate=True)
 
@@ -290,7 +291,7 @@ async def prepare_vod_choice(message, context, user_id, vod_id, *, is_current=No
             return 'ready'
         if config.HISTORY_ENABLED and ready['cache_id'] is not None:
             db.add_user_history(user_id,ready['cache_id'])
-        await _offer_ready(message,context,ready)
+        await _offer_ready(message,context,ready,owner_id=user_id)
         return 'ready'
     if ready_only:
         await message.reply_text(READY_UNAVAILABLE)
@@ -350,7 +351,7 @@ async def prepare_vod_choice(message, context, user_id, vod_id, *, is_current=No
             else:
                 if config.HISTORY_ENABLED and ready['cache_id'] is not None:
                     db.add_user_history(user_id,ready['cache_id'])
-                await _offer_ready(message,context,ready)
+                await _offer_ready(message,context,ready,owner_id=user_id)
             return 'ready'
         if immediate:
             from types import SimpleNamespace
@@ -522,7 +523,7 @@ async def vod_format_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         clear_pending(context)
         if config.HISTORY_ENABLED and ready['cache_id'] is not None:
             db.add_user_history(update.effective_user.id,ready['cache_id'])
-        await _offer_ready(q.message,context,ready,edit=True)
+        await _offer_ready(q.message,context,ready,edit=True,owner_id=update.effective_user.id)
         return
     await _start_download(update,context,vod_id)
 
@@ -628,7 +629,7 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
             telemetry.fail(exc)
             manager.drop(job,'error')
         try:
-            await _restore_start_prompt(q.message,context,vod_id,regenerate,modern=modern)
+            await _restore_start_prompt(q.message,context,vod_id,regenerate,modern=modern,owner_id=owner)
         finally:
             manager.release_context(job,context)
             if context.user_data.get('download_ui') is ui:context.user_data.pop('download_ui',None)
@@ -642,7 +643,7 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
             telemetry.fail(exc)
             try:
                 if not modern and not ui.get('photo'):
-                    await _restore_start_prompt(q.message,context,vod_id,regenerate,modern=False)
+                    await _restore_start_prompt(q.message,context,vod_id,regenerate,modern=False,owner_id=owner)
                     await manager._notify_start_failure(job,exclude=context)
                 else:await manager._notify_start_failure(job)
             finally:
@@ -663,7 +664,7 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
     return True
 
 
-async def _restore_start_prompt(message,context,vod_id,regenerate, *, modern=False):
+async def _restore_start_prompt(message,context,vod_id,regenerate, *, modern=False, owner_id):
     if modern:
         await message.edit_text('Не удалось начать обработку. Выберите VOD заново.')
         return
@@ -671,7 +672,7 @@ async def _restore_start_prompt(message,context,vod_id,regenerate, *, modern=Fal
         try:
             ready = results.get_ready_result(vod_id)
             if ready:
-                await _offer_ready(message,context,ready,edit=True)
+                await _offer_ready(message,context,ready,edit=True,owner_id=owner_id)
                 return
         except Exception:
             logging.getLogger(__name__).warning("Could not restore ready-result actions")
