@@ -179,7 +179,8 @@ class ViewerPreviewLayoutTests(unittest.TestCase):
         label=self.properties('.scrub-label')
         self.assertEqual('center',label['justify-content'])
         self.assertEqual('nowrap',label['white-space'])
-        self.assertIn('--scrub-progress',self.properties('.scrub-label-on-fill')['clip-path'])
+        self.assertIn('--scrub-label-edge',self.properties('.scrub-label-on-fill')['clip-path'])
+        self.assertIn('--scrub-label-edge',label['clip-path'])
         self.assertNotEqual(label['color'],self.properties('.scrub-label-on-fill')['color'])
         self.assertEqual('none',self.properties('.scrub-thumb')['pointer-events'])
         def luminance(color):
@@ -217,10 +218,12 @@ class ViewerPreviewLayoutTests(unittest.TestCase):
         self.assertEqual('#a0a3b7',self.properties('.scrub-fill')['background'])
         self.assertEqual('hidden',self.properties('.scrub-track')['overflow'])
         self.assertNotIn('border',self.properties('.scrub-track'))
-        self.assertEqual('18px',self.properties('.scrub-thumb')['width'])
-        self.assertIn('linear-gradient',self.properties('.scrub-thumb')['background'])
+        self.assertEqual('18px',self.properties('.fast-scrubber')['--scrub-thumb-width'])
+        self.assertEqual('#a0a3b7',self.properties('.scrub-thumb')['background'])
         self.assertEqual('border-box',self.properties('.scrub-thumb')['background-origin'])
-        self.assertIn('--scrub-ratio',self.properties('.scrub-thumb')['--thumb-split'])
+        self.assertIn('--scrub-ratio',self.properties('.fast-scrubber')['--scrub-center'])
+        self.assertEqual('var(--scrub-inset)',self.properties('.scrub-track')['left'])
+        self.assertEqual('var(--scrub-inset)',self.properties('.scrub-track')['right'])
 
     def test_mobile_list_background_excludes_top_reserve_but_keeps_bottom_padding(self):
         for width in (320,390):

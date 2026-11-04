@@ -16,7 +16,7 @@ async def check_scrubber(call,evaluate,wait,out,args,errors,requests):
         await wait("document.readyState==='complete' && typeof windowBusy!=='undefined' && !windowBusy")
         if version=='new':await settled()
     async def track():
-        return await evaluate("(()=>{const r=elScrubber.getBoundingClientRect();const t=elScrubber.querySelector('.scrub-track').getBoundingClientRect();return {left:t.left+11,width:t.width-22,y:r.top+r.height/2}})()")
+        return await evaluate("(()=>{const r=elScrubber.getBoundingClientRect();const t=elScrubber.querySelector('.scrub-track').getBoundingClientRect();return {left:t.left,width:t.width,y:r.top+r.height/2}})()")
     async def gesture(fractions,touching=False,release=True,cancel=False):
         r=await track();initial=await evaluate('scrubPercent(scrubIndex,rowCount())/100');count=await evaluate('rowCount()')
         # Aim at the center of a logical row, avoiding half-index ties caused

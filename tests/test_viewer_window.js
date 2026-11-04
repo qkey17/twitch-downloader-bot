@@ -93,7 +93,7 @@ function sliderContext(count=10000){
     requestAnimationFrame:fn=>{frames.push(fn);return frames.length},yieldViewer:async()=>{},
     elScrubber:{clientWidth:300,getBoundingClientRect:()=>({width:300}),classList:{add(){},remove(){}},style:{setProperty(k,v){attributes[k]=v}},setAttribute(k,v){attributes[k]=v},
       querySelectorAll:s=>s==='.scrub-times'?times:percents,
-      querySelector:()=>({style:{},getBoundingClientRect:()=>({left:0,width:180})}),
+      querySelector:s=>s==='.scrub-track' ? {getBoundingClientRect:()=>({left:11,width:278})} : {style:{},getBoundingClientRect:()=>({left:0,width:180})},
       addEventListener:(name,fn)=>events[name]=fn,hasPointerCapture:()=>false,releasePointerCapture(){},setPointerCapture(){}},
     elList:{getBoundingClientRect:()=>({top:0}),querySelector:s=>{mounted=+s.match(/\d+/)[0];return {getBoundingClientRect:()=>({top:75,bottom:100})}}},
     getComputedStyle:()=>({paddingTop:'75'}),heightBefore:()=>0,viewportInset:()=>75,innerHeight:900,

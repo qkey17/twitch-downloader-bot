@@ -879,16 +879,16 @@ html{overflow-anchor:none;}
   header .vod-card:focus-visible,header .controls input:focus-visible,header .meta-buttons button:focus-visible{
     outline:2px solid #b3adff;outline-offset:0;border-color:transparent;
   }
-  .fast-scrubber{display:flex;align-items:center;position:relative;flex:1 1 0;height:var(--control-h);min-height:var(--control-h);min-width:0;touch-action:none;user-select:none;-webkit-user-select:none;cursor:ew-resize;outline-offset:0;}
+  .fast-scrubber{--scrub-inset:11px;--scrub-thumb-width:18px;--scrub-center:calc(var(--scrub-inset) + (100% - 2 * var(--scrub-inset)) * var(--scrub-ratio,0));--scrub-label-edge:calc(var(--scrub-center) + var(--scrub-thumb-width)/2);display:flex;align-items:center;position:relative;flex:1 1 0;height:var(--control-h);min-height:var(--control-h);min-width:0;touch-action:none;user-select:none;-webkit-user-select:none;cursor:ew-resize;outline-offset:0;}
   .fast-scrubber:focus-visible{outline:2px solid #b3adff;outline-offset:2px;border-radius:8px;}
   .fast-scrubber[aria-disabled="true"]{cursor:default;}
-  .scrub-track{position:relative;width:100%;height:28px;border-radius:7px;background:#30313e;overflow:hidden;}
-  .scrub-fill{position:absolute;inset:0 auto 0 0;width:var(--scrub-progress,0%);background:#a0a3b7;}
-  .scrub-label{position:absolute;inset:0;z-index:2;display:flex;align-items:center;justify-content:center;white-space:nowrap;font:500 12px/1.2 var(--sans);font-variant-numeric:tabular-nums;color:#e1e3ed;pointer-events:none;}
-  .scrub-label-on-fill{color:#20212b;clip-path:inset(0 calc(100% - var(--scrub-progress,0%)) 0 0);}
-  /* Track edge pW minus capsule left (11+p(W-22)-9) = 22p-2.
-     Paint the whole border box; time layers stay above the opaque capsule. */
-  .scrub-thumb{position:absolute;z-index:1;top:0;height:var(--control-h);left:calc(11px + var(--scrub-progress,0%) - 22px * var(--scrub-ratio,0));width:18px;transform:translateX(-50%);border-radius:9px;border:1px solid #747888;background:linear-gradient(to right,#a0a3b7 0 var(--thumb-split),#30313e var(--thumb-split) 100%);background-origin:border-box;background-clip:border-box;--thumb-split:clamp(0px,calc(22px * var(--scrub-ratio,0) - 2px),18px);pointer-events:none;}
+  .scrub-track{position:absolute;left:var(--scrub-inset);right:var(--scrub-inset);height:28px;border-radius:7px;background:#30313e;overflow:hidden;}
+  .scrub-fill{position:absolute;inset:0 auto 0 0;width:calc(100% * var(--scrub-ratio,0));background:#a0a3b7;}
+  .scrub-label{position:absolute;inset:0;z-index:2;display:flex;align-items:center;justify-content:center;white-space:nowrap;font:500 12px/1.2 var(--sans);font-variant-numeric:tabular-nums;color:#e1e3ed;clip-path:inset(0 0 0 var(--scrub-label-edge));pointer-events:none;}
+  .scrub-label-on-fill{color:#20212b;clip-path:inset(0 calc(100% - var(--scrub-label-edge)) 0 0);}
+  /* Keep the original 11px endpoint centers and 18px border-box capsule.
+     Track, fill and thumb share the same travel; dark text also covers the thumb. */
+  .scrub-thumb{position:absolute;z-index:1;top:0;height:var(--control-h);left:var(--scrub-center);width:var(--scrub-thumb-width);transform:translateX(-50%);border-radius:9px;border:1px solid #747888;background:#a0a3b7;background-origin:border-box;background-clip:border-box;pointer-events:none;}
   .fast-scrubber.is-held .scrub-thumb{border-color:#c3c6d5;}
   .panel-toggle{display:flex;align-items:center;justify-content:center;flex:0 0 var(--control-h);width:var(--control-h);height:var(--control-h);padding:0;margin:0;border:1px solid var(--border);border-radius:var(--control-radius);background:var(--panel);box-shadow:none;color:var(--text);touch-action:manipulation;cursor:pointer;transition:background-color .12s ease;}
   .panel-toggle[aria-expanded="true"] svg{transform:rotate(180deg);}
@@ -963,9 +963,9 @@ html{overflow-anchor:none;}
       <div id="fastScrubber" class="fast-scrubber" role="slider" tabindex="0" aria-label="Позиция в чате" aria-orientation="horizontal" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="Нет сообщений" aria-disabled="true">
         <div class="scrub-track">
           <div class="scrub-fill"></div>
-          <div class="scrub-label" aria-hidden="true"><span class="scrub-times">— / —</span></div>
-          <div class="scrub-label scrub-label-on-fill" aria-hidden="true"><span class="scrub-times">— / —</span></div>
         </div>
+        <div class="scrub-label" aria-hidden="true"><span class="scrub-times">— / —</span></div>
+        <div class="scrub-label scrub-label-on-fill" aria-hidden="true"><span class="scrub-times">— / —</span></div>
         <div class="scrub-thumb"></div>
       </div>
       <button class="panel-toggle" type="button" aria-label="Развернуть панель" aria-expanded="false" aria-controls="panelDetails"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6"/></svg></button>
@@ -1927,7 +1927,7 @@ function pointerScrub(x){
   if(!scrubGesture) return;
   if(!scrubGesture.moved && Math.abs(x-scrubGesture.x)<2) return;
   scrubGesture.moved=true;
-  const width=Math.max(1,elScrubber.getBoundingClientRect().width-22);
+  const width=Math.max(1,elScrubber.querySelector('.scrub-track').getBoundingClientRect().width);
   // Keep the fraction independent of rounded row indexes. Clamping also
   // consumes overshoot, so reversing at either endpoint responds immediately.
   const fraction=clampNumber(scrubGesture.fraction+(x-scrubGesture.x)/width,0,1);
