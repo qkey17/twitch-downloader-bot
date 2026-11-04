@@ -37,7 +37,7 @@ class MediaCards(unittest.IsolatedAsyncioTestCase):
         self.user=videos.TwitchUser('1','channel','Channel',AVATAR)
         self.vods=[videos.ArchiveVod(str(i),'1','channel','Channel','Title '+str(i),'2026-01-02T03:04:00Z','','1h','','%s'%PREVIEW,'public') for i in range(1,9)]
         self.fetch=AsyncMock(return_value=self.user)
-        for target,value in [('src.twitch_api.videos.fetch_user_by_login',self.fetch),('src.twitch_api.videos.fetch_archive_vods',AsyncMock(return_value=(self.vods,None))),('src.handlers.handlers_vod.fetch_vod_meta',AsyncMock(return_value=self.meta)),('src.handlers.handlers_vod.get_client_id',lambda:'mock'),('src.handlers.handlers_vod.results.get_ready_result',lambda v:self.ready.get(v)),('src.handlers.handlers_vod.results.Publication',self.publication),('src.handlers.handlers_vod.download_and_send',self.worker),('src.ui.result_preview.fetch_video_thumbnail',AsyncMock(return_value='')),('src.vod_list.current_stream',AsyncMock(return_value=None)),('src.config.HISTORY_ENABLED',False),('src.handlers.handlers_vod.HTML_PUBLISH_MODE','public')]:
+        for target,value in [('src.twitch_api.videos.fetch_user_by_login',self.fetch),('src.twitch_api.videos.fetch_archive_vods',AsyncMock(return_value=(self.vods,None))),('src.handlers.handlers_vod.fetch_vod_meta',AsyncMock(return_value=self.meta)),('src.handlers.handlers_vod.get_client_id',lambda:'mock'),('src.handlers.handlers_vod.results.get_ready_result',lambda v:self.ready.get(v)),('src.handlers.handlers_vod.results.Publication',self.publication),('src.handlers.handlers_vod.download_and_send',self.worker),('src.ui.result_preview.fetch_video_thumbnail',AsyncMock(return_value='')),('src.vod_list.stream_observation',AsyncMock(return_value=(None,0))),('src.config.HISTORY_ENABLED',False),('src.handlers.handlers_vod.HTML_PUBLISH_MODE','public')]:
             p=patch(target,value);p.start();self.addCleanup(p.stop)
     def task(self,coro):
         t=asyncio.create_task(coro);self.tasks.append(t);return t
@@ -127,7 +127,7 @@ class MediaCards(unittest.IsolatedAsyncioTestCase):
         m,v=await self.open();browser=lists.get_channel_browser(self.app);session=browser._sessions[v.session_id]
         session.vods[0]=replace(session.vods[0],thumbnail_url='',stream_id='55')
         import src.vod_list
-        src.vod_list.current_stream.return_value='55'
+        src.vod_list.stream_observation.return_value=('55',src.vod_list.time.monotonic())
         await self.select(m,browser._view(session));self.assertEqual('live-vod.png',m.image)
 
     async def test_first_queued_regeneration_cancel_and_result_keep_message_and_image(self):
