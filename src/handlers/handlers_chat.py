@@ -10,7 +10,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from . import handlers_vod as vod
 from .handlers_state import input_busy as is_busy, pending_expired
 from src.ui.callbacks import CallbackReply
-from src.ui.ui_labels import STALE_ACTION_NOTICE, ACTION_DONE_NOTICE, PROCESSING_NOTICE, ACTION_PENDING_NOTICE
+from src.ui.ui_labels import VOD_BUSY_NOTICE, STALE_ACTION_NOTICE, ACTION_DONE_NOTICE, PROCESSING_NOTICE, ACTION_PENDING_NOTICE
 from src.ui.ui_labels import ready_chat_label, RECREATE_CHAT, CREATE_CHAT, BACK_TO_LIST, READY_UNAVAILABLE
 from src.ui.ui_history import ready_offer_text
 from src.ui.result_preview import render_card, resolve_preview, caption_fits, cleanup_card, CardMessage
@@ -236,6 +236,9 @@ async def chat_callback(update, context):
     if not valid():
         await reply.send(STALE_ACTION_NOTICE)
         return
+    if parts[2] in ('regen', 'create') and vod.vod_conflict(context, choice['vod_id'], regenerate=parts[2]=='regen'):
+        await reply.send(VOD_BUSY_NOTICE)
+        return
     if is_busy(context) or (parts[2] in ('regen', 'create') and vod.is_globally_busy(context, choice['vod_id'] if parts[2]=='create' else None)):
         await reply.send(PROCESSING_NOTICE)
         return
@@ -251,7 +254,7 @@ async def chat_callback(update, context):
     if parts[2] == 'open' and choice.get('opened'):
         await reply.send(STALE_ACTION_NOTICE)
         return
-    if not await reply.send():
+    if parts[2] != 'regen' and not await reply.send():
         return
     async with choice.get('ui_lock') or nullcontext():
         if not valid():
@@ -266,10 +269,13 @@ async def chat_callback(update, context):
         if parts[2] == 'open' and choice.get('opened'):
             await reply.send(STALE_ACTION_NOTICE)
             return
+        if parts[2] == 'regen' and vod.vod_conflict(context, choice['vod_id'], regenerate=True):
+            await reply.send(VOD_BUSY_NOTICE)
+            return
         if is_busy(context):
             await reply.send(PROCESSING_NOTICE)
             return
-        if not await reply.send():
+        if parts[2] != 'regen' and not await reply.send():
             return
         choice['action'] = parts[2]  # Fence the optional offer preview before any await.
     if parts[2] == 'create':
@@ -296,8 +302,10 @@ async def chat_callback(update, context):
     try:
         async with choice.get('ui_lock') or nullcontext():
             if not valid():
+                await reply.send(STALE_ACTION_NOTICE)
                 return
             if is_busy(context) or vod.is_globally_busy(context) or context.user_data.get('vod_link_lookup'):
+                await reply.send(PROCESSING_NOTICE)
                 return  # Already acknowledged; never send a second answer on a race.
             message = q.message
             async def edit_start(*args, **kwargs):
@@ -328,7 +336,7 @@ async def chat_callback(update, context):
             request = SimpleNamespace(callback_query=SimpleNamespace(message=start_message), effective_user=update.effective_user)
             try:
                 started = await vod._start_download(request, context, choice['vod_id'], regenerate=True, modern=True,
-                                                    initial_meta=choice['meta'])
+                                                    initial_meta=choice['meta'], callback_reply=reply)
             except BaseException:
                 # The existing starter owns slot/telemetry cleanup. Restore only
                 # this still-owned action screen; never reserve/start a second time.

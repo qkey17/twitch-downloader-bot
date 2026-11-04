@@ -2,7 +2,7 @@
 import asyncio
 import logging
 from telegram.error import TelegramError
-from .ui_labels import STALE_ACTION_NOTICE
+from .ui_labels import STALE_ACTION_NOTICE, VOD_BUSY_NOTICE
 
 # Only retired/malformed variants of these established routes. New/unknown
 # prefixes must not be silently treated as stale by a global catch-all.
@@ -21,7 +21,7 @@ class CallbackReply:
             async with asyncio.timeout(3):
                 if text is None:
                     await self.query.answer()
-                elif text == STALE_ACTION_NOTICE:
+                elif text in (STALE_ACTION_NOTICE, VOD_BUSY_NOTICE):
                     await self.query.answer(text, show_alert=False)
                 else:
                     await self.query.answer(text)

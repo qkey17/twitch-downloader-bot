@@ -167,6 +167,11 @@ async def info_callback(update, context):
     if not valid_card():
         await reply.send(STALE_ACTION_NOTICE)
         return
+    from .handlers_vod import vod_conflict
+    if match[3] == 'process' and vod_conflict(context, session.vods[session.info_card.index].id):
+        from src.ui.ui_labels import VOD_BUSY_NOTICE
+        await reply.send(VOD_BUSY_NOTICE)
+        return
     if match[3] == 'process' and (is_busy(context) or is_globally_busy(context, session.vods[session.info_card.index].id)):
         await reply.send(PROCESSING_NOTICE)
         return

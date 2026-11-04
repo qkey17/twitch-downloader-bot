@@ -528,7 +528,20 @@ async def vod_format_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _start_download(update,context,vod_id)
 
 
-async def _start_download(update,context,vod_id,regenerate=False, *, modern=False, initial_meta=None):
+def vod_conflict(context, vod_id, *, regenerate=False):
+    """Read existing jobs only; compatible first-request joins remain eligible."""
+    manager = context.application.bot_data.get('tdb_vod_scheduler')
+    if manager is None:
+        return False
+    key = None if regenerate else (vod_id, 'html_online', HTML_PUBLISH_MODE)
+    for job in manager.jobs.values():
+        if job.vod == vod_id and not job.processing_done:
+            return not (key is not None and job.compatibility == key and job.participants is not None
+                        and job.participants.accepting and not job.cancelled)
+    return False
+
+
+async def _start_download(update,context,vod_id,regenerate=False, *, modern=False, initial_meta=None, callback_reply=None):
     from src.vod_scheduler import scheduler
     from src.job_context import JobContext
     from src.workers.worker_progress import _build_progress_card, cancel_keyboard, safe_edit_html
@@ -543,8 +556,23 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
     key = None if regenerate else (vod_id,'html_online',HTML_PUBLISH_MODE)
     job, refusal = manager.reserve(owner,vod_id,compatibility=key)
     if job is None:
+        if callback_reply is not None:
+            if refusal == 'Этот VOD уже обрабатывается или ожидает в очереди.':
+                from src.ui.ui_labels import VOD_BUSY_NOTICE
+                await callback_reply.send(VOD_BUSY_NOTICE)
+                return False
+            await callback_reply.send()
         await update.callback_query.message.reply_text(refusal)
         return False
+    if callback_reply is not None:
+        # Only the regeneration route defers acknowledgement until reserve.
+        try:
+            if not await callback_reply.send():
+                manager.drop(job, 'error')
+                return False
+        except BaseException:
+            manager.drop(job, 'error')
+            raise
     joined = job.context is not None
     group = job.participants
     part = group.members[owner] if group is not None else None
