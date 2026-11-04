@@ -53,6 +53,12 @@ def candidates(channel_id):
     return sorted(found,key=order)
 
 
+def __duration(seconds):
+    from src.ui.ui_formatters import fmt_hhmmss
+    hours, minutes, seconds = fmt_hhmmss(seconds).split(':')
+    return f'{hours}h{minutes}m{seconds}s'
+
+
 def saved_vod(row, channel_id):
     try:
         meta = json.loads(row['meta_json'])
@@ -65,7 +71,7 @@ def saved_vod(row, channel_id):
         results.normalize_vod_id(row['vod_id'])
         from src.handlers.handlers_vod_info import preview_url
         preview = preview_url(meta.get('thumbnail_preview_url') or meta.get('thumbnail_url')) or ''
-        return videos.ArchiveVod(row['vod_id'],channel_id,'','',title[:240],date,'',str(seconds)+'s','',preview,'public')
+        return videos.ArchiveVod(row['vod_id'],channel_id,'','',title[:240],date,'',__duration(seconds),'',preview,'public')
     except (TypeError,ValueError,KeyError):
         return None
 

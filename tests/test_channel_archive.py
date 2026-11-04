@@ -153,6 +153,17 @@ class Card(unittest.IsolatedAsyncioTestCase):
     for name in ('_setupAsyncioRunner','setUp','asyncTearDown','task','api','message','update','open','select','publication','worker'):
         locals()[name]=getattr(media.MediaCards,name)
 
+    async def test_saved_duration_in_rendered_information_card(self):
+        for seconds, expected in ((0,'00:00:00'),(30,'00:00:30'),(90,'00:01:30'),(3600,'01:00:00'),(7200,'02:00:00'),(9999999999,'2777777:46:39')):
+            with self.subTest(seconds=seconds):
+                self.vods.clear()
+                meta=dict(channel_id='1',title='Title',created_at='2026-01-01T00:00:00Z',length_seconds=seconds)
+                ready=dict(id='a'*32,vod_id='1',meta_json=json.dumps(meta),html_ref='https://public.invalid/public_html/chat_'+'a'*32+'.html')
+                saved=[archive.saved_vod(ready,'1')]
+                with patch.object(archive,'candidates',return_value=saved),patch.object(archive,'confirmed',AsyncMock(return_value=saved)),patch.object(info,'lookup',return_value=ready):
+                    message,view=await self.open();await self.select(message,view)
+                    self.assertIn('⏱ '+expected,message.caption or message.text)
+
     async def test_archive_card_actions_capture_no_live_and_forged_process(self):
         self.vods.clear();saved=[record(1,thumbnail_url=media.PREVIEW)]
         ready=dict(id='a'*32,vod_id='1',meta_json=json.dumps({'captured_during_live':True,'channel_id':'1','title':'Title','created_at':'2026-01-01T00:00:00Z','length_seconds':30,'thumbnail_preview_url':media.PREVIEW}),html_ref='https://public.invalid/public_html/chat_'+'a'*32+'.html')
