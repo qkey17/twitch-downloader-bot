@@ -64,7 +64,7 @@ class PublicInstructionPrivacyTests(unittest.IsolatedAsyncioTestCase):
                     plain = ''.join(parser.text)
                     self.assertTrue(set(re.findall(r'[A-Za-z_][A-Za-z_0-9]*', plain)) <= allowed_terms,
                                     'Public instruction contains a non-template identifier')
-                    self.assertEqual([], parser.examples)
+                    self.assertEqual(['значение', 'значение'] if command in (commands.start_command,commands.help_command) else [], parser.examples)
                     urls = {url.rstrip('.,;') for url in re.findall(r'https?://(?:www\.)?twitch\.tv/[^\s]+', plain)}
                     self.assertEqual(set(), urls)
                     self.assertIsNone(re.search(r'(?i)Twitch|архив|запис|видео|пример', plain))
@@ -78,10 +78,10 @@ class PublicInstructionPrivacyTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_commands_match_approved_copy(self):
         expected = (
-            'Отправьте ссылку на VOD или его ID, чтобы получить чат.\n\n'
-            'Отправьте имя канала или ссылку на него, чтобы посмотреть список VODs.\n\n'
-            'Тип запроса определяется автоматически. При необходимости его можно указать командой:\n\n'
-            '/vod — получить чат VOD.\n/channel — посмотреть VODs канала.'
+            'Отправьте имя канала или ссылку на него, чтобы посмотреть список доступных для чтения трансляций.\n\n'
+            'Либо отправьте ID или ссылку на необходимую трансляцию.\n\n'
+            'Тип запроса определяется автоматически. При необходимости укажите его явно, отправив команду вместе со значением:\n\n'
+            '«/vod <code>значение</code>» — получить чат VOD.\n«/channel <code>значение</code>» — посмотреть VODs канала.'
         )
         cases = (
             commands.start_command, commands.help_command,

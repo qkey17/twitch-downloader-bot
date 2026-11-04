@@ -162,7 +162,7 @@ async def _list_callback(update, context, browser):
     value = int(number or 0)
     if ((action in ('group', 'page', 'select', 'info')) != (number is not None)
             or (session.status == 'selected' and action != 'back')
-            or (action in ('select', 'info') and not view.page*5 <= value < min(view.page*5+5, len(session.vods)))
+            or (action in ('select', 'info') and not view.page*5 <= value < min(view.page*5+5, len(view.items)))
             or (action == 'page' and value >= view.page_count)
             or (action == 'group' and value >= (view.page_count+11)//12)):
         await reply.send(STALE_BUTTON)
@@ -191,7 +191,7 @@ async def _list_callback(update, context, browser):
                 return
             view = result.view if isinstance(result, (VodSelection, VodInformation)) else result
             if isinstance(result, VodInformation):
-                if results.get_ready_result(view.items[result.index].id) is None:
+                if view.items[result.index].id in view.archived_ids or results.get_ready_result(view.items[result.index].id) is None:
                     from .handlers_vod_info import show_info
                     if not await reply.send():
                         return
@@ -205,6 +205,13 @@ async def _list_callback(update, context, browser):
                     await reply.send(STALE_BUTTON)
                     return
                 view, ready_only = result.view, True
+            if isinstance(result, VodSelection) and result.vod_id in view.archived_ids:
+                # Old/select callbacks from an archive surface never reach Create.
+                from .handlers_vod_info import show_info
+                session.status = 'ready'
+                result = VodInformation(result.owner_id, view.position, browser._view(session))
+                replaced = await show_info(browser, session, message, result, bot=context.bot, context=context)
+                return result
             if isinstance(result, VodSelection):
                 card = _consume_selection(session)
             else:

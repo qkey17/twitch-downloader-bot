@@ -32,7 +32,7 @@ def _short(text, limit):
 
 
 def _duration(value):
-    match = re.fullmatch(r'(?:(\d{1,6})h)?(?:(\d{1,2})m)?(?:(\d{1,2})s)?', value)
+    match = re.fullmatch(r'(?:(\d{1,7})h)?(?:(\d{1,2})m)?(?:(\d{1,2})s)?', value)
     if not match or not any(match.groups()):
         return '—'
     hours, minutes, seconds = (int(part or 0) for part in match.groups())

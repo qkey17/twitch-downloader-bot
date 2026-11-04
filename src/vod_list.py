@@ -4,6 +4,8 @@ from dataclasses import dataclass, replace
 import html
 import re
 import time
+from src import channel_archive
+from src.twitch_api.client import TwitchAPIError
 from src.twitch_api.live import stream_observation, match_stream, TTL
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -24,6 +26,8 @@ class ListView(BrowseView):
     grid: bool = False
     group: int = 0
     live_vod_ids: frozenset = frozenset()
+    archived_ids: frozenset = frozenset()
+    exhausted: bool = True
 
 
 @dataclass(frozen=True)
@@ -47,23 +51,55 @@ class VodListBrowser(ChannelBrowser):
         if self.is_current(view):
             self._sessions.pop(view.session_id, None)
 
+    def _merged(self, session):
+        twitch = {v.id:v for v in session.vods}
+        merged = dict(getattr(session, 'archives', {})) | twitch
+        try:
+            ordered = sorted(merged.values(), key=channel_archive.order)
+            if not session.complete:
+                # A following Helix page can contain older records and ties at
+                # its boundary. Expose only the prefix whose order is settled.
+                if not session.vods:
+                    return []
+                boundary = min(channel_archive.timestamp(v.created_at) for v in session.vods)
+                ordered = [v for v in ordered if channel_archive.timestamp(v.created_at)>boundary]
+            return ordered
+        except ValueError:
+            return []
+
     async def _load(self, http, session, wanted):
         try:
             async with asyncio.timeout(60):
                 while True:
                     view = await super()._load(http, session, wanted)
-                    if view.status != 'ready' or view.complete:
+                    if view.status not in ('ready', 'empty', 'empty_page'):
+                        break
+                    if not hasattr(session, 'archives'):
+                        records = channel_archive.candidates(session.channel.id)
+                        archives = await channel_archive.confirmed(http, session.channel.id, records)
+                        if not self._live(session):
+                            return BrowseView('expired')
+                        session.archives = {v.id:v for v in archives}
+                    if session.complete or len(self._merged(session)) >= wanted+5:
                         break
         except TimeoutError:
             session.status, session.reason = 'api_error', 'timeout'
             return self._view(session)
-        # Optional enrichment must not consume the archive pagination deadline.
-        if view.complete and session.channel and self._live(session):
+        session.position = min(wanted, max(0,len(self._merged(session))-1))
+        if session.channel and self._live(session):
             await self._refresh_live(http, session)
             return self._view(session) if self._live(session) else BrowseView('expired')
         return view
 
     def _append_page(self, session, page, cursor, wanted):
+        # Reject a changing/out-of-order continuation rather than silently
+        # moving records on pages the user has already seen.
+        try:
+            new_dates = [channel_archive.timestamp(v.created_at) for v in page if v.id not in session.ids]
+            if session.vods and new_dates and max(new_dates)>min(channel_archive.timestamp(v.created_at) for v in session.vods):
+                raise ValueError('Unordered continuation')
+        except (ValueError,AttributeError,TypeError):
+            raise TwitchAPIError('Invalid archive chronological boundary') from None
         super()._append_page(session, page, cursor, wanted)
         # Keep bounded Helix metadata for on-demand information, never images.
         session.vods[:] = [replace(v, title=v.title[:240], duration=v.duration[:32],
@@ -73,11 +109,20 @@ class VodListBrowser(ChannelBrowser):
         session.ids = {v.id for v in session.vods}
 
     def _view(self, session):
-        base = super()._view(session)
-        complete = base.complete and base.status in ('ready', 'empty', 'selected')
-        return ListView(**vars(base), items=tuple(session.vods) if complete else (),
-                        page=session.position // 5, page_count=(len(session.vods)+4)//5 if complete else 0,
+        base = super()._view(replace(session, position=min(session.position, max(0,len(session.vods)-1))))
+        items = self._merged(session)
+        usable = base.status in ('ready', 'empty', 'selected') and (bool(items) or session.complete)
+        if session.complete and not items and base.status != 'selected':
+            base = replace(base, status='empty')
+        elif usable and base.status == 'empty':
+            base = replace(base, status='ready')
+        base = replace(base, vod=items[session.position] if session.position<len(items) else None,
+                       loaded=len(items), complete=usable, has_next=not session.complete or session.position+5<len(items))
+        return ListView(**vars(base), items=tuple(items) if usable else (),
+                        page=session.position // 5, page_count=((len(items)+4)//5 + (not session.complete)) if usable else 0,
                         grid=getattr(session, 'grid', False), group=getattr(session, 'group', 0),
+                        archived_ids=frozenset(getattr(session,'archives',{}))-session.ids,
+                        exhausted=session.complete,
                         live_vod_ids=frozenset(v.id for v in session.vods
                             if 0 <= time.monotonic()-getattr(session, 'live_checked_at', 0) < TTL
                             and match_stream(v.stream_id, getattr(session, 'live_stream_id', None)) is True))
@@ -106,7 +151,7 @@ class VodListBrowser(ChannelBrowser):
             return BrowseView('stale')
         pages = checked.page_count
         value = int(number or 0)
-        if ((action in ('select', 'info') and not (checked.page*5 <= value < min(checked.page*5+5, len(session.vods))))
+        if ((action in ('select', 'info') and not (checked.page*5 <= value < min(checked.page*5+5, len(checked.items))))
                 or (action == 'page' and value >= pages)
                 or (action == 'group' and value >= (pages+11)//12)):
             return BrowseView('invalid')
@@ -117,12 +162,14 @@ class VodListBrowser(ChannelBrowser):
         if action == 'select':
             session.position = value
             session.status = 'selected'
-            vod = session.vods[value]
+            vod = checked.items[value]
             return VodSelection(owner, vod.id, f'https://www.twitch.tv/videos/{vod.id}', session.channel.login, self._view(session))
         if action in ('page', 'prev', 'next'):
             page = value if action == 'page' else checked.page + (-1 if action == 'prev' else 1)
             session.position = max(0, min(pages-1, page))*5
             session.grid = False
+            if session.position+5 > len(checked.items) and not session.complete:
+                return await self._load(http, session, session.position)
         elif action == 'pages':
             session.grid, session.group = pages > 1, checked.page//12
         elif action == 'group':
@@ -165,7 +212,7 @@ def build_list(view):
         if view.page:
             nav.append(button('⬅️', 'prev'))
         if view.page_count > 1:
-            nav.append(button(f'Стр. {view.page+1}/{view.page_count}', 'pages'))
+            nav.append(button(f'Стр. {view.page+1}/{view.page_count}'+('+' if not view.exhausted else ''), 'pages'))
         if view.page+1 < view.page_count:
             nav.append(button('➡️', 'next'))
         if nav:

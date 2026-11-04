@@ -119,13 +119,39 @@ async def show_info(browser, session, source, request, *, bot, context=None):
     session.revision += 1  # Dates/Back from the source screen are now obsolete.
     view = browser._view(session)
     vod = view.items[request.index]
-    live_state = await observe(context, vod.id, dict(id=vod.id, type='archive', user_id=session.channel.id, stream_id=vod.stream_id))
+    archived = vod.id in view.archived_ids
+    ready = lookup(vod.id)
+    if archived and ready:
+        from src.channel_archive import saved_vod
+        selected = saved_vod(ready, session.channel.id)
+        if selected is None:
+            ready = None
+        else:
+            vod = selected
+    live_state = None if archived else await observe(context, vod.id, dict(id=vod.id, type='archive', user_id=session.channel.id, stream_id=vod.stream_id))
     text = information_text(view.channel.display_name[:80], vod.title, _duration(vod.duration), vod.created_at,
-                            is_live=bool(lines({'live_state':live_state})), ready=lookup(vod.id))
+                            is_live=bool(lines({'live_state':live_state})), ready=ready)
     nonce = secrets.token_hex(8)
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(CREATE_CHAT, callback_data=f'ui:vi:{session.token}:{nonce}:process')],
         [InlineKeyboardButton(BACK_TO_LIST, callback_data=f'ui:vi:{session.token}:{nonce}:back')]])
+    if archived:
+        from src.channel_archive import ARCHIVE
+        from src.ui.ui_labels import READY_UNAVAILABLE, CHAT_GENERIC
+        from src.ui.html_file_action import keyboard as file_keyboard
+        from .handlers_vod import _html_button_url
+        back = keyboard.inline_keyboard[-1][0]
+        actions = []
+        if ready:
+            text += '\n'+ARCHIVE
+            url = _html_button_url(ready['html_ref'])
+            if url:
+                actions.append([InlineKeyboardButton(CHAT_GENERIC,url=url)])
+            keyboard = file_keyboard(context,session.owner_id,source.chat_id,ready,
+                                    InlineKeyboardMarkup(actions+[[back]]))
+        else:
+            text = READY_UNAVAILABLE
+            keyboard = InlineKeyboardMarkup([[back]])
     from src.ui.card_images import vod_image
     image=vod_image(vod.thumbnail_url,live=vod.id in view.live_vod_ids)
     try:
@@ -171,12 +197,15 @@ async def info_callback(update, context):
     if not valid_card():
         await reply.send(STALE_ACTION_NOTICE)
         return
+    if match[3] == 'process' and browser._view(session).items[session.info_card.index].id in browser._view(session).archived_ids:
+        await reply.send(STALE_ACTION_NOTICE)
+        return
     from .handlers_vod import vod_conflict
-    if match[3] == 'process' and vod_conflict(context, session.vods[session.info_card.index].id):
+    if match[3] == 'process' and vod_conflict(context, browser._view(session).items[session.info_card.index].id):
         from src.ui.ui_labels import VOD_BUSY_NOTICE
         await reply.send(VOD_BUSY_NOTICE)
         return
-    if match[3] == 'process' and (is_busy(context) or is_globally_busy(context, session.vods[session.info_card.index].id)):
+    if match[3] == 'process' and (is_busy(context) or is_globally_busy(context, browser._view(session).items[session.info_card.index].id)):
         await reply.send(PROCESSING_NOTICE)
         return
     if not await reply.send():
@@ -206,7 +235,7 @@ async def info_callback(update, context):
                     return
                 take_info(session)
                 return
-            if is_busy(context) or is_globally_busy(context, session.vods[card.index].id):
+            if is_busy(context) or is_globally_busy(context, browser._view(session).items[card.index].id):
                 return
             source = card.message
             result = await browser.handle_callback(context.application.bot_data['aiohttp'], session.owner_id,
