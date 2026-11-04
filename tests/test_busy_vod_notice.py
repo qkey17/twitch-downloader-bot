@@ -1,11 +1,11 @@
 import asyncio
 import unittest
 from types import SimpleNamespace as NS
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from src.handlers import handlers_chat as chat, handlers_vod as vod
 from src.ui.card_context import for_message
 from src.ui.callbacks import CallbackReply
-from src.ui.ui_labels import VOD_BUSY_NOTICE
+from src.ui.ui_labels import VOD_BUSY_NOTICE, STALE_ACTION_NOTICE
 from src.vod_scheduler import scheduler
 import test_shared_vods as fixture
 
@@ -23,6 +23,66 @@ class BusyNotice(unittest.IsolatedAsyncioTestCase):
         choice=scope.user_data['chat_choice']
         m=self.messages[choice['message']]
         return ctx,m,'ui:chat:regen:'+choice['token']
+
+    async def stale_while_waiting(self, action, acquisition):
+        ctx,message,data=await self.offer()
+        scope=for_message(ctx,7,10,message.message_id)
+        choice=scope.user_data['chat_choice']
+        choice['create']=action=='create'
+        waiting=asyncio.Event()
+
+        class ContendedLock:
+            def __init__(self):
+                self.lock=asyncio.Lock()
+                self.entries=0
+
+            async def __aenter__(self):
+                self.entries+=1
+                if self.entries==acquisition:
+                    waiting.set()
+                await self.lock.acquire()
+
+            async def __aexit__(self,*args):
+                self.lock.release()
+                if self.entries==acquisition-1:
+                    # A competing UI owner holds the lock before the next entry.
+                    await self.lock.acquire()
+
+        lock=choice['ui_lock']=ContendedLock()
+        if acquisition==1:
+            await lock.lock.acquire()
+        query=self.update(message,data.replace(':regen:',':'+action+':'))
+        before=list(self.calls)
+        with patch.object(vod,'_start_download',new_callable=AsyncMock) as start:
+            task=asyncio.create_task(chat.chat_callback(query,ctx))
+            try:
+                await asyncio.wait_for(waiting.wait(),2)
+                choice['current']=lambda:False
+                lock.lock.release()
+                await asyncio.wait_for(task,2)
+            finally:
+                if not task.done():
+                    task.cancel()
+                    await asyncio.gather(task,return_exceptions=True)
+            start.assert_not_awaited()
+        if action=='regen':
+            query.callback_query.answer.assert_awaited_once_with(STALE_ACTION_NOTICE,show_alert=False)
+        else:
+            query.callback_query.answer.assert_awaited_once_with()
+        self.assertEqual(before,self.calls)
+        self.assertFalse(self.publications)
+        self.assertFalse(scheduler(self.app).jobs)
+
+    async def test_regen_stale_during_first_lock_answers(self):
+        await self.stale_while_waiting('regen',1)
+
+    async def test_regen_stale_during_second_lock_answers(self):
+        await self.stale_while_waiting('regen',2)
+
+    async def test_acknowledged_open_create_do_not_answer_twice(self):
+        for action in ('open','create'):
+            with self.subTest(action=action):
+                await self.stale_while_waiting(action,1)
 
     async def test_running_and_queued_conflicts_keep_both_cards_and_job(self):
         for queued in (False,True):

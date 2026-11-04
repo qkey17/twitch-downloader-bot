@@ -302,6 +302,7 @@ async def chat_callback(update, context):
     try:
         async with choice.get('ui_lock') or nullcontext():
             if not valid():
+                await reply.send(STALE_ACTION_NOTICE)
                 return
             if is_busy(context) or vod.is_globally_busy(context) or context.user_data.get('vod_link_lookup'):
                 await reply.send(PROCESSING_NOTICE)
