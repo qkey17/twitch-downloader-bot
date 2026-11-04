@@ -197,8 +197,8 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn('Выбери действие', text)
                 self.assertEqual({}, self.context.user_data)
         text = self.messages[-1][1][0]
-        for phrase in ('Тип запроса определяется автоматически.', '«/vod <code>значение</code>» — получить чат VOD.',
-                       '«/channel <code>значение</code>» — посмотреть VODs канала.', 'При необходимости укажите его явно, отправив команду вместе со значением:'):
+        for phrase in ('Тип запроса определяется автоматически.', '«/vod значение» — получить чат VOD.',
+                       '«/channel значение» — посмотреть VODs канала.', 'При необходимости укажите его явно, отправив одну из команд вместе со значением:'):
             self.assertIn(phrase, text)
         self.assertNotIn('http', text)
         self.app.create_task.assert_not_called()

@@ -8,9 +8,9 @@ from .handlers_input import cancel_input_request
 _HELP_TEXT = (
     "Отправьте имя канала или ссылку на него, чтобы посмотреть список доступных для чтения трансляций.\n\n"
     "Либо отправьте ID или ссылку на необходимую трансляцию.\n\n"
-    "Тип запроса определяется автоматически. При необходимости укажите его явно, отправив команду вместе со значением:\n\n"
-    "«/vod <code>значение</code>» — получить чат VOD.\n"
-    "«/channel <code>значение</code>» — посмотреть VODs канала."
+    "Тип запроса определяется автоматически. При необходимости укажите его явно, отправив одну из команд вместе со значением:\n\n"
+    "«/vod значение» — получить чат VOD.\n"
+    "«/channel значение» — посмотреть VODs канала."
 )
 
 
@@ -21,7 +21,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(
         _HELP_TEXT,
-        parse_mode='HTML',
         link_preview_options=LinkPreviewOptions(is_disabled=True),
     )
 
