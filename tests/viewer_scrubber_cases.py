@@ -16,7 +16,7 @@ async def check_scrubber(call,evaluate,wait,out,args,errors,requests):
         await wait("document.readyState==='complete' && typeof windowBusy!=='undefined' && !windowBusy")
         if version=='new':await settled()
     async def track():
-        return await evaluate("(()=>{const r=elScrubber.getBoundingClientRect();const t=elScrubber.querySelector('.scrub-track').getBoundingClientRect();return {left:t.left+11,width:t.width-22,y:r.top+r.height/2}})()")
+        return await evaluate("(()=>{const r=elScrubber.getBoundingClientRect();const t=elScrubber.querySelector('.scrub-track').getBoundingClientRect();return {left:t.left,width:t.width,y:r.top+r.height/2}})()")
     async def gesture(fractions,touching=False,release=True,cancel=False):
         r=await track();initial=await evaluate('scrubPercent(scrubIndex,rowCount())/100');count=await evaluate('rowCount()')
         # Aim at the center of a logical row, avoiding half-index ties caused
@@ -235,7 +235,7 @@ window.__show=showWindow;showWindow=async(...args)=>{__builders++;__maxBuilders=
                 if count==10000 and mode=='offline':
                     for f in (0,.25,.5,.75,1):
                         await mouse([f]);await verify_target(round(f*(count-1)))
-                        label=await evaluate("(()=>{const r=elScrubber.querySelector('.scrub-track').getBoundingClientRect(),d=elScrubber.querySelector('.scrub-times').getBoundingClientRect(),a=getComputedStyle(elScrubber.querySelector('.scrub-label')),b=getComputedStyle(elScrubber.querySelector('.scrub-label-on-fill')),t=getComputedStyle(elScrubber.querySelector('.scrub-thumb'));return {delta:d.left+d.width/2-r.left-r.width/2,width:d.width,available:r.width,front:b.color,back:a.color,clip:b.clipPath,background:t.backgroundColor,height:parseFloat(t.height)}})()")
+                        label=await evaluate("(()=>{const r=elScrubber.querySelector('.scrub-track').getBoundingClientRect(),d=elScrubber.querySelector('.scrub-times').getBoundingClientRect(),a=getComputedStyle(elScrubber.querySelector('.scrub-label')),t=getComputedStyle(elScrubber.querySelector('.scrub-thumb'));return {delta:d.left+d.width/2-r.left-r.width/2,width:d.width,available:r.width,front:a.backgroundImage,back:a.color,clip:a.backgroundClip,background:t.backgroundColor,height:parseFloat(t.height)}})()")
                         assert abs(label['delta'])<.1 and label['width']<=label['available'] and label['front']!=label['back'] and label['clip']!='none' and label['height']>28,label
                         await shot(f'compact-{width}-{int(f*100)}')
                 assert await evaluate('__maxBuilders')<=1,await evaluate('__maxBuilders')

@@ -15,9 +15,12 @@ from viewer_fixtures import synthetic_rows
 
 async def run(args):
     out=Path(args.output);out.mkdir(parents=True,exist_ok=True)
-    controls=getattr(args,'controls',False)
+    controls=getattr(args,'controls',False) or getattr(args,'marker',False)
     notices=getattr(args,'notices',False)
     baseline=subprocess.check_output(['git','show',args.baseline+':src/viewer_template.html'],cwd=ROOT).decode('utf-8')
+    if getattr(args,'marker',False):
+        from src.ui.card_images import fallback_data
+        baseline=baseline.replace('{{VOD_FALLBACK_PNG}}',fallback_data(False)).replace('{{LIVE_FALLBACK_PNG}}',fallback_data(True))
     pixel='data:image/svg+xml;base64,'+base64.b64encode(b'<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"><rect width="22" height="22" fill="purple"/></svg>').decode()
     for count in sorted(set(args.sizes+([0,1,2,10000] if args.scrubber else [])+([10000,100000] if args.panel else [])+([10000] if controls else []))):
         rows=list(synthetic_rows(count))
@@ -103,6 +106,10 @@ function sample(){
 }requestAnimationFrame(sample);
 }
 """))
+                if args.marker:
+                    from viewer_marker_cases import check_marker
+                    await check_marker(call,evaluate,wait,out,args,errors,requests)
+                    return
                 if controls:
                     from viewer_panel_cases import visual_checks
                     await visual_checks(call,evaluate,wait,out,errors,requests)
@@ -260,6 +267,7 @@ function sample(){
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--output',required=True);parser.add_argument('--baseline',default='1a089003b84fdb12c13d419aef16c01d53d8df83');parser.add_argument('--chrome',default=r'C:\Program Files\Google\Chrome\Application\chrome.exe');parser.add_argument('--sizes',nargs='+',type=int,default=[10000,25000,100000]);parser.add_argument('--widths',nargs='+',type=int,default=[320,390,1440]);parser.add_argument('--scrubber',action='store_true',help='Logical navigation and gesture regressions, without performance matrix')
+    parser.add_argument('--marker',action='store_true',help='Focused marker geometry and text paint checks')
     parser.add_argument('--panel',action='store_true',help='Focused mobile panel visual checks and animation profile')
     parser.add_argument('--controls',action='store_true',help='Mobile control row, mode switches and endpoint gestures; no profiling')
     parser.add_argument('--images',action='store_true',help='Focused embedded preview checks only');parser.add_argument('--notices',action='store_true',help='Conservative notice rendering/search/copy/PNG in mixed virtual chat; no profiling')

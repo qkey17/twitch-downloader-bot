@@ -101,10 +101,10 @@ async def visual_checks(call,evaluate,wait,out,errors,requests):
             await shot(f'controls-{"expanded" if expanded else "compact"}-{width}',True)
             for percent in (0,25,50,75,100):
                 await evaluate(f'requestScrub(Math.round({percent}/100*(rowCount()-1)));true');await settled()
-                # Border-box split follows the actual track edge, including both
-                # rounded ends. The opaque gradient paints above/below the track.
+                # The opaque capsule stays above the shortened track and below
+                # the single contrast-colored glyph mask.
                 paint=await evaluate('''(()=>{const t=elScrubber.querySelector('.scrub-thumb'),a=t.getBoundingClientRect(),r=elScrubber.querySelector('.scrub-track').getBoundingClientRect(),fill=elScrubber.querySelector('.scrub-fill').getBoundingClientRect();const s=getComputedStyle(t);return {split:fill.right-a.left,background:s.backgroundImage,origin:s.backgroundOrigin,clip:s.backgroundClip,center:a.y+a.height/2-r.y-r.height/2,labelZ:getComputedStyle(elScrubber.querySelector('.scrub-label')).zIndex,thumbZ:s.zIndex};})()''')
-                assert 'linear-gradient' in paint['background'] and 'rgba' not in paint['background'] and paint['origin']=='border-box' and paint['clip']=='border-box' and abs(paint['center'])<.1 and int(paint['labelZ'])>int(paint['thumbZ']),paint
+                assert paint['background']=='none' and paint['origin']=='border-box' and paint['clip']=='border-box' and abs(paint['center'])<.1 and int(paint['labelZ'])>int(paint['thumbZ']),paint
                 await shot(f'bar-{width}-{int(expanded)}-{percent}',True)
             await evaluate('requestScrub(0);true');await settled()
         # Mode crossings, not only resize, reset mobile compact. Width changes
