@@ -73,8 +73,8 @@ class ReadyPreviewTests(unittest.IsolatedAsyncioTestCase):
         p.start(); self.addCleanup(p.stop)
         self.available = {'123456789':self.ready_result(), '2':self.ready_result() | {'vod_id':'2'}}
         self.ready.side_effect = lambda key:self.available.get(key)
-        videos.fetch_archive_vods.return_value = ([cards.vod(123456789, thumbnail_url=URL), cards.vod(2, thumbnail_url=URL)] +
-                                                  [cards.vod(i, thumbnail_url=URL) for i in range(3, 9)], None)
+        videos.fetch_archive_vods.return_value = ([cards.vod(123456789, thumbnail_url=URL), cards.vod(2, thumbnail_url=URL,created_at='2026-01-01T03:04:00Z')] +
+                                                  [cards.vod(i, thumbnail_url=URL,created_at='2026-01-01T03:04:00Z') for i in range(3, 9)], None)
 
     def message(self, number=20, text=''):
         # This legacy transport rebuilds synthetic messages with reused IDs. Reset

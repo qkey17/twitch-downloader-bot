@@ -62,6 +62,7 @@ async def download_and_send(
         meta_dict = {
             "title": meta.title,
             "channel": meta.channel,
+            "channel_id": getattr(meta, "channel_id", None),
             "length_seconds": meta.length_seconds,
             "vod_len": fmt_hhmmss(int(meta.length_seconds)) if isinstance(meta.length_seconds, int) else "—",
             "created_at": meta.created_at,

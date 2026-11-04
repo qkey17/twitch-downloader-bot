@@ -27,7 +27,7 @@ class ReadyOfferTests(unittest.IsolatedAsyncioTestCase):
 
     async def setup_offer(self):
         thumbnail=''  # This fixture exercises the unchanged text fallback.
-        videos.fetch_archive_vods.return_value=([cards.vod(123456789,thumbnail_url=thumbnail),cards.vod(2,thumbnail_url=thumbnail)],None)
+        videos.fetch_archive_vods.return_value=([cards.vod(123456789,thumbnail_url=thumbnail),cards.vod(2,thumbnail_url=thumbnail,created_at='2026-01-01T03:04:00Z')],None)
         source,view=await self.open(20)
         self.card=self.message(99)
         source.reply_photo=AsyncMock(return_value=self.card)

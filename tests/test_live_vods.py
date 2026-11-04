@@ -106,13 +106,14 @@ class LiveAPITests(unittest.IsolatedAsyncioTestCase):
             return [],'https://example.invalid/chat.html'
         with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as folder, \
              patch.object(worker,'OUT_DIR',folder),patch.object(worker,'SPOOL_DIR',str(Path(folder)/'spool')), \
-             patch.object(worker,'fetch_vod_meta',AsyncMock(return_value=meta.VodMeta('11',length_seconds=30,is_live=True))), \
+             patch.object(worker,'fetch_vod_meta',AsyncMock(return_value=meta.VodMeta('11',length_seconds=30,is_live=True,channel_id='123'))), \
              patch.object(worker,'get_client_id',return_value='client'), \
              patch.object(worker,'gql_fetch_comments',comments), \
              patch.object(worker,'make_progress_updater',return_value=AsyncMock()), \
              patch.object(worker,'build_html_result',side_effect=build):
             saved,_,_,_=await worker.download_and_send(context,1,2,'vod','11','html_online',publication=publication)
         self.assertTrue(saved['captured_during_live'])
+        self.assertEqual('123',saved['channel_id'])
         self.assertNotIn('live_state',saved)
         self.assertNotIn('live_checked_at',saved)
 

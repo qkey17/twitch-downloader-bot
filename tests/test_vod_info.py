@@ -41,7 +41,7 @@ class InfoTests(unittest.IsolatedAsyncioTestCase):
 
     async def setup_list(self, preview=URL, count=2):
         videos.fetch_archive_vods.return_value = ([cards.vod(123456789, thumbnail_url=preview)] +
-            [cards.vod(n, thumbnail_url=preview) for n in range(2, count+1)], None)
+            [cards.vod(n, thumbnail_url=preview,created_at='2026-01-01T03:04:00Z') for n in range(2, count+1)], None)
         source, view = await self.open(20)
         self.card = source
         return source, view
