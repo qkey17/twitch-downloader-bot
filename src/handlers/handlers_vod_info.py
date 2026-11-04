@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from src.vod_list import callback
 from src.ui.live_status import LIVE, observe, lines
+from src.live_capture import generation_capture
+from src.ui.html_file_action import lookup
 from src.channel_browser import VodSelection
 from src.ui.ui_channel_vods import _duration
 from src.ui.ui_formatters import _fmt_dt_utc
@@ -96,12 +98,13 @@ async def close_info(session, card=None):
     return True
 
 
-def information_text(channel, title, duration, created_at, *, is_live=False):
+def information_text(channel, title, duration, created_at, *, is_live=False, ready=None):
     """Shared Telegram information layout; caller supplies known values only."""
     return (f'🟣 {html.escape(channel or "—")}\n'
             f'🎬 {html.escape(title or "Без названия")}\n'
             f'⏱ {duration}\n🗓 {_fmt_dt_utc(created_at)}'
-            + ('\n'+LIVE if is_live is True else ''))
+            + ('\n'+LIVE if is_live is True else '')
+            + lines({'captured_during_live': generation_capture(ready)}, ready=bool(ready)))
 
 
 async def show_info(browser, session, source, request, *, bot, context=None):
@@ -118,7 +121,7 @@ async def show_info(browser, session, source, request, *, bot, context=None):
     vod = view.items[request.index]
     live_state = await observe(context, vod.id, dict(id=vod.id, type='archive', user_id=session.channel.id, stream_id=vod.stream_id))
     text = information_text(view.channel.display_name[:80], vod.title, _duration(vod.duration), vod.created_at,
-                            is_live=bool(lines({'live_state':live_state})))
+                            is_live=bool(lines({'live_state':live_state})), ready=lookup(vod.id))
     nonce = secrets.token_hex(8)
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(CREATE_CHAT, callback_data=f'ui:vi:{session.token}:{nonce}:process')],
