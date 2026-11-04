@@ -175,20 +175,22 @@ class ViewerPreviewLayoutTests(unittest.TestCase):
         for width in (901,1440):
             self.assertEqual('none',self.responsive_properties('.mobile-control-row',width)['display'])
 
-    def test_scrubber_label_centers_the_whole_time_line_and_clips_contrast_layer(self):
+    def test_scrubber_label_uses_one_glyph_mask_with_two_contrasting_colors(self):
         label=self.properties('.scrub-label')
         self.assertEqual('center',label['justify-content'])
         self.assertEqual('nowrap',label['white-space'])
-        self.assertIn('--scrub-label-edge',self.properties('.scrub-label-on-fill')['clip-path'])
-        self.assertIn('--scrub-label-edge',label['clip-path'])
-        self.assertNotEqual(label['color'],self.properties('.scrub-label-on-fill')['color'])
+        self.assertEqual('transparent',label['color'])
+        self.assertEqual('text',label['background-clip'])
+        self.assertIn('--scrub-label-edge',label['background'])
+        self.assertEqual(['#20212b','#e1e3ed'],re.findall(r'#[0-9a-f]{6}',label['background']))
+        self.assertEqual({},self.properties('.scrub-label-on-fill'))
         self.assertEqual('none',self.properties('.scrub-thumb')['pointer-events'])
         def luminance(color):
             rgb=[int(color[i:i+2],16)/255 for i in (1,3,5)]
             linear=[v/12.92 if v<=.04045 else ((v+.055)/1.055)**2.4 for v in rgb]
             return sum(v*w for v,w in zip(linear,(.2126,.7152,.0722)))
-        for text,bg in [(label['color'],self.properties('.scrub-track')['background']),
-                        (self.properties('.scrub-label-on-fill')['color'],self.properties('.scrub-fill')['background'])]:
+        for text,bg in [('#e1e3ed',self.properties('.scrub-track')['background']),
+                        ('#20212b',self.properties('.scrub-fill')['background'])]:
             a,b=sorted((luminance(text),luminance(bg)))
             self.assertGreaterEqual((b+.05)/(a+.05),4.5)
 

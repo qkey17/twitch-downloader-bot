@@ -38,7 +38,7 @@ async def check_marker(call, evaluate, wait, out, args, errors, requests):
     geometry="""(()=>{const rect=n=>{const r=n.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height,right:r.right}};
 const thumb=elScrubber.querySelector('.scrub-thumb'),labels=[...elScrubber.querySelectorAll('.scrub-label')];
 return {outer:rect(elScrubber),track:rect(elScrubber.querySelector('.scrub-track')),fill:rect(elScrubber.querySelector('.scrub-fill')),thumb:rect(thumb),
-colors:[getComputedStyle(thumb).backgroundColor,getComputedStyle(thumb).backgroundImage],labels:labels.map(n=>({rect:rect(n),clip:getComputedStyle(n).clipPath,color:getComputedStyle(n).color,z:getComputedStyle(n).zIndex})),
+colors:[getComputedStyle(thumb).backgroundColor,getComputedStyle(thumb).backgroundImage],labels:labels.map(n=>({rect:rect(n),clip:getComputedStyle(n).backgroundClip,color:getComputedStyle(n).color,z:getComputedStyle(n).zIndex})),
 text:rect(elScrubber.querySelector('.scrub-times')),label:elScrubber.getAttribute('aria-valuetext')};})()"""
 
     for width in (320,390):
@@ -49,6 +49,8 @@ text:rect(elScrubber.querySelector('.scrub-times')),label:elScrubber.getAttribut
                     await evaluate(f'syncPanelState({str(expanded).lower()});true');await settled()
                     for percent in (0,1,25,50,75,99,100):
                         await evaluate(f'setScrubIndex(Math.round({percent}/100*(rowCount()-1)));true')
+                        if expanded:
+                            await evaluate("elScrubber.querySelectorAll('.scrub-times').forEach(n=>n.textContent='1234567:59:59 / 1234567:59:59');fitScrubLabel();true")
                         # Isolate paint geometry from logical-row rounding and scroll hysteresis.
                         await evaluate(f"elScrubber.style.setProperty('--scrub-progress','{percent}%');elScrubber.style.setProperty('--scrub-ratio','{percent/100}');true")
                         g=await evaluate(geometry);t=g['thumb'];o=g['outer'];r=g['track']
@@ -62,12 +64,12 @@ text:rect(elScrubber.querySelector('.scrub-times')),label:elScrubber.getAttribut
                             assert abs(g['fill']['right']-center)<.08,g
                             assert abs(center-(o['x']+11+(o['w']-22)*percent/100))<.08,g
                             assert t['w']==18 and t['h']==46 and g['colors']==['rgb(160, 163, 183)','none'],g
-                            assert g['labels'][0]['rect']==g['labels'][1]['rect'] and g['labels'][0]['color']!=g['labels'][1]['color'],g
-                            assert g['text']['w']<=o['w']-8+.1,g
-                            # Complementary text clips meet at the capsule's right edge, not its center.
+                            assert len(g['labels'])==1 and g['labels'][0]['color']=='rgba(0, 0, 0, 0)',g
+                            assert g['text']['w']<=r['w']-8+.1,g
+                            # The single glyph mask switches palette at the capsule's right edge.
                             edge=await evaluate("(()=>{const n=document.createElement('i');n.style.cssText='position:absolute;width:var(--scrub-label-edge);height:0';elScrubber.append(n);const w=n.getBoundingClientRect().width;n.remove();return w})()")
                             assert abs(edge-(t['right']-o['x']))<.1,g
-                            assert all(n['clip']!='none' and int(n['z'])>1 for n in g['labels']),g
+                            assert all(n['clip']=='text' and int(n['z'])>1 for n in g['labels']),g
                             # Sample all across the capsule at mid-height outside the glyph band.
                             clip=dict(x=o['x'],y=o['y'],width=o['w'],height=o['h'])
                             raster=await shot(None,clip)
@@ -79,7 +81,7 @@ text:rect(elScrubber.querySelector('.scrub-times')),label:elScrubber.getAttribut
                                 # retain visible contrast, even where the capsule crosses it.
                                 await evaluate("elScrubber.querySelectorAll('.scrub-label').forEach(n=>n.style.visibility='hidden');true")
                                 background=await shot(None,clip)
-                                await evaluate("(()=>{elScrubber.querySelectorAll('.scrub-label').forEach(n=>n.style.visibility='');const n=document.createElement('style');n.id='marker-probe';n.textContent='#fastScrubber,#fastScrubber .scrub-track,#fastScrubber .scrub-fill,#fastScrubber .scrub-thumb{background:#000!important;border-color:#000!important}#fastScrubber .scrub-label{visibility:hidden}#fastScrubber .scrub-label-on-fill{visibility:visible;color:#fff;clip-path:none}';document.head.append(n);return true})()")
+                                await evaluate("(()=>{elScrubber.querySelectorAll('.scrub-label').forEach(n=>n.style.visibility='');const n=document.createElement('style');n.id='marker-probe';n.textContent='#fastScrubber,#fastScrubber .scrub-track,#fastScrubber .scrub-fill,#fastScrubber .scrub-thumb{background:#000!important;border-color:#000!important}#fastScrubber .scrub-label{visibility:visible;background:none;color:#fff;clip-path:none}';document.head.append(n);return true})()")
                                 reference=await shot(None,clip)
                                 await evaluate("document.getElementById('marker-probe').remove();true")
                                 glyphs=0
@@ -87,7 +89,10 @@ text:rect(elScrubber.querySelector('.scrub-times')),label:elScrubber.getAttribut
                                     for xx in range(reference.width):
                                         if min(reference.getpixel((xx,yy)))>180:
                                             glyphs+=1
-                                            assert max(abs(a-b) for a,b in zip(raster.getpixel((xx,yy)),background.getpixel((xx,yy))))>40,(width,percent,xx,yy)
+                                            contrast=max(abs(a-b) for a,b in zip(raster.getpixel((xx,yy)),background.getpixel((xx,yy))))
+                                            if contrast<=40:
+                                                raster.save(out/'text-probe-actual.png');reference.save(out/'text-probe-reference.png');background.save(out/'text-probe-background.png')
+                                            assert contrast>40,(width,percent,xx,yy,contrast,raster.getpixel((xx,yy)),background.getpixel((xx,yy)))
                                 assert glyphs>50,glyphs
                             results.append(dict(width=width,mode=mode,expanded=expanded,percent=percent,geometry='PASS',solid_capsule='PASS'))
                         if mode=='offline' and (width==390 or percent in (0,50,100)):

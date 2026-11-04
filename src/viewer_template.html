@@ -884,8 +884,7 @@ html{overflow-anchor:none;}
   .fast-scrubber[aria-disabled="true"]{cursor:default;}
   .scrub-track{position:absolute;left:var(--scrub-inset);right:var(--scrub-inset);height:28px;border-radius:7px;background:#30313e;overflow:hidden;}
   .scrub-fill{position:absolute;inset:0 auto 0 0;width:calc(100% * var(--scrub-ratio,0));background:#a0a3b7;}
-  .scrub-label{position:absolute;inset:0;z-index:2;display:flex;align-items:center;justify-content:center;white-space:nowrap;font:500 12px/1.2 var(--sans);font-variant-numeric:tabular-nums;color:#e1e3ed;clip-path:inset(0 0 0 var(--scrub-label-edge));pointer-events:none;}
-  .scrub-label-on-fill{color:#20212b;clip-path:inset(0 calc(100% - var(--scrub-label-edge)) 0 0);}
+  .scrub-label{position:absolute;inset:0;z-index:2;display:flex;align-items:center;justify-content:center;white-space:nowrap;font:500 12px/1.2 var(--sans);font-variant-numeric:tabular-nums;color:transparent;background:linear-gradient(to right,#20212b 0 var(--scrub-label-edge),#e1e3ed var(--scrub-label-edge) 100%);background-clip:text;-webkit-background-clip:text;pointer-events:none;}
   /* Keep the original 11px endpoint centers and 18px border-box capsule.
      Track, fill and thumb share the same travel; dark text also covers the thumb. */
   .scrub-thumb{position:absolute;z-index:1;top:0;height:var(--control-h);left:var(--scrub-center);width:var(--scrub-thumb-width);transform:translateX(-50%);border-radius:9px;border:1px solid #747888;background:#a0a3b7;background-origin:border-box;background-clip:border-box;pointer-events:none;}
@@ -965,7 +964,6 @@ html{overflow-anchor:none;}
           <div class="scrub-fill"></div>
         </div>
         <div class="scrub-label" aria-hidden="true"><span class="scrub-times">— / —</span></div>
-        <div class="scrub-label scrub-label-on-fill" aria-hidden="true"><span class="scrub-times">— / —</span></div>
         <div class="scrub-thumb"></div>
       </div>
       <button class="panel-toggle" type="button" aria-label="Развернуть панель" aria-expanded="false" aria-controls="panelDetails"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6"/></svg></button>
@@ -1833,7 +1831,7 @@ function physicalChatEnd(){
 function fitScrubLabel(){
   const span=elScrubber.querySelector('.scrub-times');
   if(!MOBILE_MQ.matches || !span) return;
-  const available=elScrubber.clientWidth-8,signature=available+'|'+span.textContent;
+  const available=Math.max(1,elScrubber.querySelector('.scrub-track').getBoundingClientRect().width-8),signature=available+'|'+span.textContent;
   if(signature===scrubLabelSignature) return;
   scrubLabelSignature=signature;
   span.style.fontSize='12px';

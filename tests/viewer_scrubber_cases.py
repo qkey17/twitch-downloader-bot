@@ -235,7 +235,7 @@ window.__show=showWindow;showWindow=async(...args)=>{__builders++;__maxBuilders=
                 if count==10000 and mode=='offline':
                     for f in (0,.25,.5,.75,1):
                         await mouse([f]);await verify_target(round(f*(count-1)))
-                        label=await evaluate("(()=>{const r=elScrubber.querySelector('.scrub-track').getBoundingClientRect(),d=elScrubber.querySelector('.scrub-times').getBoundingClientRect(),a=getComputedStyle(elScrubber.querySelector('.scrub-label')),b=getComputedStyle(elScrubber.querySelector('.scrub-label-on-fill')),t=getComputedStyle(elScrubber.querySelector('.scrub-thumb'));return {delta:d.left+d.width/2-r.left-r.width/2,width:d.width,available:r.width,front:b.color,back:a.color,clip:b.clipPath,background:t.backgroundColor,height:parseFloat(t.height)}})()")
+                        label=await evaluate("(()=>{const r=elScrubber.querySelector('.scrub-track').getBoundingClientRect(),d=elScrubber.querySelector('.scrub-times').getBoundingClientRect(),a=getComputedStyle(elScrubber.querySelector('.scrub-label')),t=getComputedStyle(elScrubber.querySelector('.scrub-thumb'));return {delta:d.left+d.width/2-r.left-r.width/2,width:d.width,available:r.width,front:a.backgroundImage,back:a.color,clip:a.backgroundClip,background:t.backgroundColor,height:parseFloat(t.height)}})()")
                         assert abs(label['delta'])<.1 and label['width']<=label['available'] and label['front']!=label['back'] and label['clip']!='none' and label['height']>28,label
                         await shot(f'compact-{width}-{int(f*100)}')
                 assert await evaluate('__maxBuilders')<=1,await evaluate('__maxBuilders')
