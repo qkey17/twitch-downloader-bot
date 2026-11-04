@@ -77,7 +77,7 @@ def saved_vod(row, channel_id):
 
 
 async def confirmed(http, channel_id, records):
-    """At most five Helix requests, once per list session. Unknown omits archives."""
+    """At most five requests per session. None means unknown; [] means verified empty."""
     records = records[:MAX_CANDIDATES]
     missing = []
     try:
@@ -88,14 +88,14 @@ async def confirmed(http, channel_id, records):
                 response=await videos._get_json(http,'/videos',[('id',v.id) for v in batch])
                 rows=response['data']
                 if not isinstance(rows,list) or len(rows)>len(ids):
-                    return []
+                    return None
                 seen=set()
                 for row in rows:
                     if (not isinstance(row,dict) or row.get('id') not in ids or row['id'] in seen
                             or row.get('user_id')!=channel_id or row.get('type')!='archive'):
-                        return []
+                        return None
                     seen.add(row['id'])
                 missing.extend(v for v in batch if v.id not in seen)
     except Exception:
-        return []  # No inferred unavailability, retry, or background request.
+        return None  # No inferred unavailability, retry, or background request.
     return missing

@@ -64,7 +64,7 @@ class PublicInstructionPrivacyTests(unittest.IsolatedAsyncioTestCase):
                     plain = ''.join(parser.text)
                     self.assertTrue(set(re.findall(r'[A-Za-z_][A-Za-z_0-9]*', plain)) <= allowed_terms,
                                     'Public instruction contains a non-template identifier')
-                    self.assertEqual(['значение', 'значение'] if command in (commands.start_command,commands.help_command) else [], parser.examples)
+                    self.assertEqual([], parser.examples)
                     urls = {url.rstrip('.,;') for url in re.findall(r'https?://(?:www\.)?twitch\.tv/[^\s]+', plain)}
                     self.assertEqual(set(), urls)
                     self.assertIsNone(re.search(r'(?i)Twitch|архив|запис|видео|пример', plain))
@@ -80,8 +80,8 @@ class PublicInstructionPrivacyTests(unittest.IsolatedAsyncioTestCase):
         expected = (
             'Отправьте имя канала или ссылку на него, чтобы посмотреть список доступных для чтения трансляций.\n\n'
             'Либо отправьте ID или ссылку на необходимую трансляцию.\n\n'
-            'Тип запроса определяется автоматически. При необходимости укажите его явно, отправив команду вместе со значением:\n\n'
-            '«/vod <code>значение</code>» — получить чат VOD.\n«/channel <code>значение</code>» — посмотреть VODs канала.'
+            'Тип запроса определяется автоматически. При необходимости укажите его явно, отправив одну из команд вместе со значением:\n\n'
+            '«/vod значение» — получить чат VOD.\n«/channel значение» — посмотреть VODs канала.'
         )
         cases = (
             commands.start_command, commands.help_command,
@@ -92,7 +92,8 @@ class PublicInstructionPrivacyTests(unittest.IsolatedAsyncioTestCase):
                 await command(SimpleNamespace(effective_message=message), SimpleNamespace(args=[]))
                 self.assertEqual(expected, message.reply_text.await_args.args[0])
                 self.assertNotIn('reply_markup', message.reply_text.await_args.kwargs)
-                self.assertEqual('HTML', message.reply_text.await_args.kwargs['parse_mode'])
+                self.assertNotIn('parse_mode', message.reply_text.await_args.kwargs)
+                self.assertNotIn('entities', message.reply_text.await_args.kwargs)
                 self.assertTrue(message.reply_text.await_args.kwargs['link_preview_options'].is_disabled)
 
     def test_channel_copy_preserves_user_data_counters_and_button_actions(self):

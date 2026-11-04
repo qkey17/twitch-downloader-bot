@@ -58,10 +58,10 @@ class Batch(unittest.IsolatedAsyncioTestCase):
         for response in ({'data':[{}]},{'data':[dict(id='9',user_id='123',type='archive')]},
                          {'data':[dict(id='1',user_id='foreign',type='archive')]}, {'data':None}):
             with patch.object(videos,'_get_json',AsyncMock(return_value=response)):
-                self.assertEqual([],await archive.confirmed(object(),'123',values))
+                self.assertIsNone(await archive.confirmed(object(),'123',values))
         for error in (TimeoutError(),TwitchAPIError('synthetic',status=429),TwitchAPIError('synthetic',status=503)):
             with patch.object(videos,'_get_json',AsyncMock(side_effect=error)):
-                self.assertEqual([],await archive.confirmed(object(),'123',values))
+                self.assertIsNone(await archive.confirmed(object(),'123',values))
 
     async def test_requests_batched_and_bounded(self):
         with patch.object(videos,'_get_json',AsyncMock(return_value={'data':[]})) as get:
@@ -89,7 +89,7 @@ class Lists(unittest.IsolatedAsyncioTestCase):
              patch.object(archive,'confirmed',AsyncMock(return_value=saved)) as check, \
              patch.object(videos,'fetch_archive_vods',AsyncMock(side_effect=[(public[:3],'C'),(public[3:],None)])) as fetch:
             view=await self.browser.open(self.http,7,'channel',10,20)
-            self.assertEqual(1,fetch.await_count) # first five are already settled
+            self.assertEqual(2,fetch.await_count) # all Twitch pages precede archive confirmation
             self.assertEqual(['1','2','3','4','5'],[v.id for v in view.items[:5]])
             seen=[v.id for v in view.items[:5]]
             view=await self.go(view,'next')
@@ -117,6 +117,9 @@ class Lists(unittest.IsolatedAsyncioTestCase):
              patch.object(videos,'fetch_archive_vods',AsyncMock(return_value=([record(2)],None))):
             view=await self.browser.open(self.http,7,'channel',10,20)
             self.assertEqual(['2'],[v.id for v in view.items]);self.assertFalse(view.archived_ids)
+            from src.vod_list import build_list
+            self.assertTrue(view.archive_incomplete)
+            self.assertIn('Не удалось проверить архив',build_list(view)[0])
         with patch.object(archive,'candidates',return_value=[record(1)]), \
              patch.object(archive,'confirmed',AsyncMock(return_value=[record(1)])), \
              patch.object(videos,'fetch_archive_vods',AsyncMock(return_value=([],None))):
@@ -131,17 +134,17 @@ class Lists(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(2,fetch.await_count)
             self.assertEqual([str(n) for n in range(1,9)],[v.id for v in view.items])
 
-    async def test_page_picker_loads_only_requested_prefix_and_rejects_reordered_continuation(self):
+    async def test_page_picker_uses_complete_list_and_rejects_reordered_continuation(self):
         pages=[([record(n) for n in range(1,11)],'C'),([record(n) for n in range(11,21)],'D'),([record(21)],None)]
         with patch.object(videos,'fetch_archive_vods',AsyncMock(side_effect=pages)) as fetch:
             view=await self.browser.open(self.http,7,'channel',10,20)
-            self.assertFalse(view.exhausted);self.assertEqual(1,fetch.await_count)
+            self.assertTrue(view.exhausted);self.assertEqual(3,fetch.await_count)
             view=await self.go(view,'pages');self.assertTrue(view.grid)
             view=await self.go(view,'page',1);self.assertEqual(1,view.page)
-            self.assertEqual(2,fetch.await_count)
+            self.assertEqual(3,fetch.await_count)
             self.assertEqual(['6','7','8','9','10'],[v.id for v in view.items[5:10]])
             view=await self.go(view,'prev');self.assertEqual(0,view.page)
-            self.assertEqual(2,fetch.await_count)
+            self.assertEqual(3,fetch.await_count)
         other=VodListBrowser()
         with patch.object(videos,'fetch_archive_vods',AsyncMock(side_effect=[([record(10)],'C'),([record(1)],None)])):
             bad=await other.open(self.http,7,'channel',10,21)

@@ -34,7 +34,7 @@ class ListTests(unittest.IsolatedAsyncioTestCase):
         return await self.browser.handle_callback(self.http, owner, callback(view, action, number), 10, message)
 
     async def test_complete_counts_and_five_date_buttons(self):
-        for count in (0, 1, 2, 5, 6, 34, 200):
+        for count in (0, 1, 5, 6, 10, 11, 23, 25, 34, 200):
             with self.subTest(count=count):
                 self.fetch_vods.reset_mock()
                 view = await self.open(count)
@@ -43,6 +43,7 @@ class ListTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((count+4)//5, view.page_count)
                 text, kb = build_list(view)
                 self.assertNotIn('+', text)
+                self.assertNotIn('+', str(kb))
                 self.assertEqual('🟣 Channel' + ('\nУ канала нет опубликованных VODs.' if count==0 else ''),text)
                 self.assertEqual(0,text.count('UTC'))
                 self.assertEqual(max(1, (count+99)//100), self.fetch_vods.await_count)
@@ -85,6 +86,50 @@ class ListTests(unittest.IsolatedAsyncioTestCase):
         view = await self.go(picked.view, 'back')
         self.assertEqual(19, view.page)
         self.assertEqual(1, self.fetch_vods.await_count)
+
+    async def test_exact_page_picker_for_23_and_25_records(self):
+        for count in (23,25):
+            self.fetch_vods.reset_mock()
+            view=await self.open(count)
+            self.assertEqual(5,view.page_count)
+            self.assertEqual('Стр. 1/5',build_list(view)[1].inline_keyboard[-1][0].text)
+            view=await self.go(view,'pages')
+            self.assertEqual(['1','2','3','4','5'],[b.text for row in build_list(view)[1].inline_keyboard for b in row if b.text.isdigit()])
+            view=await self.go(view,'page',4)
+            picked=await self.go(view,'select',20)
+            view=await self.go(picked.view,'back')
+            self.assertEqual(4,view.page)
+            self.assertEqual(1,self.fetch_vods.await_count)
+
+    async def test_waits_for_last_page_before_final_navigation_and_archive_lookup(self):
+        from src import channel_archive
+        entered,finish=asyncio.Event(),asyncio.Event()
+        async def fetch(http,channel,cursor):
+            if cursor is None:return [cards.vod(n) for n in range(1,7)],'C'
+            entered.set();await finish.wait()
+            return [cards.vod(7)],None
+        self.fetch_vods.side_effect=fetch
+        with patch.object(channel_archive,'candidates',return_value=[]) as candidates:
+            pending=self.task(self.browser.open(self.http,7,'channel',10,20))
+            await asyncio.wait_for(entered.wait(),1)
+            session=next(iter(self.browser._sessions.values()))
+            interim=self.browser._view(session)
+            self.assertFalse(interim.complete);self.assertEqual(0,interim.page_count)
+            self.assertIsNone(build_list(interim)[1]);candidates.assert_not_called()
+            finish.set();view=await asyncio.wait_for(pending,1)
+            self.assertTrue(view.complete);self.assertEqual(2,view.page_count)
+            candidates.assert_called_once()
+
+    async def test_real_limits_hide_partial_list_and_skip_archive(self):
+        from src import channel_archive
+        for pages in ([([cards.vod(n+1) for n in range(i*100,(i+1)*100)],str(i)) for i in range(5)],
+                      [([cards.vod(i+1)],str(i)) for i in range(10)]):
+            self.fetch_vods.side_effect=pages
+            with patch.object(channel_archive,'candidates') as candidates:
+                view=await self.browser.open(self.http,7,'channel',10,20)
+                self.assertEqual('limit',view.status);self.assertFalse(view.complete)
+                text,kb=build_list(view);self.assertIsNone(kb)
+                self.assertIn('Полный список не загружен',text);candidates.assert_not_called()
 
     async def test_foreign_stale_and_out_of_page_callbacks(self):
         view = await self.open(6)
