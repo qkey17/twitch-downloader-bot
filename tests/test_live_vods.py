@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 from src.twitch_api import live, meta, videos
 from src.live_capture import WARNING, captured_live, generation_capture
+from src.ui.live_status import WARNING as TELEGRAM_WARNING, LIVE
 from src.html_renderer import render_viewer_html, write_viewer_html
 from src.ui.ui_history import ready_offer_text, format_vod_summary
 from src.workers.worker_progress import _build_progress_card
@@ -112,6 +113,8 @@ class LiveAPITests(unittest.IsolatedAsyncioTestCase):
              patch.object(worker,'build_html_result',side_effect=build):
             saved,_,_,_=await worker.download_and_send(context,1,2,'vod','11','html_online',publication=publication)
         self.assertTrue(saved['captured_during_live'])
+        self.assertNotIn('live_state',saved)
+        self.assertNotIn('live_checked_at',saved)
 
     async def test_list_refreshes_channel_once_and_preserves_navigation(self):
         browser=VodListBrowser();session=object()
@@ -142,10 +145,9 @@ class CaptureTests(unittest.TestCase):
     def test_exact_shared_warning_and_heading_free_offer(self):
         expected='🔴 Чат получен во время LIVE-трансляции и может быть неполным'
         self.assertEqual(expected,WARNING)
-        ready={'meta':{'captured_during_live':True,'channel':'C','title':'T'},'stats':{'messages':42,'unique_users':7}}
-        for text in [ready_offer_text(ready),format_vod_summary(ready['meta']|ready['stats']),
-                     _build_progress_card(ready['meta'],'vod',1,1,False)]:
-            self.assertEqual(1,text.count(expected))
+        ready={'html_ref':'https://example.invalid/a.html','meta':{'captured_during_live':True,'channel':'C','title':'T'},'stats':{'messages':42,'unique_users':7}}
+        for text in [ready_offer_text(ready),format_vod_summary(ready['meta']|ready['stats']|{'html_url':ready['html_ref']})]:
+            self.assertEqual(1,text.count(TELEGRAM_WARNING))
             self.assertNotIn('Чат VOD уже готов',text)
             self.assertFalse(text.startswith('\n'))
         self.assertIn('💬 42',ready_offer_text(ready))
@@ -160,7 +162,7 @@ class CaptureTests(unittest.TestCase):
         with patch.object(live,'current_stream',AsyncMock(return_value='')) as request:
             ready=db_results.get_ready_result('123456789')
             self.assertTrue(generation_capture(ready))
-            self.assertIn(WARNING,ready_offer_text(ready))
+            self.assertIn(TELEGRAM_WARNING,ready_offer_text(ready))
             self.assertEqual(1,db.get_history_count(7))
             row=self.rows()[0]
             self.assertTrue(generation_capture(row))
@@ -177,8 +179,8 @@ class CaptureTests(unittest.TestCase):
             self.assertNotIn(WARNING,format_vod_summary(value or {}))
         for value in ('invalid','[]','null'):
             self.assertFalse(generation_capture({'meta_json':value}))
-        self.assertIn(WARNING,_build_progress_card({'captured_during_live':True},'vod',1,1,False))
-        self.assertIn(WARNING,information_text('<x>','<script>','00:01',None,is_live=True))
+        self.assertNotIn(TELEGRAM_WARNING,_build_progress_card({'captured_during_live':True},'vod',1,1,False))
+        self.assertIn(LIVE,information_text('<x>','<script>','00:01',None,is_live=True))
         self.assertNotIn('<script>',information_text('<x>','<script>','00:01',None,is_live=True))
 
     def test_streaming_html_parity_persistent_flag_and_xss_escaping(self):
@@ -213,8 +215,8 @@ class HistoryLiveTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(html_file_action,'lookup',side_effect=lambda vod_id:dict(saved,vod_id=vod_id)), \
              patch.object(live,'current_stream',AsyncMock(return_value='')) as status:
             await self.open_history()
-            self.assertIn(WARNING,self.context.bot.send_photo.await_args.kwargs['caption'])
+            self.assertIn(TELEGRAM_WARNING,self.context.bot.send_photo.await_args.kwargs['caption'])
             await history_page_callback(self.query(1),self.context)
-            self.assertIn(WARNING,self.context.bot.edit_message_caption.await_args.kwargs['caption'])
+            self.assertIn(TELEGRAM_WARNING,self.context.bot.edit_message_caption.await_args.kwargs['caption'])
             self.assertEqual(2,self.context.user_data['history_view']['history_id'])
             status.assert_not_awaited()

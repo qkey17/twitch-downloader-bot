@@ -9,7 +9,7 @@ from src.ui.ui_formatters import _fmt_len, _fmt_dt_utc
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 from src.ui.ui_constants import CB_PENDING_CANCEL
 from src.ui.ui_labels import CANCEL
-from src.live_capture import WARNING, captured_live
+from src.ui.live_status import lines
 
 
 def cancel_keyboard(context, *, waiting=False):
@@ -76,7 +76,7 @@ def _build_progress_card(meta, vod_url, messages, users_len, done):
         f"🎬 {title}\n"
         f"⏱ {duration} • 💬 {messages} • 👥 {users_len}\n"
         f"🗓 {dt}"
-        + ('\n'+WARNING if captured_live(meta) or meta.get('is_live') is True else '')
+        + lines(meta)
     )
 
 

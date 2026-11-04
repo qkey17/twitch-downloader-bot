@@ -1,6 +1,7 @@
 import html
 from .result_actions import stack_actions
-from src.live_capture import WARNING, captured_live
+from src.live_capture import captured_live, generation_capture
+from .live_status import lines
 from src import config
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from .ui_constants import *
@@ -51,7 +52,7 @@ def format_vod_summary(it: dict, *, unknown_stats=False):
         return text if len(text) <= 64 else '—'
     return (f'🟣 {channel}\n🎬 {title}\n'
             f'⏱ {duration} • 💬 {count("messages")} • 👥 {count("unique_users")}\n🗓 {date}'
-            + ('\n'+WARNING if captured_live(it) else ''))
+            + lines(it, ready=bool(it.get('html_url'))))
 
 
 def ready_offer_text(ready):
@@ -65,7 +66,9 @@ def ready_offer_text(ready):
         value = meta.get(key)
         item[key] = value[:limit] if isinstance(value, str) else None
     item.update(messages=stats.get('messages'), unique_users=stats.get('unique_users'))
-    item['captured_during_live'] = captured_live(meta)
+    item['captured_during_live'] = generation_capture(ready)
+    item['html_url'] = ready.get('html_ref')
+    item['live_state'] = ready.get('live_state')
     return format_vod_summary(item, unknown_stats=True)
 
 

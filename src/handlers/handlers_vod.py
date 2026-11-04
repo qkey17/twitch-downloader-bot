@@ -44,6 +44,7 @@ from .handlers_state import (
 )
 from src.ui.ui_history import build_history_page, ready_offer_text
 from src.ui.callbacks import CallbackReply
+from src.ui.live_status import from_metadata, lines
 from src.ui.ui_labels import STALE_ACTION_NOTICE
 from src.ui.ui_labels import CHAT_GENERIC, VOD_LINK, CANCEL, ready_chat_label, RECREATE_CHAT, READY_UNAVAILABLE
 from src.ui.ui_constants import CB_PENDING_CANCEL
@@ -117,6 +118,10 @@ def _html_button_url(html_ref: str | None) -> str | None:
 async def _edit_progress_message_with_card(context, chat_id: int, message_id: int, item: dict, html_url: str | None = None,
                                          *, current=lambda: True, ui_lock=None, photo=False, on_photo=None, ready=None, owner_id=None, fresh=False):
     from src.ui.result_preview import resolve_preview, render_card, caption_fits, cleanup_card
+    from src.ui.live_status import observe
+    if ready and html_url:
+        item = dict(item, html_url=html_url)
+    item = dict(item, live_state=await observe(context, str((ready or {}).get('vod_id') or str(item.get('vod_url') or '').rsplit('/',1)[-1])))
     text, kb = _build_card(item)
     if not text:
         return
@@ -146,6 +151,10 @@ async def _edit_progress_message_with_card(context, chat_id: int, message_id: in
 
 async def _send_card_with_buttons(context, chat_id, item, html_url=None, *, ready=None, owner_id=None):
     from src.ui.result_preview import send_card
+    from src.ui.live_status import observe
+    if ready and html_url:
+        item = dict(item, html_url=html_url)
+    item = dict(item, live_state=await observe(context, str((ready or {}).get('vod_id') or str(item.get('vod_url') or '').rsplit('/',1)[-1])))
     text, kb = _build_card(item)
     if not text:
         return
@@ -189,7 +198,8 @@ async def _offer_ready(message,context,result,edit=False, *, owner_id):
     context.user_data["vod_result_choice"] = {"vod_id":vod_id,"nonce":nonce,"created_at":time.time(),"generation":result.get("id")}
     from src.ui.ready_open_action import action
     open_action = action(context, owner_id, message.chat_id, result)
-    text = ready_offer_text(result)
+    from src.ui.live_status import observe
+    text = ready_offer_text(dict(result, live_state=await observe(context, vod_id)))
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(ready_chat_label(result),callback_data=open_action)],
         [InlineKeyboardButton(RECREATE_CHAT,callback_data=f"ui:result:regen:{vod_id}:{nonce}")],
@@ -357,7 +367,7 @@ async def prepare_vod_choice(message, context, user_id, vod_id, *, is_current=No
             from types import SimpleNamespace
             started = await _start_download(SimpleNamespace(callback_query=SimpleNamespace(message=message),
                                                  effective_user=SimpleNamespace(id=user_id)), context, vod_id, modern=True,
-                                            initial_meta=vars(meta))
+                                            initial_meta=dict(vars(meta), live_state=from_metadata(meta)))
             return 'started' if started else 'busy'
         # Legacy format chooser retained for old internal callers only.
         prompt = await message.reply_text(
@@ -640,7 +650,7 @@ async def _start_download(update,context,vod_id,regenerate=False, *, modern=Fals
             raise RuntimeError('admission_closed')
         queue_text = information_text((meta.get('channel') or '—')[:120],
                                       (meta.get('title') or 'Без названия')[:240],
-                                      _fmt_len(meta.get('length_seconds')),meta.get('created_at'))
+                                      _fmt_len(meta.get('length_seconds')),meta.get('created_at'),is_live=bool(lines(meta)))
         queue_text += '\n🕒 В очереди — обработка начнётся автоматически'
         text = group.latest if group is not None and group.latest is not None else queue_text
         waiting = job.state == 'waiting'

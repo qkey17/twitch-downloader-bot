@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -58,6 +59,7 @@ class VodMeta:
     thumbnail_preview_url: Optional[str] = None
     thumbnail_full_url: Optional[str] = None
     is_live: Optional[bool] = None
+    live_checked_at: Optional[float] = None
 
 
 def extract_user_color(node: dict) -> Optional[str]:
@@ -237,6 +239,7 @@ async def fetch_vod_meta(
             from .live import current_stream, match_stream
             meta.is_live = match_stream(video2.get('stream_id'),
                 await current_stream(session, meta.channel_id, fresh=True))
+            meta.live_checked_at = time.monotonic()
             _check_cancel(cancel_check)
         thumb = videos[0].get("thumbnail_url")
         if meta.is_live is True and isinstance(thumb, str) and '/_404/404_processing_' in thumb:

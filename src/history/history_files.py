@@ -122,6 +122,8 @@ async def history_files_callback(update, context: ContextTypes.DEFAULT_TYPE):
             await reply.send(READY_UNAVAILABLE)
             return
 
+        from src.ui.live_status import observe
+        item['live_state'] = await observe(context,vod_id)
         cards, _ = build_history_page([item], page=0, per_page=1)
         text, kb = cards[0]
 

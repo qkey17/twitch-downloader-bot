@@ -37,6 +37,7 @@ class ChannelSelectionTests(unittest.IsolatedAsyncioTestCase):
             ('src.twitch_api.videos.fetch_user_by_login', AsyncMock(return_value=TwitchUser('123', 'channel', 'Channel'))),
             ('src.twitch_api.videos.fetch_archive_vods', AsyncMock(return_value=([archive], None))),
             ('src.handlers.handlers_vod.results.get_ready_result', self.ready),
+            ('src.handlers.handlers_vod_info.lookup', lambda vod_id: self.ready(vod_id)),
             ('src.handlers.handlers_vod.get_client_id', Mock(return_value='mock-client')),
             ('src.handlers.handlers_vod.fetch_vod_meta', self.metadata),
             ('src.handlers.handlers_vod._runner', self.runner),
