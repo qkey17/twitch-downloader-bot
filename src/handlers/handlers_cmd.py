@@ -1,22 +1,35 @@
 from telegram import Update, LinkPreviewOptions
 from telegram.ext import ContextTypes
-from src.admin_access import premium_instructions, role
+from src.admin_access import PREMIUM_SYNTAX, role
 from src.ui.ui import about_text, build_about_keyboard
 from .handlers_state import is_busy, get_pending, clear_pending
 from .handlers_input import cancel_input_request
 
 
 _HELP_TEXT = (
-    "Отправьте ID или ссылку на VOD, чтобы получить его чат\n"
-    "Отправьте название канала или ссылку на него, чтобы посмотреть доступные VODs\n"
-    "«канал» last — Открыть последний VOD или доступную запись текущей трансляции"
+    "Отправьте ID или ссылку на трансляцию, чтобы получить её чат.\n\n"
+    "Отправьте название канала или ссылку на него, чтобы посмотреть список записей.\n\n"
+    "Чтобы открыть последнюю запись канала, используйте:\n\n"
+    "<code>канал last</code>"
 )
 _PREMIUM_HELP = (
-    "<b>Premium</b>\n"
-    "«канал» all — Обработать все публичные VODs канала, включая ранее готовые\n"
-    "«канал» new — Обработать текущий LIVE VOD и VODs без полного готового чата\n"
-    "Вместо названия канала можно указать ссылку"
+    "<b>Premium</b>\n\n"
+    "Для массовой обработки добавьте к названию канала или ссылке на канал один из двух атрибутов:\n\n"
+    "<code>канал all</code>\n"
+    "Обработать все доступные записи, включая уже обработанные.\n\n"
+    "<code>канал new</code>\n"
+    "Обработать записи без полного готового чата."
 )
+_ADMIN_HELP = "<b>Admin</b>\n\n" + "\n\n".join(
+    f"«{PREMIUM_SYNTAX[action].replace('«ID»', 'ID')}» — {description}."
+    for action, description in (
+        ('add', 'предоставить Premium'),
+        ('remove', 'отозвать Premium'),
+        ('list', 'показать список Premium-пользователей'),
+    )
+)
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await help_command(update, context)
 
@@ -28,7 +41,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if access is not None:
             text += '\n\n' + _PREMIUM_HELP
         if access == 'owner':
-            text += '\n\n<b>Admin</b>\n' + premium_instructions()
+            text += '\n\n' + _ADMIN_HELP
     await update.effective_message.reply_text(
         text,
         parse_mode='HTML',

@@ -57,7 +57,7 @@ class PublicInstructionPrivacyTests(unittest.IsolatedAsyncioTestCase):
                     plain = ''.join(parser.text)
                     self.assertTrue(set(re.findall(r'[A-Za-z_][A-Za-z_0-9]*', plain)) <= allowed_terms,
                                     'Public instruction contains a non-template identifier')
-                    self.assertEqual([], parser.examples)
+                    self.assertEqual([] if command is commands.about_command else ['канал last'], parser.examples)
                     urls = {url.rstrip('.,;') for url in re.findall(r'https?://(?:www\.)?twitch\.tv/[^\s]+', plain)}
                     self.assertEqual(set(), urls)
                     self.assertIsNone(re.search(r'(?i)Twitch|архив|видео|пример', plain))
@@ -71,9 +71,10 @@ class PublicInstructionPrivacyTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_commands_match_approved_copy(self):
         expected = (
-            'Отправьте ID или ссылку на VOD, чтобы получить его чат\n'
-            'Отправьте название канала или ссылку на него, чтобы посмотреть доступные VODs\n'
-            '«канал» last — Открыть последний VOD или доступную запись текущей трансляции'
+            'Отправьте ID или ссылку на трансляцию, чтобы получить её чат.\n\n'
+            'Отправьте название канала или ссылку на него, чтобы посмотреть список записей.\n\n'
+            'Чтобы открыть последнюю запись канала, используйте:\n\n'
+            '<code>канал last</code>'
         )
         cases = (
             commands.start_command, commands.help_command,

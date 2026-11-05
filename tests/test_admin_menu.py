@@ -34,16 +34,23 @@ class AdminMenuTests(unittest.IsolatedAsyncioTestCase):
         basic = await self.help(8)
         premium = await self.help(9)
         owner = await self.help(7)
-        self.assertIn('ID или ссылку на VOD', basic)
+        self.assertIn('ID или ссылку на трансляцию', basic)
         self.assertIn('название канала или ссылку', basic)
         self.assertNotIn('Premium', basic)
-        self.assertTrue(premium.startswith(basic + '\n\n<b>Premium</b>'))
-        self.assertIn('«канал» all', premium)
-        self.assertIn('«канал» new', premium)
-        self.assertNotIn('/premium', premium)
-        self.assertTrue(owner.startswith(premium + '\n\n<b>Admin</b>'))
-        for command in ('/premium «ID» add', '/premium «ID» remove', '/premium list'):
-            self.assertIn(command, owner)
+        self.assertEqual(
+            basic + '\n\n<b>Premium</b>\n\n'
+            'Для массовой обработки добавьте к названию канала или ссылке на канал один из двух атрибутов:\n\n'
+            '<code>канал all</code>\nОбработать все доступные записи, включая уже обработанные.\n\n'
+            '<code>канал new</code>\nОбработать записи без полного готового чата.',
+            premium,
+        )
+        self.assertEqual(
+            premium + '\n\n<b>Admin</b>\n\n'
+            '«/premium ID add» — предоставить Premium.\n\n'
+            '«/premium ID remove» — отозвать Premium.\n\n'
+            '«/premium list» — показать список Premium-пользователей.',
+            owner,
+        )
         for user in (7, 9):
             self.assertEqual(basic, await self.help(user, 'supergroup'))
             with patch.dict(os.environ, {'TCD_ADMIN_USER_ID': 'invalid'}):

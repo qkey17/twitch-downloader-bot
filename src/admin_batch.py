@@ -27,7 +27,7 @@ KEY = 'tdb_admin_batch'
 BATCH_CANCEL = 'ui:batch_cancel:'
 BATCH_LIST = 'ui:batch_list:'
 _LIST_FIELD = 'batch_list'
-_PROGRESS = '<b>⏳ Обработка VODs…</b>'
+_PROGRESS = '<b>⏳ Обработка…</b>'
 
 
 async def _finish_delivery(coro):
@@ -57,7 +57,7 @@ class Batch:
     task: object = None
     cancelled: bool = False
     total: int = 0
-    index: int = 0
+    index: int = 0  # Settled positions in the selected queue.
     success: int = 0
     skipped: int = 0
     errors: int = 0
@@ -120,14 +120,11 @@ class Batch:
 
     async def summary(self, state, *, detail=None, terminal=False, job=None):
         if terminal:
-            icon = ('⚠️' if self.errors or self.halted or self.cleanup_failed
-                    else '⏹' if self.cancelled else '✅')
-            text = (f'<b>{icon} {state}</b>\n🟣 {html.escape(self.channel[:100])}\n\n'
-                    f'📊 Количество обработанных VODs: {self.success}')
+            text = f'<b>{state}</b>\n🟣 {html.escape(self.channel[:100])}'
         else:
             prefix = _PROGRESS
-            if self.index and self.total:
-                prefix += f'\n🎬 VOD {self.index} из {self.total}'
+            if self.total:
+                prefix += f'\n🎬 {self.index} из {self.total}'
             text = f'{prefix}\n\n{detail or state}'
             if not caption_fits(text):
                 # Worker cards may contain long escaped names. Keep their
@@ -322,12 +319,12 @@ async def run_batch(batch):
             image = DEFAULT
             if session is not None and session.channel is not None:
                 image = await channel_image(batch.context, session, session.channel.profile_image_url)
-            await batch.open_card(_PROGRESS + '\n\nЗагрузка списка VODs канала…', image)
+            await batch.open_card(_PROGRESS + '\n\nЗагрузка списка записей…', image)
             while session is not None and not session.complete and session.status in ('ready','empty_page'):
                 view=await browser._load(http,session,len(session.vods))
         if session is None or not session.complete or session.status not in ('ready','empty'):
             batch.halted = True
-            await batch.summary('Полный список VODs получить не удалось (ошибка или ограничение)', terminal=True)
+            await batch.summary('⚠️ Не удалось загрузить полный список записей', terminal=True)
             return
         def newest_first(vod):
             date, vod_id = order(vod)
@@ -342,10 +339,11 @@ async def run_batch(batch):
             excluded = batch.skipped = len(records) - len(queue)
             records = queue
         batch.channel=session.channel.display_name[:120];batch.total=len(records)
+        if batch.total:
+            await batch.summary('Подготовка обработки…')
         for item in records:
             if batch.cancelled or manager.closing:
                 batch.halted=True;break
-            batch.index+=1
             from src.vod_start_guard import start_guard
             with start_guard() as allowed:
                 if not allowed:
@@ -372,13 +370,17 @@ async def run_batch(batch):
                 manager.release_input(ticket);INPUT_TICKET.reset(token)
             if skipped:
                 batch.skipped += 1
-                await batch.summary('Готовый чат уже доступен')
+                batch.index += 1
+                if batch.index < batch.total:
+                    await batch.summary('Готовый чат уже доступен')
                 continue
             if job is None:
                 batch.errors+=1
                 if batch.critical_refusal:
                     batch.halted=True;break
-                await batch.summary('Не удалось начать обработку VOD')
+                batch.index += 1
+                if batch.index < batch.total:
+                    await batch.summary('Не удалось начать обработку записи')
                 continue
             detail = _build_progress_card(vars(meta), None, None, None, False,
                                           status='Ожидание обработки…' if job.state=='waiting' else 'Подготовка чата…')
@@ -390,12 +392,13 @@ async def run_batch(batch):
             batch.current_job=batch.current_part=None
             if job.critical:
                 batch.halted=True;break
+            batch.index += 1
         if batch.halted or batch.index < batch.total:
-            state = 'Обработка VODs остановлена из-за ошибки'
-        elif batch.errors:
-            state = 'Обработка VODs завершена с ошибками'
+            state = '⚠️ Обработка остановлена из-за ошибки'
+        elif batch.errors or batch.cancelled_vods:
+            state = '⚠️ Обработка завершена с ошибками'
         else:
-            state = 'Обработка VODs завершена'
+            state = '✅ Массовая обработка завершена'
         await batch.summary(state, terminal=True)
     except asyncio.CancelledError:
         batch.cancelled=True
@@ -417,18 +420,18 @@ async def run_batch(batch):
                 batch.cleanup_failed=job.critical
             except Exception:
                 logging.getLogger(__name__).warning('Batch cancellation cleanup failed')
-            if job.generation_committed and job.outcome=='success' and not part.history_failed:batch.success+=1
+            if job.generation_committed and job.outcome=='success' and not part.history_failed:
+                batch.success += 1
+                batch.index += 1
             elif job.generation_committed or job.outcome=='error':batch.errors+=1
             else:batch.cancelled_vods+=1
         finished = batch.success + (batch.skipped - excluded) + batch.errors + batch.cancelled_vods
         batch.cancelled_vods += max(0, batch.total - finished)
-        state = ('Не удалось подтвердить остановку обработки VODs' if batch.cleanup_failed
-                 else 'Обработка VODs остановлена по запросу')
+        state = ('⚠️ Не удалось подтвердить остановку' if batch.cleanup_failed
+                 else '⏹️ Обработка остановлена по запросу')
         await batch.summary(state, terminal=True)
     except Exception:
-        if batch.index > batch.success + (batch.skipped - excluded) + batch.errors + batch.cancelled_vods:
-            batch.errors += 1
         batch.halted = True
-        await batch.summary('Обработка VODs остановлена из-за ошибки', terminal=True)
+        await batch.summary('⚠️ Обработка остановлена из-за ошибки', terminal=True)
     finally:
         if app.bot_data.get(KEY) is batch:app.bot_data.pop(KEY,None)
