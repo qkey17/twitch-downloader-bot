@@ -39,7 +39,7 @@ class AdminMenuTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('Premium', basic)
         self.assertEqual(
             basic + '\n\n<b>Premium</b>\n'
-            'Для массовой обработки добавьте к названию канала или ссылке на канал один из двух атрибутов:\n'
+            'Для массовой обработки добавьте к названию канала один из двух атрибутов:\n'
             '<code>канал all</code> — обработать все доступные записи, включая уже обработанные.\n'
             '<code>канал new</code> — обработать записи без полного готового чата.',
             premium,
