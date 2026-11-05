@@ -1,17 +1,27 @@
 from telegram import Update, LinkPreviewOptions
 from telegram.ext import ContextTypes
+from src.admin_access import PREMIUM_SYNTAX, role
 from src.ui.ui import about_text, build_about_keyboard
 from .handlers_state import is_busy, get_pending, clear_pending
 from .handlers_input import cancel_input_request
 
 
 _HELP_TEXT = (
-    "Отправьте имя канала или ссылку на него, чтобы посмотреть список доступных для чтения трансляций.\n\n"
-    "Либо отправьте ID или ссылку на необходимую трансляцию.\n\n"
-    "Тип запроса определяется автоматически. При необходимости укажите его явно, отправив одну из команд вместе со значением:\n\n"
-    "«/vod значение» — получить чат VOD.\n"
-    "«/channel значение» — посмотреть VODs канала."
+    "Отправьте ID или ссылку на VOD, чтобы получить его чат\n"
+    "Отправьте название канала или ссылку на него, чтобы посмотреть доступные VODs"
 )
+_PREMIUM_HELP = (
+    "Premium\n"
+    "«канал» all — Обработать все публичные VODs канала, включая ранее готовые\n"
+    "«канал» new — Обработать VODs без действительного готового HTML\n"
+    "Вместо названия канала можно указать ссылку"
+)
+_ADMIN_HELP = "\n".join((
+    "Admin",
+    f"{PREMIUM_SYNTAX['add']} — Предоставить Premium",
+    f"{PREMIUM_SYNTAX['remove']} — Отозвать Premium",
+    f"{PREMIUM_SYNTAX['list']} — Показать пользователей с Premium",
+))
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -19,8 +29,15 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = _HELP_TEXT
+    if getattr(getattr(update, 'effective_chat', None), 'type', None) == 'private':
+        access = role(getattr(update.effective_user, 'id', None))
+        if access is not None:
+            text += '\n\n' + _PREMIUM_HELP
+        if access == 'owner':
+            text += '\n\n' + _ADMIN_HELP
     await update.effective_message.reply_text(
-        _HELP_TEXT,
+        text,
         link_preview_options=LinkPreviewOptions(is_disabled=True),
     )
 

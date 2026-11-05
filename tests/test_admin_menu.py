@@ -1,4 +1,4 @@
-"""Individual Telegram scopes and role-aware administrative help."""
+"""Role-aware help and bounded removal of legacy Telegram menu scopes."""
 
 import asyncio
 import os
@@ -6,102 +6,107 @@ from types import SimpleNamespace as NS
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from telegram.error import Forbidden, NetworkError
+from telegram.error import Forbidden, NetworkError, RetryAfter
 
-from src import admin_access, admin_batch
+from src import admin_access
 from src.database import db_privileges
-from src.handlers import handlers_admin
-from test_delegated_admin import invocation, isolated_privileges
+from src.handlers import handlers_cmd, handlers_input
+from test_delegated_admin import invocation, invoke, isolated_privileges
 
 
 class AdminMenuTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         isolated_privileges(self)
-        self.app = NS(bot_data={})
-        self.bot = NS(set_my_commands=AsyncMock(), delete_my_commands=AsyncMock())
+        self.bot = NS(set_my_commands=AsyncMock(), delete_my_commands=AsyncMock(return_value=True))
+        self.app = NS(bot=self.bot, bot_data={})
 
     async def refresh(self, user, *, chat_type='private'):
         update = NS(effective_chat=NS(id=user, type=chat_type), effective_user=NS(id=user))
-        await admin_access.refresh_private_menu(update, NS(bot=self.bot, application=self.app))
+        await admin_access.clear_private_menu(update, NS(bot=self.bot, application=self.app))
 
-    async def call(self, command, user, args):
-        update, context = invocation(self.app, user, args)
-        context.bot = self.bot
-        await command(update, context)
+    async def help(self, user, chat='private'):
+        update, context = invocation(self.app, user, [], chat)
+        await handlers_cmd.help_command(update, context)
         return update.effective_message.reply_text.await_args.args[0]
 
-    async def test_help_is_role_aware_and_denied_users_cannot_run_either_mode(self):
+    async def test_help_is_role_aware_only_in_private_chat(self):
         db_privileges.grant(9)
-        owner = await self.call(handlers_admin.admin_command, 7, [])
-        delegate = await self.call(handlers_admin.admin_command, 9, [])
-        self.assertIn('Управление доступом', owner)
-        self.assertIn('/adminadd «ID пользователя»', owner)
-        self.assertIn('Обработка VODs', delegate)
-        self.assertIn('/allvods «канал»', delegate)
-        self.assertIn('/newvods «канал»', delegate)
-        self.assertNotIn('/adminadd', delegate)
-        self.assertEqual('/admin', await self.call(handlers_admin.admin_command, 9, ['extra']))
-        for command in (handlers_admin.admin_command, admin_batch.allvods_command, admin_batch.newvods_command):
-            self.assertEqual('Команда недоступна', await self.call(command, 8, ['channel']))
+        basic = await self.help(8)
+        premium = await self.help(9)
+        owner = await self.help(7)
+        self.assertIn('ID или ссылку на VOD', basic)
+        self.assertIn('название канала или ссылку', basic)
+        self.assertNotIn('Premium', basic)
+        self.assertTrue(premium.startswith(basic + '\n\nPremium'))
+        self.assertIn('«канал» all', premium)
+        self.assertIn('«канал» new', premium)
+        self.assertNotIn('/premium', premium)
+        self.assertTrue(owner.startswith(premium + '\n\nAdmin'))
+        for command in ('/premium add «ID»', '/premium remove «ID»', '/premium list'):
+            self.assertIn(command, owner)
+        for user in (7, 9):
+            self.assertEqual(basic, await self.help(user, 'supergroup'))
             with patch.dict(os.environ, {'TCD_ADMIN_USER_ID': 'invalid'}):
-                self.assertEqual('Команда недоступна', await self.call(command, 9, ['channel']))
-        self.assertEqual({}, self.app.bot_data)
+                self.assertEqual(basic, await self.help(user))
 
-    async def test_private_scopes_preserve_help_and_restart_reads_saved_delegates(self):
+    async def test_startup_clears_known_scopes_and_next_private_update_clears_revoked(self):
         db_privileges.grant(9)
-        await self.refresh(7)
-        await self.refresh(9)
-        await self.refresh(8)
-        await self.refresh(9, chat_type='group')
-        for call, user in zip(self.bot.set_my_commands.await_args_list, (7, 9), strict=True):
-            self.assertEqual(user, call.kwargs['scope'].chat_id)
-            self.assertEqual(['help', 'admin'], [entry.command for entry in call.args[0]])
-            self.assertEqual('Команды администратора', call.args[0][1].description)
+        await admin_access.clear_known_menus(self.app)
+        self.assertEqual([7, 9], [call.kwargs['scope'].chat_id
+                                  for call in self.bot.delete_my_commands.await_args_list])
+        await self.refresh(8, chat_type='supergroup')
+        await self.refresh(9)  # Already cleared during startup.
+        self.assertEqual(2, self.bot.delete_my_commands.await_count)
+        await self.refresh(8)  # May have a scope from a previously revoked grant.
         self.assertEqual(8, self.bot.delete_my_commands.await_args.kwargs['scope'].chat_id)
-        self.app.bot_data.clear()  # Simulate restart with the same DB.
-        await self.refresh(9)
-        self.assertEqual(9, self.bot.set_my_commands.await_args.kwargs['scope'].chat_id)
+        self.bot.set_my_commands.assert_not_awaited()
+        self.assertEqual(['help'], [command.command for command in admin_access.public_commands()])
 
-    async def test_failed_grant_and_revoke_sync_do_not_undo_permissions(self):
-        self.bot.set_my_commands.side_effect = Forbidden('synthetic not started')
-        self.assertEqual('Доступ предоставлен', await self.call(handlers_admin.adminadd_command, 7, ['9']))
-        self.assertTrue(db_privileges.has_access(9))
-        self.bot.set_my_commands.side_effect = None
-        menus = self.app.bot_data['tdb_admin_menus']
-        menus.recent[9] = 0
+    async def test_cleanup_failure_can_retry_and_never_gates_privilege_writes(self):
+        self.bot.delete_my_commands.side_effect = Forbidden('synthetic inaccessible chat')
         await self.refresh(9)
-        self.assertEqual(2, self.bot.set_my_commands.await_count)
-        self.bot.delete_my_commands.side_effect = NetworkError('synthetic')
-        self.assertEqual('Доступ отозван', await self.call(handlers_admin.adminremove_command, 7, ['9']))
+        self.assertEqual('Premium предоставлен', await invoke(self.app, 7, ['add', '9']))
+        self.assertTrue(db_privileges.has_access(9))
+        self.assertEqual('Premium отозван', await invoke(self.app, 7, ['remove', '9']))
         self.assertFalse(db_privileges.has_access(9))
+        self.assertEqual(1, self.bot.delete_my_commands.await_count)
+        await self.refresh(9)
+        self.assertEqual(1, self.bot.delete_my_commands.await_count)
+        self.app.bot_data['tdb_legacy_menus'].recent[9] = 0
         self.bot.delete_my_commands.side_effect = None
-        menus.recent[9] = 0
         await self.refresh(9)
         self.assertEqual(2, self.bot.delete_my_commands.await_count)
 
-    async def test_revocation_serializes_against_in_flight_grant_menu(self):
-        entered, release = asyncio.Event(), asyncio.Event()
-        events = []
+    async def test_background_cleanup_does_not_wait_in_ordinary_input(self):
+        entered = asyncio.Event()
 
-        async def set_commands(*args, **kwargs):
+        async def unavailable(**kwargs):
             entered.set()
-            await release.wait()
-            events.append('grant-menu')
+            await asyncio.Event().wait()
+            raise NetworkError('synthetic')
 
-        async def delete_commands(*args, **kwargs):
-            events.append('delete-menu')
-
-        self.bot.set_my_commands.side_effect = set_commands
-        self.bot.delete_my_commands.side_effect = delete_commands
-        grant = asyncio.create_task(self.call(handlers_admin.adminadd_command, 7, ['9']))
-        await asyncio.wait_for(entered.wait(), 2)
-        revoke = asyncio.create_task(self.call(handlers_admin.adminremove_command, 7, ['9']))
+        self.bot.delete_my_commands.side_effect = unavailable
+        admin_access.start_menu_cleanup(self.app)
         try:
-            while db_privileges.has_access(9):
-                await asyncio.sleep(0)
-            self.assertIsNone(admin_access.role(9))
-            self.assertEqual([], events)
+            await asyncio.wait_for(entered.wait(), 2)
+            msg = NS(text='sample_channel', reply_text=AsyncMock())
+            update = NS(message=msg, effective_user=NS(id=8))
+            with patch.object(handlers_input, '_dispatch', AsyncMock()) as dispatch:
+                await asyncio.wait_for(handlers_input.text_input(update, NS(application=self.app)), 2)
+                dispatch.assert_awaited_once()
+            msg.reply_text.assert_not_awaited()
         finally:
-            release.set()
-            await asyncio.wait_for(asyncio.gather(grant, revoke), 2)
-        self.assertEqual(['grant-menu', 'delete-menu'], events)
+            await admin_access.stop_menu_cleanup(self.app)
+        self.assertNotIn('tdb_menu_cleanup_task', self.app.bot_data)
+
+    async def test_rate_limit_stops_startup_sweep_until_later_interaction(self):
+        db_privileges.grant(9)
+        self.bot.delete_my_commands.side_effect = RetryAfter(12)
+        await admin_access.clear_known_menus(self.app)
+        await self.refresh(9)
+        self.assertEqual(1, self.bot.delete_my_commands.await_count)
+        menus = self.app.bot_data['tdb_legacy_menus']
+        menus.retry_at = 0
+        self.bot.delete_my_commands.side_effect = None
+        await self.refresh(9)
+        self.assertEqual(9, self.bot.delete_my_commands.await_args.kwargs['scope'].chat_id)

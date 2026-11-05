@@ -38,13 +38,10 @@ class PublicInstructionPrivacyTests(unittest.IsolatedAsyncioTestCase):
     async def test_public_commands_and_format_errors_contain_no_examples(self):
         # Also prevent example logins from slipping into plain text. Keep this
         # allowlist free of private identifiers, including in failure messages.
-        allowed_terms = {'VOD', 'VODs', 'ID', 'vod', 'channel', 'help'}
+        allowed_terms = {'VOD', 'VODs', 'ID', 'help'}
         cases = (
             (commands.start_command, []), (commands.help_command, []),
             (commands.about_command, []),
-            (inputs.vod_command, []), (inputs.channel_command, []),
-            (inputs.vod_command, ['fixture_channel']),
-            (inputs.channel_command, ['https://www.twitch.tv/videos/123']),
         )
         with patch.object(inputs, 'prepare_vod_choice', AsyncMock()) as prepare, \
              patch.object(inputs, 'show_channel_vods', AsyncMock()) as browse:
@@ -54,10 +51,6 @@ class PublicInstructionPrivacyTests(unittest.IsolatedAsyncioTestCase):
                     update = SimpleNamespace(effective_message=message)
                     context = SimpleNamespace(user_data={}, args=args)
                     await command(update, context)
-                    if command in (inputs.vod_command, inputs.channel_command) and not args:
-                        message.reply_text.assert_not_awaited()
-                        self.assertEqual({}, context.user_data)
-                        continue
                     text = message.reply_text.await_args.args[0]
                     parser = InstructionText()
                     parser.feed(text)
@@ -78,10 +71,8 @@ class PublicInstructionPrivacyTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_commands_match_approved_copy(self):
         expected = (
-            'Отправьте имя канала или ссылку на него, чтобы посмотреть список доступных для чтения трансляций.\n\n'
-            'Либо отправьте ID или ссылку на необходимую трансляцию.\n\n'
-            'Тип запроса определяется автоматически. При необходимости укажите его явно, отправив одну из команд вместе со значением:\n\n'
-            '«/vod значение» — получить чат VOD.\n«/channel значение» — посмотреть VODs канала.'
+            'Отправьте ID или ссылку на VOD, чтобы получить его чат\n'
+            'Отправьте название канала или ссылку на него, чтобы посмотреть доступные VODs'
         )
         cases = (
             commands.start_command, commands.help_command,

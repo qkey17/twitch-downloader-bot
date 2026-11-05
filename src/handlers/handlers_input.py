@@ -1,13 +1,11 @@
-"""Automatic text routing and explicit commands, without input-wait modes."""
+"""Automatic routing for VODs, channels and privileged batch requests."""
 import time
 import asyncio
 from src.ui.callbacks import CallbackReply
 from src.ui.ui_labels import STALE_ACTION_NOTICE
 
-from telegram import LinkPreviewOptions
-
 from src.config import PENDING_TTL_SECONDS
-from src.input_classifier import InputClassificationError, classify_input
+from src.input_classifier import InputClassificationError, classify_chat_input
 from .handlers_channel_vods import show_channel_vods
 from .handlers_chat import prepare_chat as prepare_vod_choice
 
@@ -15,10 +13,6 @@ from .handlers_chat import prepare_chat as prepare_vod_choice
 # Old messages can retain these buttons after an application restart.
 INPUT_CALLBACK_PATTERN = r'^ui:input:'
 _ROUTE = 'text_input_route'
-_HINTS = {
-    'vod': 'Вставьте ссылку на VOD или его ID.',
-    'channel': 'Вставьте имя канала или ссылку на него.',
-}
 _INVALID = 'Не удалось распознать запрос. Подробнее — /help.'
 _BUSY = 'Дождитесь завершения предыдущего запроса.'
 
@@ -106,30 +100,14 @@ async def text_input(update, context):
     if message is None:
         return
     try:
-        value = classify_input(message.text or '')
+        value = classify_chat_input(message.text or '')
     except InputClassificationError:
         await message.reply_text(_INVALID)
         return
-    return await _dispatch(message, context, update.effective_user.id, value)
-
-
-async def _command(update, context, kind):
-    argument = ' '.join(context.args or []).strip()
-    if not argument:
+    owner = getattr(update.effective_user, 'id', None)
+    if value.batch is not None:
+        from src.admin_batch import start_batch
+        return await start_batch(message, context, owner, value.value, new_only=value.batch == 'new')
+    if type(owner) is not int:
         return
-    message = update.effective_message
-    try:
-        value = classify_input(argument, expected_kind=kind)
-    except InputClassificationError:
-        await message.reply_text('Неверный формат. '+_HINTS[kind], parse_mode='HTML',
-                                 link_preview_options=LinkPreviewOptions(is_disabled=True))
-        return
-    return await _dispatch(message, context, update.effective_user.id, value)
-
-
-async def vod_command(update, context):
-    return await _command(update, context, 'vod')
-
-
-async def channel_command(update, context):
-    return await _command(update, context, 'channel')
+    return await _dispatch(message, context, owner, value)

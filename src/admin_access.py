@@ -1,4 +1,4 @@
-"""Admin authorization and best-effort private Telegram menu synchronization."""
+"""Privilege checks and cleanup of legacy private Telegram menus."""
 
 import asyncio
 from collections import OrderedDict
@@ -11,6 +11,12 @@ from telegram.error import RetryAfter, TelegramError
 
 from src import config
 from src.database import db_privileges
+
+PREMIUM_SYNTAX = {
+    'add': '/premium add «ID»',
+    'remove': '/premium remove «ID»',
+    'list': '/premium list',
+}
 
 
 def role(user_id):
@@ -30,36 +36,30 @@ def public_commands():
     return [BotCommand('help', 'Справка')]
 
 
-class AdminMenus:
+class LegacyMenus:
     def __init__(self):
         self.locks = [asyncio.Lock() for _ in range(16)]
         self.recent = OrderedDict()
+        self.retry_at = 0
 
-    async def sync(self, bot, user_id, *, force=False):
+    async def clear(self, bot, user_id):
         lock = self.locks[user_id % len(self.locks)]
-        if not force and lock.locked():
+        if lock.locked() or time.monotonic() < self.retry_at:
             return  # A later private interaction can retry without a waiter backlog.
         async with lock:
-            previous = self.recent.get(user_id)
-            if not force and previous and time.monotonic() < previous:
+            if time.monotonic() < self.recent.get(user_id, 0):
                 return
-            # Re-read after waiting so a delayed grant cannot undo a revocation.
-            allowed = role(user_id) is not None
             scope = BotCommandScopeChat(user_id)
-            retry_after = 300
+            retry_after = float('inf')
             try:
                 async with asyncio.timeout(5):
-                    if allowed:
-                        await bot.set_my_commands(public_commands() + [
-                            BotCommand('admin', 'Команды администратора'),
-                        ], scope=scope)
-                    else:
-                        await bot.delete_my_commands(scope=scope)
+                    if not await bot.delete_my_commands(scope=scope):
+                        retry_after = 5
             except RetryAfter as exc:
                 retry_after = max(5, float(exc.retry_after))
+                self.retry_at = time.monotonic() + retry_after
             except (TelegramError, OSError, TimeoutError):
-                logging.getLogger(__name__).warning('Private admin menu synchronization unavailable')
-                # Bound failed retries. A role change bypasses this cooldown.
+                logging.getLogger(__name__).warning('Legacy private menu cleanup unavailable')
                 retry_after = 5
             self.recent[user_id] = time.monotonic() + retry_after
             self.recent.move_to_end(user_id)
@@ -67,19 +67,42 @@ class AdminMenus:
                 self.recent.popitem(last=False)
 
 
-async def sync_admin_menu(context, user_id, *, force=False):
-    bot = getattr(context, 'bot', None)
-    if bot is None:
-        return
-    data = context.application.bot_data
-    menus = data.get('tdb_admin_menus')
+def _menus(app):
+    menus = app.bot_data.get('tdb_legacy_menus')
     if menus is None:
-        menus = data['tdb_admin_menus'] = AdminMenus()
-    await menus.sync(bot, user_id, force=force)
+        menus = app.bot_data['tdb_legacy_menus'] = LegacyMenus()
+    return menus
 
 
-async def refresh_private_menu(update, context):
+async def clear_private_menu(update, context):
     chat = update.effective_chat
     user_id = getattr(update.effective_user, 'id', None)
     if getattr(chat, 'type', None) == 'private' and type(user_id) is int and chat.id == user_id:
-        await sync_admin_menu(context, user_id)
+        await _menus(context.application).clear(context.bot, user_id)
+
+
+async def clear_known_menus(app):
+    owner = config.get_admin_user_id()
+    try:
+        known = db_privileges.list_users()
+    except (sqlite3.Error, OSError):
+        logging.getLogger(__name__).warning('Could not list legacy private menu scopes')
+        known = []
+    if owner is not None:
+        known = [owner, *(user_id for user_id in known if user_id != owner)]
+    menus = _menus(app)
+    for user_id in known:
+        if time.monotonic() < menus.retry_at:
+            break  # Avoid further requests while Telegram rate-limits this sweep.
+        await menus.clear(app.bot, user_id)
+
+
+def start_menu_cleanup(app):
+    app.bot_data['tdb_menu_cleanup_task'] = asyncio.create_task(clear_known_menus(app))
+
+
+async def stop_menu_cleanup(app):
+    task = app.bot_data.pop('tdb_menu_cleanup_task', None)
+    if task is not None:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
