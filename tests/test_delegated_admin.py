@@ -62,13 +62,13 @@ class PrivilegeCommands(unittest.IsolatedAsyncioTestCase):
 
     async def test_grant_list_revoke_and_repeated_commands(self):
         self.assertIn('пуст', await invoke(self.app, handlers_admin.adminlist_command, 7, []))
-        for expected in ('Доступ предоставлен.', 'Доступ уже предоставлен.'):
+        for expected in ('Доступ предоставлен', 'Доступ уже предоставлен'):
             self.assertEqual(expected, await invoke(self.app, handlers_admin.adminadd_command, 7, ['9']))
         self.assertEqual([9], db_privileges.list_users())
         self.assertEqual('Привилегированные пользователи:\n9',
                          await invoke(self.app, handlers_admin.adminlist_command, 7, []))
-        self.assertEqual('Доступ отозван.', await invoke(self.app, handlers_admin.adminremove_command, 7, ['9']))
-        self.assertEqual('У пользователя нет делегированного доступа.',
+        self.assertEqual('Доступ отозван', await invoke(self.app, handlers_admin.adminremove_command, 7, ['9']))
+        self.assertEqual('У пользователя нет делегированного доступа',
                          await invoke(self.app, handlers_admin.adminremove_command, 7, ['9']))
         self.assertEqual([], db_privileges.list_users())
 
@@ -77,10 +77,10 @@ class PrivilegeCommands(unittest.IsolatedAsyncioTestCase):
             self.assertIn('владельца', await invoke(self.app, command, 7, ['7']))
             for args in ([], ['9', '10'], ['0'], ['-9'], ['9.1'], [' 9'], ['٠٩'], ['09'],
                          ['9223372036854775808'], ['9 OR 1=1'], ['9); DROP TABLE privileged_users;--']):
-                self.assertIn('TELEGRAM_ID', await invoke(self.app, command, 7, args))
-        self.assertIn('без аргументов', await invoke(self.app, handlers_admin.adminlist_command, 7, ['9']))
+                self.assertIn('«ID пользователя»', await invoke(self.app, command, 7, args))
+        self.assertIn('/adminlist', await invoke(self.app, handlers_admin.adminlist_command, 7, ['9']))
         self.assertEqual([], db_privileges.list_users())
-        self.assertEqual('Доступ предоставлен.',
+        self.assertEqual('Доступ предоставлен',
                          await invoke(self.app, handlers_admin.adminadd_command, 7, ['9223372036854775807']))
 
     async def test_invalid_owner_and_database_read_failure_deny_allvods_before_twitch(self):
@@ -156,14 +156,14 @@ class Revocation(unittest.IsolatedAsyncioTestCase):
         batch, _, _ = await self.launch(owner=9)
         self.assertEqual(9, batch.owner)
         await asyncio.wait_for(loading.wait(), 2)
-        self.assertEqual('Доступ отозван.', await asyncio.wait_for(self.remove(), 2))
+        self.assertEqual('Доступ отозван', await asyncio.wait_for(self.remove(), 2))
         await self.denied()
         self.assertTrue(batch.task.done())
         self.assertFalse(self.started)
 
     async def test_revoke_claimed_batch_before_first_twitch_request(self):
         batch, _, source = await self.launch(owner=9)
-        self.assertEqual('Доступ отозван.', await self.remove())
+        self.assertEqual('Доступ отозван', await self.remove())
         self.assertTrue(batch.task.cancelled())
         source.reply_text.assert_not_awaited()
         await self.denied()
@@ -205,7 +205,7 @@ class Revocation(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(submitted.wait(), 2)
         waiting = batch.current_job
         self.assertEqual('waiting', waiting.state)
-        self.assertEqual('Доступ отозван.', await asyncio.wait_for(self.remove(), 2))
+        self.assertEqual('Доступ отозван', await asyncio.wait_for(self.remove(), 2))
         self.assertTrue(waiting.finished.is_set())
         self.assertFalse(first.cancelled or second.cancelled)
         await self.finish(first)
@@ -218,7 +218,7 @@ class Revocation(unittest.IsolatedAsyncioTestCase):
         await self.request(8, '2')
         await self.request(9, '3')
         ordinary = await self.entered('3')
-        self.assertEqual('Доступ отозван.', await asyncio.wait_for(self.remove(), 2))
+        self.assertEqual('Доступ отозван', await asyncio.wait_for(self.remove(), 2))
         self.assertTrue(batch.task.done())
         self.assertFalse(shared_job.cancelled or ordinary.cancelled)
         self.assertTrue(any(p.active and p.owner == 8 for p in shared_job.participants.members.values()))
@@ -263,7 +263,7 @@ class Revocation(unittest.IsolatedAsyncioTestCase):
                 await self.denied()
                 self.assertFalse(first.done() or second.done() or job.cancelled)
                 release_commit.set()
-                self.assertEqual('Доступ отозван.', await asyncio.wait_for(first, 2))
+                self.assertEqual('Доступ отозван', await asyncio.wait_for(first, 2))
                 self.assertIn('нет делегированного', await asyncio.wait_for(second, 2))
         finally:
             release_commit.set()
@@ -286,7 +286,7 @@ class Revocation(unittest.IsolatedAsyncioTestCase):
             operation = asyncio.create_task(self.remove())
             await asyncio.wait_for(called.wait(), 2)
             self.gates['2'].set()
-            self.assertEqual('Доступ отозван. Не удалось подтвердить остановку массовой обработки.',
+            self.assertEqual('Доступ отозван. Не удалось подтвердить остановку массовой обработки',
                              await asyncio.wait_for(operation, 2))
         self.assertTrue(job.critical and batch.cleanup_failed)
         await self.denied()
@@ -295,7 +295,7 @@ class Revocation(unittest.IsolatedAsyncioTestCase):
     async def test_revoke_leaves_another_owners_batch_and_cancel_is_owner_scoped(self):
         batch, _, _ = await self.launch(self.vods[:1], owner=7)
         job = await self.entered('1')
-        self.assertEqual('Доступ отозван.', await self.remove())
+        self.assertEqual('Доступ отозван', await self.remove())
         notice = await self.cancel_all(9)
         self.assertEqual('Нет активных обработок', notice.reply_text.await_args.args[0])
         self.assertFalse(batch.cancelled or job.cancelled)

@@ -105,7 +105,9 @@ class Participants:
                 try:
                     async with asyncio.timeout(DELIVERY_TIMEOUT):
                         if getattr(part.context, 'batch_silent', False):
-                            pass  # One batch summary owns UI; job/history/publication are unchanged.
+                            progress = getattr(part.context, 'batch_progress', None)
+                            if progress is not None and isinstance(value, str):
+                                await progress(value)
                         elif callable(value):
                             await value(part)
                         elif value is not None:
