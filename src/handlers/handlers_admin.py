@@ -132,6 +132,6 @@ async def _list(message, context, owner_id):
         for user_id in users[start:start + 60]:
             username = usernames.get(user_id)
             profile = f' · <a href="https://t.me/{username}">@{username}</a>' if username else ''
-            rows.append(f'• Telegram ID: {user_id}{profile}')
+            rows.append(f'• ID: {user_id}{profile}')
         await message.reply_text("\n".join(rows), parse_mode='HTML',
                                  link_preview_options=LinkPreviewOptions(is_disabled=True))
