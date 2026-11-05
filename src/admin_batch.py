@@ -2,10 +2,12 @@
 import asyncio
 import html
 import logging
+import sqlite3
 import time
 from telegram.error import TelegramError
 from dataclasses import dataclass
 from src import config
+from src.database import db_privileges
 from src.channel_browser import ChannelBrowser
 from src.input_classifier import classify_input, InputClassificationError
 from src.channel_archive import order
@@ -71,8 +73,14 @@ def stop_batch(app, owner=None):
 
 async def allvods_command(update, context):
     owner=getattr(update.effective_user,'id',None)
-    allowed=config.get_admin_user_id()
-    if allowed is None or type(owner) is not int or owner!=allowed:
+    configured_owner=config.get_admin_user_id()
+    allowed=False
+    if configured_owner is not None and type(owner) is int and 0 < owner <= 2**63-1:
+        try:
+            allowed=owner==configured_owner or db_privileges.has_access(owner)
+        except (sqlite3.Error, OSError):
+            logging.getLogger(__name__).warning('Delegated access check unavailable')
+    if not allowed:
         await update.effective_message.reply_text('Команда недоступна')
         return
     try:
@@ -85,7 +93,9 @@ async def allvods_command(update, context):
         await update.effective_message.reply_text('Массовая обработка уже выполняется')
         return
     batch=Batch(owner,context,source=update.effective_message,channel=login)
-    context.application.bot_data[KEY]=batch  # Claim before the first network await.
+    # No await between the access lookup and this claim. Revocation either
+    # prevents the claim or finds the already registered batch.
+    context.application.bot_data[KEY]=batch
     try:
         batch.task=asyncio.create_task(run_batch(batch))
         def done(task):
@@ -212,6 +222,7 @@ async def run_batch(batch):
         batch.cancelled=True
         job,part=batch.current_job,batch.current_part
         if job is not None:
+            batch.cleanup_failed=True  # Remains set if cancellation cleanup raises.
             selected=request_member(manager,job,part)
             if selected is not None:await finish_member(manager,job,selected,wait_last=True)
             elif job.committing or job.cancelled:

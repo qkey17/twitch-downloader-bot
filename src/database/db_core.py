@@ -3,10 +3,10 @@ from pathlib import Path
 from src.config import DB_PATH
 
 
-def _connect() -> sqlite3.Connection:
+def _connect(*, timeout=5.0) -> sqlite3.Connection:
     db_path = Path(DB_PATH).expanduser()
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(db_path)
+    con = sqlite3.connect(db_path, timeout=timeout)
     try:
         con.row_factory = sqlite3.Row
         con.execute("PRAGMA foreign_keys = ON;")
@@ -77,8 +77,10 @@ def init_db():
         """)
 
         from .db_results import create_schema, migrate_legacy
+        from .db_privileges import create_schema as create_privileges_schema
         create_schema(con)
         migrate_legacy(con)
+        create_privileges_schema(con)
         con.commit()
     except Exception:
         con.rollback()

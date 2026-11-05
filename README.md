@@ -47,7 +47,8 @@ Required:
 
 Optional:
 
-- `TCD_ADMIN_USER_ID` — optional positive numeric Telegram User ID authorized for `/allvods channel` (a safe Twitch channel link is also accepted). Missing/invalid values disable administrative commands. No usernames are trusted and this command is not added to public help/menu. One in-memory batch at a time, oldest VOD first, up to 500 VODs / 10 Helix pages; existing results are regenerated through the same scheduler. `/cancel` cancels all own participations across cards/chats and stops issuing batch items; other users keep their shared work. Commit-in-progress is allowed to finish. Batches are never automatically restored after restart. Configure this only through your normal process environment; do not commit actual IDs.
+- `TCD_ADMIN_USER_ID` — optional positive numeric Telegram User ID of the owner. Set it through the existing process environment and keep the actual ID out of Git. In a private chat with the bot, the owner can grant access with `/adminadd TELEGRAM_ID`, revoke it with `/adminremove TELEGRAM_ID`, and list delegates with `/adminlist`. Delegated IDs are stored in the existing SQLite database and included in its backup. A missing or invalid owner setting disables all admin commands, including delegated access.
+
 - `TCD_HISTORY_ENABLED` — defaults to `false`; set `true` to enable personal download history (case-insensitive). When disabled, `/history` is hidden from the command menu, manual requests and old history buttons report that history is disabled, and new personal history rows are not recorded. Existing rows and the technical VOD cache are preserved; enabling the setting on restart restores history access.
 - `TCD_DB_PATH` — SQLite path. Without it, the database is `vod_history.db` in the project root.
 - `TCD_LOG_LEVEL` — logging level; defaults to `INFO`.
@@ -56,6 +57,8 @@ Optional:
 - `TCD_PUBLIC_HTML_URL_PREFIX` — optional public URL path prefix; defaults to `/public_html`.
 
 Use `.env.example` as a list of variable names and configure the real values through the shell, a process manager, or another secret-management mechanism. Never commit real credentials.
+
+The owner and delegates can use `/allvods channel` (a safe Twitch channel link is also accepted). One in-memory batch runs at a time, oldest VOD first, up to 500 VODs / 10 Helix pages / 60 seconds for list loading. Existing results are regenerated through the same scheduler. Revocation stops the delegate's batch while preserving ordinary jobs and other participants. `/cancel` remains available to all users for their own processing. A generation already committing finishes safely, and a batch is never automatically restored after restart. Admin commands stay out of public help and the Telegram menu.
 
 ## Running
 
