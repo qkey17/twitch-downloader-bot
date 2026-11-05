@@ -138,8 +138,11 @@ PUBLIC_HTML_URL_PREFIX = os.getenv("TCD_PUBLIC_HTML_URL_PREFIX", "/public_html")
 
 def get_admin_user_id():
     """Invalid/missing optional authorization fails closed without logging values."""
-    raw = os.getenv('TCD_ADMIN_USER_ID', '')
-    if not re.fullmatch(r'[1-9][0-9]{0,18}', raw):
+    return parse_telegram_user_id(os.getenv('TCD_ADMIN_USER_ID', ''))
+
+
+def parse_telegram_user_id(raw):
+    if not isinstance(raw, str) or not re.fullmatch(r'[1-9][0-9]{0,18}', raw):
         return None
     value = int(raw)
     return value if value <= 2**63-1 else None

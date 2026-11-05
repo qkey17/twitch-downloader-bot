@@ -23,7 +23,8 @@ class SmallFixTests(unittest.TestCase):
     def test_command_registration_and_menu(self):
         tree=ast.parse((Path(__file__).resolve().parents[1]/'src/main.py').read_text(encoding='utf-8'))
         commands=[n.args[0].value for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='CommandHandler']
-        self.assertEqual(['start','help','about','allvods','cancel','vod','channel'],commands)
+        self.assertEqual(['start','help','about','allvods','adminadd','adminremove','adminlist',
+                          'cancel','vod','channel'],commands)
         menu=[n.args[0].value for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='BotCommand']
         self.assertEqual(['help'],menu)
 

@@ -23,6 +23,15 @@ TEMP = rf"\.{FINAL}\.[0-9a-f]{{32}}\.tmp"
 QUARANTINE = r"\.tdb-delete-[0-9a-f]{32}-[0-9a-f]{32}"
 TABLES = {"vod_cache", "vod_files", "user_history", "html_results",
           "html_current", "html_deletions", "html_removed_heads"}
+TABLES_WITH_PRIVILEGES = TABLES | {"privileged_users"}
+# Match the application's stored CREATE TABLE, allowing case and whitespace.
+# table_info alone cannot prove the CHECK constraint or exclude table options.
+PRIVILEGED_USERS_SCHEMA = re.compile(
+    r"CREATE\s+TABLE\s+privileged_users\s*\(\s*"
+    r"user_id\s+INTEGER\s+PRIMARY\s+KEY\s+"
+    r"CHECK\s*\(\s*user_id\s*>\s*0\s*\)\s*\)",
+    re.IGNORECASE | re.ASCII,
+)
 
 
 class BackupError(RuntimeError):
@@ -255,9 +264,19 @@ def _database(path, budget):
         con.execute("PRAGMA cache_size=-2048")
         con.set_progress_handler(lambda: (budget.check(), 0)[1], 10000)
         objects = list(con.execute("SELECT name,type FROM sqlite_schema WHERE type IN ('table','view')"))
-        if ({row['name'] for row in objects if not row['name'].startswith('sqlite_')} != TABLES
-                or any(row['type'] != 'table' for row in objects)):
+        names = {row['name'] for row in objects if not row['name'].startswith('sqlite_')}
+        if names not in (TABLES, TABLES_WITH_PRIVILEGES) or any(row['type'] != 'table' for row in objects):
             raise BackupError("Unsupported database schema; no migration is performed")
+        if names == TABLES_WITH_PRIVILEGES:
+            definition = con.execute(
+                "SELECT sql FROM sqlite_schema WHERE type='table' AND name='privileged_users'"
+            ).fetchone()[0]
+            if not definition or not PRIVILEGED_USERS_SCHEMA.fullmatch(definition.strip()):
+                raise BackupError("Unsupported privileged_users table structure")
+            # The immutable reader can report integrity_check=ok for a row
+            # inserted with ignore_check_constraints enabled.
+            if con.execute("SELECT 1 FROM privileged_users WHERE user_id <= 0 LIMIT 1").fetchone():
+                raise BackupError("Invalid delegated user ID")
         if con.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
             raise BackupError("SQLite integrity check failed")
         if con.execute("PRAGMA foreign_key_check").fetchone() is not None:

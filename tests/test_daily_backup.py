@@ -1,11 +1,12 @@
 """Daily orchestration with a fake clock, fake service and synthetic files only."""
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 import configparser
 from datetime import datetime, timedelta, timezone
 import json
 import io
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -14,6 +15,7 @@ import unittest
 from unittest.mock import patch
 
 from tools import daily_backup as daily
+from src.database import db_core, db_privileges
 
 
 class FakeGate:
@@ -319,6 +321,35 @@ class DailyBackupTests(unittest.TestCase):
         self.assertEqual(['prepare','commit','stop','snapshot','verify','start','verify','offsite'],sequence)
         self.assertEqual('active',self.runtime.properties['ActiveState'])
         self.assert_originals_unchanged()
+
+    def test_daily_snapshot_accepts_and_preserves_delegated_privileges(self):
+        database = self.root/'privileges.sqlite3'
+        with patch.object(db_core, 'DB_PATH', database):
+            db_core.init_db()
+            db_privileges.grant(9)
+        self.values['database'] = str(database)
+        self.config = daily.Config(self.values)
+        original = database.read_bytes()
+        snapshots = daily.snapshots
+
+        def require_stopped(service):
+            self.assertEqual(self.config.service, service)
+            self.assertEqual('inactive', self.runtime.properties['ActiveState'])
+
+        def create(destination):
+            snapshots.create_backup(database, self.config.html_roots, destination,
+                                    maintenance_stopped=True, reserve_bytes=0)
+
+        with patch.object(snapshots, '_require_stopped', side_effect=require_stopped), \
+                patch.object(self.runtime, 'snapshot', side_effect=create), \
+                patch.object(self.runtime, 'verify', wraps=snapshots.verify_backup) as verify:
+            result = self.controller().run()
+        self.assertEqual('backup_verified_offsite', result['code'])
+        self.assertEqual(2, verify.call_count)
+        self.assertEqual('active', self.runtime.properties['ActiveState'])
+        self.assertEqual(original, database.read_bytes())
+        with closing(sqlite3.connect(Path(result['snapshot'])/'database.sqlite3')) as con:
+            self.assertEqual([(9,)], con.execute("SELECT user_id FROM privileged_users").fetchall())
 
     def test_busy_retries_after_fifteen_minutes_without_stopping_active_work(self):
         self.runtime.busy_attempts = 1

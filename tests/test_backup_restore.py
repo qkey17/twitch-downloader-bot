@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import test_result_registry as fixture
 from src import html_cleanup as cleanup
-from src.database import database as db, db_core, db_results as results
+from src.database import database as db, db_core, db_privileges, db_results as results
 from tools import backup_restore as backup
 
 
@@ -59,6 +59,69 @@ class BackupRestoreTests(unittest.TestCase):
             link.symlink_to(target, target_is_directory=directory)
         except OSError:
             self.skipTest('Creating symlinks requires OS privileges')
+
+    def test_both_supported_schemas_restore_with_the_original_delegations(self):
+        with closing(db_core._connect()) as con, con:
+            con.execute("DROP TABLE privileged_users")
+        legacy = self.create('legacy')
+        legacy_restored = self.root/'legacy-restored'
+        backup.restore_backup(legacy, legacy_restored, reserve_bytes=0)
+        with closing(sqlite3.connect(legacy_restored/'database.sqlite3')) as con:
+            self.assertIsNone(con.execute(
+                "SELECT name FROM sqlite_schema WHERE name='privileged_users'"
+            ).fetchone())
+
+        db.init_db()
+        for user_id in (9, 17, 2**63 - 1):
+            db_privileges.grant(user_id)
+        db_privileges.revoke(17)
+        snapshot = self.create('with-privileges')
+        restored = self.root/'privileges-restored'
+        backup.restore_backup(snapshot, restored, reserve_bytes=0)
+        for path in (snapshot, restored):
+            with closing(sqlite3.connect(path/'database.sqlite3')) as con:
+                self.assertEqual([(9,), (2**63 - 1,)], con.execute(
+                    "SELECT user_id FROM privileged_users ORDER BY user_id"
+                ).fetchall())
+
+    def test_unexpected_tables_views_and_missing_required_tables_are_rejected(self):
+        for name, definition, undo in (
+            ('table', 'CREATE TABLE unexpected (value TEXT)', 'DROP TABLE unexpected'),
+            ('view', 'CREATE VIEW unexpected AS SELECT user_id FROM privileged_users', 'DROP VIEW unexpected'),
+            ('missing', 'DROP TABLE user_history', None),
+        ):
+            with self.subTest(name=name):
+                with closing(db_core._connect()) as con, con:
+                    con.execute(definition)
+                with self.assertRaisesRegex(backup.BackupError, 'Unsupported database schema'):
+                    self.create(name)
+                self.assertFalse((self.root/name/'COMPLETE').exists())
+                if undo:
+                    with closing(db_core._connect()) as con, con:
+                        con.execute(undo)
+
+    def test_invalid_privilege_table_definitions_are_rejected(self):
+        for index, columns in enumerate((
+            'user_id INTEGER PRIMARY KEY',
+            'user_id TEXT PRIMARY KEY CHECK (user_id > 0)',
+            'user_id INTEGER UNIQUE CHECK (user_id > 0)',
+            'user_id INTEGER PRIMARY KEY CHECK (user_id >= 0)',
+            'user_id INTEGER PRIMARY KEY CHECK (user_id > 0), role TEXT',
+            'user_id INTEGER PRIMARY KEY /* CHECK (user_id > 0) */',
+        )):
+            with self.subTest(columns=columns):
+                with closing(db_core._connect()) as con, con:
+                    con.execute("DROP TABLE privileged_users")
+                    con.execute(f"CREATE TABLE privileged_users ({columns})")
+                with self.assertRaisesRegex(backup.BackupError, 'Unsupported privileged_users table structure'):
+                    self.create(f'invalid-privileges-{index}')
+
+    def test_invalid_stored_delegation_is_rejected(self):
+        with closing(db_core._connect()) as con, con:
+            con.execute("PRAGMA ignore_check_constraints=ON")
+            con.execute("INSERT INTO privileged_users (user_id) VALUES (0)")
+        with self.assertRaisesRegex(backup.BackupError, 'Invalid delegated user ID'):
+            self.create()
 
     def test_all_generations_history_unknown_html_and_temp_restore_without_secrets(self):
         plans = [self.ready(str(index)) for index in range(3)]

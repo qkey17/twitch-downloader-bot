@@ -17,7 +17,8 @@ import test_shared_vods as shared
 class Authorization(unittest.IsolatedAsyncioTestCase):
     async def test_missing_invalid_and_other_ids_fail_before_any_side_effect(self):
         for value,user in ((None,7),('',7),('0',7),('-7',7),('7.0',7),(' 7',7),('٧',7),('9'*30,7),('8',7),('7',True)):
-            with self.subTest(value=value,user=user),patch.dict(os.environ,{},clear=True):
+            with self.subTest(value=value,user=user),patch.dict(os.environ,{},clear=True), \
+                    patch.object(admin.db_privileges, 'has_access', return_value=False):
                 if value is not None:os.environ['TCD_ADMIN_USER_ID']=value
                 message=NS(reply_text=AsyncMock())
                 app=NS(bot_data={});ctx=NS(application=app,args=['channel'])
@@ -43,14 +44,14 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         await stop_scheduler(self.app)
         await shared.SharedCards.asyncTearDown(self)
 
-    async def launch(self, records=None, argument='channel'):
+    async def launch(self, records=None, argument='channel', *, owner=7):
         if records is not None:self.vods[:]=records
         source=NS(reply_text=AsyncMock())
         control=NS(chat_id=10,message_id=9000,edit_text=AsyncMock())
         source.reply_text.return_value=control
-        ctx=self.context(7);ctx.args=[argument]
+        ctx=self.context(owner);ctx.args=[argument]
         with patch.dict(os.environ,{'TCD_ADMIN_USER_ID':'7'}):
-            await admin.allvods_command(NS(effective_user=NS(id=7),effective_message=source),ctx)
+            await admin.allvods_command(NS(effective_user=NS(id=owner),effective_message=source),ctx)
         batch=self.app.bot_data[admin.KEY]
         return batch,control,source
 
