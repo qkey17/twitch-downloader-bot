@@ -11,9 +11,9 @@ from types import SimpleNamespace as NS
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from src import admin_batch
+from src import admin_access, admin_batch
 from src.database import db_core, db_privileges
-from src.handlers import handlers_admin
+from src.handlers import handlers_admin, handlers_input
 from src.twitch_api import videos
 from src.vod_scheduler import scheduler
 import test_admin_batch as batches
@@ -32,10 +32,17 @@ def invocation(app, user, args, chat='private'):
     return update, NS(application=app, args=args)
 
 
-async def invoke(app, command, user, args, chat='private'):
+async def invoke(app, user, args, chat='private'):
     update, context = invocation(app, user, args, chat)
-    await command(update, context)
+    await handlers_admin.premium_command(update, context)
     return update.effective_message.reply_text.await_args.args[0]
+
+async def batch_request(app, user, text):
+    update, context = invocation(app, user, [])
+    update.message = update.effective_message
+    update.message.text = text
+    await handlers_input.text_input(update, context)
+    return update.message.reply_text.await_args.args[0]
 
 
 class PrivilegeCommands(unittest.IsolatedAsyncioTestCase):
@@ -45,43 +52,46 @@ class PrivilegeCommands(unittest.IsolatedAsyncioTestCase):
 
     async def test_management_is_private_and_owner_only_even_with_a_delegation(self):
         db_privileges.grant(9)
-        for command, args, database_call in (
-            (handlers_admin.adminadd_command, ['11'], 'grant'),
-            (handlers_admin.adminremove_command, ['9'], 'revoke'),
-            (handlers_admin.adminlist_command, [], 'list_users'),
+        for args, database_call in (
+            (['add','11'], 'grant'),
+            (['remove','9'], 'revoke'),
+            (['list'], 'list_users'),
         ):
             for user, chat, configured in ((9, 'private', '7'), (8, 'private', '7'),
                                            (7, 'supergroup', '7'), (7, 'private', ''),
                                            (7, 'private', 'invalid'), (True, 'private', '1')):
-                with self.subTest(command=command.__name__, user=user, chat=chat, configured=configured), \
+                with self.subTest(args=args, user=user, chat=chat, configured=configured), \
                         patch.dict(os.environ, {'TCD_ADMIN_USER_ID': configured}), \
                         patch.object(db_privileges, database_call) as store:
-                    result = await invoke(self.app, command, user, args, chat)
+                    result = await invoke(self.app, user, args, chat)
                     self.assertEqual('Команда недоступна', result)
                     store.assert_not_called()
 
     async def test_grant_list_revoke_and_repeated_commands(self):
-        self.assertIn('пуст', await invoke(self.app, handlers_admin.adminlist_command, 7, []))
-        for expected in ('Доступ предоставлен', 'Доступ уже предоставлен'):
-            self.assertEqual(expected, await invoke(self.app, handlers_admin.adminadd_command, 7, ['9']))
+        self.assertIn('пуст', await invoke(self.app, 7, ['list']))
+        for expected in ('Premium предоставлен', 'Premium уже предоставлен'):
+            self.assertEqual(expected, await invoke(self.app, 7, ['add', '9']))
         self.assertEqual([9], db_privileges.list_users())
-        self.assertEqual('Привилегированные пользователи:\n9',
-                         await invoke(self.app, handlers_admin.adminlist_command, 7, []))
-        self.assertEqual('Доступ отозван', await invoke(self.app, handlers_admin.adminremove_command, 7, ['9']))
-        self.assertEqual('У пользователя нет делегированного доступа',
-                         await invoke(self.app, handlers_admin.adminremove_command, 7, ['9']))
+        self.assertEqual('Пользователи с Premium:\n9',
+                         await invoke(self.app, 7, ['list']))
+        self.assertEqual('Premium отозван', await invoke(self.app, 7, ['remove', '9']))
+        self.assertEqual('У пользователя нет Premium',
+                         await invoke(self.app, 7, ['remove', '9']))
         self.assertEqual([], db_privileges.list_users())
 
     async def test_owner_id_and_malformed_arguments_are_rejected(self):
-        for command in (handlers_admin.adminadd_command, handlers_admin.adminremove_command):
-            self.assertIn('владельца', await invoke(self.app, command, 7, ['7']))
+        syntax = '/premium add «ID»\n/premium remove «ID»\n/premium list'
+        for args in ([], ['unknown']):
+            self.assertEqual(syntax, await invoke(self.app, 7, args))
+        for action in ('add', 'remove'):
+            self.assertIn('владельца', await invoke(self.app, 7, [action, '7']))
             for args in ([], ['9', '10'], ['0'], ['-9'], ['9.1'], [' 9'], ['٠٩'], ['09'],
                          ['9223372036854775808'], ['9 OR 1=1'], ['9); DROP TABLE privileged_users;--']):
-                self.assertIn('«ID пользователя»', await invoke(self.app, command, 7, args))
-        self.assertIn('/adminlist', await invoke(self.app, handlers_admin.adminlist_command, 7, ['9']))
+                self.assertIn('«ID»', await invoke(self.app, 7, [action, *args]))
+        self.assertIn('/premium list', await invoke(self.app, 7, ['list','9']))
         self.assertEqual([], db_privileges.list_users())
-        self.assertEqual('Доступ предоставлен',
-                         await invoke(self.app, handlers_admin.adminadd_command, 7, ['9223372036854775807']))
+        self.assertEqual('Premium предоставлен',
+                         await invoke(self.app, 7, ['add', '9223372036854775807']))
 
     async def test_invalid_owner_and_database_read_failure_deny_allvods_before_twitch(self):
         db_privileges.grant(9)
@@ -89,22 +99,21 @@ class PrivilegeCommands(unittest.IsolatedAsyncioTestCase):
             with self.subTest(config=config, user=user), patch.dict(os.environ, {'TCD_ADMIN_USER_ID': config}), \
                     patch.object(videos, 'fetch_user_by_login', AsyncMock()) as twitch, \
                     patch.object(db_privileges, 'has_access', side_effect=sqlite3.OperationalError) as lookup:
-                result = await invoke(self.app, admin_batch.allvods_command, user, ['channel'])
+                result = await batch_request(self.app, user, 'channel all')
                 self.assertEqual('Команда недоступна', result)
                 self.assertNotIn(admin_batch.KEY, self.app.bot_data)
                 twitch.assert_not_awaited()
                 self.assertEqual(bool(config == '7'), lookup.called)
         # The configured owner has access even when a delegate lookup would fail.
         with patch.object(db_privileges, 'has_access', side_effect=AssertionError('owner must not query')):
-            self.assertIn('/allvods', await invoke(self.app, admin_batch.allvods_command, 7, []))
+            self.assertEqual('owner', admin_access.role(7))
 
     async def test_database_write_failure_does_not_claim_success_or_stop_batch(self):
         db_privileges.grant(9)
-        for command, operation in ((handlers_admin.adminadd_command, 'grant'),
-                                   (handlers_admin.adminremove_command, 'revoke')):
+        for action, operation in (('add', 'grant'), ('remove', 'revoke')):
             with patch.object(db_privileges, operation, side_effect=sqlite3.OperationalError), \
                     patch.object(handlers_admin, 'stop_batch') as stop:
-                self.assertIn('Не удалось', await invoke(self.app, command, 7, ['9']))
+                self.assertIn('Не удалось', await invoke(self.app, 7, [action, '9']))
                 stop.assert_not_called()
         self.assertEqual([9], db_privileges.list_users())
 
@@ -137,12 +146,12 @@ class Revocation(unittest.IsolatedAsyncioTestCase):
         db_privileges.grant(9)
 
     async def remove(self):
-        return await invoke(self.app, handlers_admin.adminremove_command, 7, ['9'])
+        return await invoke(self.app, 7, ['remove', '9'])
 
     async def denied(self):
         calls_before = self.fetch.await_count
         self.assertEqual('Команда недоступна',
-                         await invoke(self.app, admin_batch.allvods_command, 9, ['channel']))
+                         await batch_request(self.app, 9, 'channel new'))
         self.assertEqual(calls_before, self.fetch.await_count)
 
     async def test_revoke_during_twitch_loading_prevents_new_batch(self):
@@ -156,14 +165,14 @@ class Revocation(unittest.IsolatedAsyncioTestCase):
         batch, _, _ = await self.launch(owner=9)
         self.assertEqual(9, batch.owner)
         await asyncio.wait_for(loading.wait(), 2)
-        self.assertEqual('Доступ отозван', await asyncio.wait_for(self.remove(), 2))
+        self.assertEqual('Premium отозван', await asyncio.wait_for(self.remove(), 2))
         await self.denied()
         self.assertTrue(batch.task.done())
         self.assertFalse(self.started)
 
     async def test_revoke_claimed_batch_before_first_twitch_request(self):
         batch, _, source = await self.launch(owner=9)
-        self.assertEqual('Доступ отозван', await self.remove())
+        self.assertEqual('Premium отозван', await self.remove())
         self.assertTrue(batch.task.cancelled())
         source.reply_text.assert_not_awaited()
         await self.denied()
@@ -171,14 +180,14 @@ class Revocation(unittest.IsolatedAsyncioTestCase):
     async def test_launch_racing_revocation_response_cannot_use_old_access(self):
         reply_started = asyncio.Event()
         release_reply = asyncio.Event()
-        update, ctx = invocation(self.app, 7, ['9'])
+        update, ctx = invocation(self.app, 7, ['remove', '9'])
 
         async def reply(*args):
             reply_started.set()
             await release_reply.wait()
 
         update.effective_message.reply_text.side_effect = reply
-        task = asyncio.create_task(handlers_admin.adminremove_command(update, ctx))
+        task = asyncio.create_task(handlers_admin.premium_command(update, ctx))
         try:
             await asyncio.wait_for(reply_started.wait(), 2)
             await self.denied()
@@ -205,7 +214,7 @@ class Revocation(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(submitted.wait(), 2)
         waiting = batch.current_job
         self.assertEqual('waiting', waiting.state)
-        self.assertEqual('Доступ отозван', await asyncio.wait_for(self.remove(), 2))
+        self.assertEqual('Premium отозван', await asyncio.wait_for(self.remove(), 2))
         self.assertTrue(waiting.finished.is_set())
         self.assertFalse(first.cancelled or second.cancelled)
         await self.finish(first)
@@ -218,7 +227,7 @@ class Revocation(unittest.IsolatedAsyncioTestCase):
         await self.request(8, '2')
         await self.request(9, '3')
         ordinary = await self.entered('3')
-        self.assertEqual('Доступ отозван', await asyncio.wait_for(self.remove(), 2))
+        self.assertEqual('Premium отозван', await asyncio.wait_for(self.remove(), 2))
         self.assertTrue(batch.task.done())
         self.assertFalse(shared_job.cancelled or ordinary.cancelled)
         self.assertTrue(any(p.active and p.owner == 8 for p in shared_job.participants.members.values()))
@@ -263,8 +272,8 @@ class Revocation(unittest.IsolatedAsyncioTestCase):
                 await self.denied()
                 self.assertFalse(first.done() or second.done() or job.cancelled)
                 release_commit.set()
-                self.assertEqual('Доступ отозван', await asyncio.wait_for(first, 2))
-                self.assertIn('нет делегированного', await asyncio.wait_for(second, 2))
+                self.assertEqual('Premium отозван', await asyncio.wait_for(first, 2))
+                self.assertIn('нет Premium', await asyncio.wait_for(second, 2))
         finally:
             release_commit.set()
         self.assertIn('2', self.ready)
@@ -286,7 +295,7 @@ class Revocation(unittest.IsolatedAsyncioTestCase):
             operation = asyncio.create_task(self.remove())
             await asyncio.wait_for(called.wait(), 2)
             self.gates['2'].set()
-            self.assertEqual('Доступ отозван. Не удалось подтвердить остановку массовой обработки',
+            self.assertEqual('Premium отозван. Не удалось подтвердить остановку массовой обработки',
                              await asyncio.wait_for(operation, 2))
         self.assertTrue(job.critical and batch.cleanup_failed)
         await self.denied()
@@ -295,7 +304,7 @@ class Revocation(unittest.IsolatedAsyncioTestCase):
     async def test_revoke_leaves_another_owners_batch_and_cancel_is_owner_scoped(self):
         batch, _, _ = await self.launch(self.vods[:1], owner=7)
         job = await self.entered('1')
-        self.assertEqual('Доступ отозван', await self.remove())
+        self.assertEqual('Premium отозван', await self.remove())
         notice = await self.cancel_all(9)
         self.assertEqual('Нет активных обработок', notice.reply_text.await_args.args[0])
         self.assertFalse(batch.cancelled or job.cancelled)

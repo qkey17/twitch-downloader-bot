@@ -16,7 +16,7 @@ from telegram.ext import (
 
 from src.database import database as db
 from src import config
-from .admin_access import public_commands, refresh_private_menu
+from .admin_access import public_commands, clear_private_menu, start_menu_cleanup, stop_menu_cleanup
 from .config import ConfigurationError, get_telegram_bot_token, validate_credentials
 from .html_publisher import cleanup_stale_html_temp_files
 from .chat_spool import cleanup_orphaned_chat_spools
@@ -26,7 +26,7 @@ from .handlers.handlers_chat import chat_callback, legacy_open_callback, ready_o
 from .handlers.handlers_channel_vods import build_channel_vods_handler
 from .handlers.handlers_vod_info import info_callback
 from .handlers.handlers_input import (
-    text_input, vod_command, channel_command, input_menu_callback, INPUT_CALLBACK_PATTERN,
+    text_input, input_menu_callback, INPUT_CALLBACK_PATTERN,
 )
 from .html_cleanup import start_cleanup, stop_cleanup
 from .maintenance import start_maintenance, stop_maintenance
@@ -103,9 +103,11 @@ async def post_init(app: Application):
     except (TelegramError, OSError, TimeoutError):
         logging.getLogger("tcd").warning("Public menu synchronization unavailable")
     await start_maintenance(app)
+    start_menu_cleanup(app)
 
 
 async def post_stop(app: Application):
+    await stop_menu_cleanup(app)
     try:
         await stop_maintenance(app)
     finally:
@@ -118,6 +120,7 @@ async def post_stop(app: Application):
 async def post_shutdown(app: Application):
     # Also covers a failed startup, when PTB does not invoke post_stop.
     try:
+        await stop_menu_cleanup(app)
         await stop_scheduler(app)
         try:
             await stop_maintenance(app)
@@ -163,18 +166,11 @@ def main():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("about", about_command))
-    from .admin_batch import allvods_command, newvods_command, batch_cancel_callback
-    from .handlers.handlers_admin import admin_command, adminadd_command, adminremove_command, adminlist_command
-    app.add_handler(TypeHandler(Update, refresh_private_menu, block=False), group=-1)
-    app.add_handler(CommandHandler("admin", admin_command, block=False))
-    app.add_handler(CommandHandler("allvods", allvods_command, block=False))
-    app.add_handler(CommandHandler("newvods", newvods_command, block=False))
-    app.add_handler(CommandHandler("adminadd", adminadd_command, block=False))
-    app.add_handler(CommandHandler("adminremove", adminremove_command, block=False))
-    app.add_handler(CommandHandler("adminlist", adminlist_command, block=False))
+    from .admin_batch import batch_cancel_callback
+    from .handlers.handlers_admin import premium_command
+    app.add_handler(TypeHandler(Update, clear_private_menu, block=False), group=-1)
+    app.add_handler(CommandHandler("premium", premium_command, block=False))
     app.add_handler(CommandHandler("cancel", cancel_command, block=False))
-    app.add_handler(CommandHandler("vod", vod_command, block=False))
-    app.add_handler(CommandHandler("channel", channel_command, block=False))
 
     # Text/command routing guards per-user input; Twitch waits remain non-blocking.
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_input, block=False), group=0)

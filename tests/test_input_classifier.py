@@ -2,10 +2,37 @@
 import unittest
 from unittest.mock import patch
 
-from src.input_classifier import ClassifiedInput, InputClassificationError, classify_input
+from src.input_classifier import ClassifiedInput, InputClassificationError, classify_chat_input, classify_input
 
 
 class InputClassifierTests(unittest.TestCase):
+    def test_text_batch_modifiers_use_existing_channel_grammar(self):
+        for text, login, mode in (
+            ('Sample_Channel all', 'sample_channel', 'all'),
+            ('  sample_channel\tNEW ', 'sample_channel', 'new'),
+            ('https://www.twitch.tv/Sample_Channel/?sr=a all', 'sample_channel', 'all'),
+            ('m.twitch.tv/sample_channel new', 'sample_channel', 'new'),
+            ('twitch://stream/sample_channel all', 'sample_channel', 'all'),
+            ('twitch://open?channel=sample_channel new', 'sample_channel', 'new'),
+            ('https://twitch.tv/123 new', '123', 'new'),
+            ('all', 'all', None), ('new', 'new', None), ('new all', 'new', 'all'),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(ClassifiedInput('channel', login, mode), classify_chat_input(text))
+
+    def test_batch_modifiers_reject_vods_unsafe_urls_and_extra_tokens(self):
+        for text in (
+            '123 all', '000123 new', 'twitch.tv/videos/123 new',
+            'https://www.twitch.tv/channel/v/123 all', 'channel newest',
+            'channel all extra', 'channel all new', 'channel\nall',
+            'https://twitch.tv@evil.invalid/channel all', 'https://evil@twitch.tv/channel new',
+            'https://twitch.tv/channel#about all', 'https://twitch.tv/videos new',
+            'twitch://open?channel=channel&video=123 all', '/allvods channel',
+        ):
+            with self.subTest(text=text), self.assertRaises(InputClassificationError):
+                classify_chat_input(text)
+        self.assertEqual(ClassifiedInput('vod', '123'), classify_chat_input('123'))
+
     def test_explicit_command_type_is_strict_and_numeric_channel_is_supported(self):
         for text, kind, value in (
             ('123', 'vod', '123'), ('https://twitch.tv/videos/123', 'vod', '123'),

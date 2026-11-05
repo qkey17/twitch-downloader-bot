@@ -1,11 +1,8 @@
-"""Automatic text and strict commands reuse the existing VOD/browser flows."""
+"""Automatic text reuse the existing VOD/browser flows."""
 import asyncio
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
-
-from telegram import Update
-from telegram.ext import CommandHandler
+from unittest.mock import AsyncMock, patch
 
 import test_channel_selection as fixture
 from src.handlers import handlers_input as inputs, handlers_cmd as commands, handlers_vod as vod
@@ -33,12 +30,11 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
     def ready_result(self):
         return dict(fixture.ChannelSelectionTests.ready_result(self), id='a'*32)
 
-    def request(self, text='', *, args=None, owner=7, number=None):
+    def request(self, text='', *, owner=7, number=None):
         if number is None:
             self.incoming_id=getattr(self,'incoming_id',19)+1
             number=self.incoming_id
         message = self.message(number, text)
-        self.context.args = args or []
         return SimpleNamespace(message=message, effective_message=message,
                                effective_user=SimpleNamespace(id=owner))
 
@@ -52,15 +48,25 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(options['link_preview_options'].is_disabled)
         self.assert_no_input_mode()
 
-    async def test_text_and_commands_for_vod_reuse_bound_confirmation_without_download(self):
-        for method, text in (('text', 'https://twitch.tv/videos/123456789'), ('text', '123456789'),
-                             ('command', '123456789'), ('command', 'https://twitch.tv/videos/123456789')):
-            with self.subTest(method=method, text=text):
+    async def test_ordinary_input_never_claims_a_batch(self):
+        from src import admin_batch
+        for text, kind in (('all', 'channel'), ('new', 'channel'), ('channel', 'channel'),
+                           ('https://twitch.tv/channel', 'channel'), ('123', 'vod'),
+                           ('https://twitch.tv/videos/123', 'vod')):
+            with self.subTest(text=text), patch.object(inputs, '_dispatch', AsyncMock()) as dispatch, \
+                    patch.object(admin_batch, 'start_batch') as batch:
+                await inputs.text_input(self.request(text), self.context)
+                self.assertEqual(kind, dispatch.await_args.args[-1].kind)
+                batch.assert_not_called()
+
+    async def test_text_for_vod_reuse_bound_confirmation_without_download(self):
+        for text in ('https://twitch.tv/videos/123456789', '123456789'):
+            with self.subTest(text=text):
                 self.context = self.context_for_user()
                 self.metadata.reset_mock()
                 self.messages.clear()
-                update = self.request(text, args=[text])
-                await (inputs.text_input if method == 'text' else inputs.vod_command)(update, self.context)
+                update = self.request(text)
+                await inputs.text_input(update, self.context)
                 self.metadata.assert_awaited_once_with(self.http, 'mock-client', '123456789')
                 pending = self.context.user_data['vod_pending']
                 prompt, args, options = self.messages[-1]
@@ -72,19 +78,16 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
                 self.runner.assert_not_awaited()
                 self.app.create_task.assert_not_called()
 
-    async def test_text_and_commands_for_channels_use_real_browser_and_owned_tasks(self):
-        for method, text in (('text', 'fixture_channel'), ('text', 'https://www.twitch.tv/ChAnNeL'),
-                             ('command', 'channel'), ('command', 'https://twitch.tv/channel'),
-                             ('text', 'https://m.twitch.tv/channel/?tt_medium=mobile_web_share'),
-                             ('command', 'https://twitch.tv/channel?sr=a'),
-                             ('text', 'twitch://stream/channel'),
-                             ('command', 'twitch://open?channel=channel')):
-            with self.subTest(method=method, text=text):
+    async def test_text_for_channels_use_real_browser_and_owned_tasks(self):
+        for text in ('fixture_channel', 'https://www.twitch.tv/ChAnNeL', 'https://twitch.tv/channel',
+                     'https://m.twitch.tv/channel/?tt_medium=mobile_web_share',
+                     'https://twitch.tv/channel?sr=a', 'twitch://stream/channel', 'twitch://open?channel=channel'):
+            with self.subTest(text=text):
                 self.context = self.context_for_user()
                 videos.fetch_user_by_login.reset_mock()
                 self.app.create_task.reset_mock()
-                update = self.request(text, args=[text])
-                result = await (inputs.text_input if method == 'text' else inputs.channel_command)(update, self.context)
+                update = self.request(text)
+                result = await inputs.text_input(update, self.context)
                 self.assertEqual('ready', result.status)
                 login = 'fixture_channel' if text == 'fixture_channel' else 'channel'
                 videos.fetch_user_by_login.assert_awaited_once_with(self.http, login)
@@ -94,85 +97,6 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn(inputs._ROUTE, self.context.user_data)
                 self.assert_no_input_mode()
 
-    async def test_empty_commands_are_silent_without_state_or_requests(self):
-        for command in (inputs.vod_command, inputs.channel_command):
-            with self.subTest(command=command.__name__):
-                update = self.request()
-                await command(update, self.context)
-                update.message.reply_text.assert_not_awaited()
-                update.message.edit_text.assert_not_awaited()
-                self.assertEqual({}, self.context.user_data)
-                self.assertEqual(0, len(self.browser))
-                self.app.create_task.assert_not_called()
-                videos.fetch_user_by_login.assert_not_awaited()
-                self.metadata.assert_not_awaited()
-
-    async def test_empty_commands_preserve_pending_lookup_and_active_download(self):
-        set_pending(self.context, 'vod', '999')
-        bind_pending_message(self.context, self.message(90))
-        self.context.user_data[inputs._ROUTE] = {'chat_id': 10, 'created_at': inputs.time.monotonic()}
-        self.context.user_data['vod_link_lookup'] = object()
-        self.context.user_data['vod_result_choice'] = {'vod_id': '999', 'nonce': 'test'}
-        operation = begin_download(self.context)
-        before_user = dict(self.context.user_data)
-        before_bot = dict(self.app.bot_data)
-        try:
-            for command in (inputs.vod_command, inputs.channel_command):
-                for args in (None, [], [''], [' ', '\t']):
-                    with self.subTest(command=command.__name__, args=args):
-                        update = self.request()
-                        self.context.args = args
-                        await command(update, self.context)
-                        update.message.reply_text.assert_not_awaited()
-                        update.message.edit_text.assert_not_awaited()
-                        self.assertEqual(before_user, self.context.user_data)
-                        self.assertEqual(before_bot, self.app.bot_data)
-            self.metadata.assert_not_awaited()
-            videos.fetch_user_by_login.assert_not_awaited()
-            self.app.create_task.assert_not_called()
-            self.runner.assert_not_awaited()
-        finally:
-            finish_download(self.context, operation)
-
-    async def test_empty_command_does_not_control_next_text_type(self):
-        await inputs.vod_command(self.request(), self.context)
-        self.assertEqual('ready', (await inputs.text_input(self.request('fixture_channel'), self.context)).status)
-        await inputs.channel_command(self.request(), self.context)
-        await inputs.text_input(self.request('123456789'), self.context)
-        self.assertEqual('123456789', self.context.user_data['vod_pending']['vod_id'])
-        self.assert_no_input_mode()
-
-    async def test_vod_channel_name_is_format_error_but_plain_name_opens_channel(self):
-        update = self.request(args=['fixture_channel'])
-        await inputs.vod_command(update, self.context)
-        self.assertIn('Неверный формат.', update.message.reply_text.await_args.args[0])
-        self.assert_instruction(update.message)
-        videos.fetch_user_by_login.assert_not_awaited()
-        self.metadata.assert_not_awaited()
-        self.assertEqual({}, self.context.user_data)
-        self.assertEqual('ready', (await inputs.text_input(self.request('fixture_channel'), self.context)).status)
-        videos.fetch_user_by_login.assert_awaited_once_with(self.http, 'fixture_channel')
-
-    async def test_wrong_command_type_never_reroutes_or_installs_mode(self):
-        for command, argument in ((inputs.vod_command, 'https://twitch.tv/channel'),
-                                  (inputs.channel_command, 'https://twitch.tv/videos/123456789'),
-                                  (inputs.vod_command, 'https://example.invalid/videos/123'),
-                                  (inputs.channel_command, 'bad input')):
-            with self.subTest(argument=argument):
-                update = self.request(args=argument.split())
-                await command(update, self.context)
-                self.assertIn('Неверный формат', update.message.reply_text.await_args.args[0])
-                self.assert_instruction(update.message)
-                self.assertEqual({}, self.context.user_data)
-        self.metadata.assert_not_awaited()
-        videos.fetch_user_by_login.assert_not_awaited()
-
-    async def test_channel_command_can_force_numeric_login_without_starting_vod(self):
-        result = await inputs.channel_command(self.request(args=['123456789']), self.context)
-        self.assertEqual('ready', result.status)
-        videos.fetch_user_by_login.assert_awaited_once_with(self.http, '123456789')
-        self.metadata.assert_not_awaited()
-
     async def test_extra_arguments_and_unknown_text_are_not_partial_matches(self):
         for text in ('unrecognized input text', 'https://example.invalid/videos/123', 'https://clips.twitch.tv/Slug'):
             with self.subTest(text=text):
@@ -180,10 +104,6 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
                 await inputs.text_input(update, self.context)
                 self.assertIn('Не удалось распознать', update.message.reply_text.await_args.args[0])
                 self.assertEqual({}, self.context.user_data)
-        update = self.request(args=['123', '456'])
-        await inputs.vod_command(update, self.context)
-        self.assert_instruction(update.message)
-        self.assertEqual({}, self.context.user_data)
         self.metadata.assert_not_awaited()
         videos.fetch_user_by_login.assert_not_awaited()
 
@@ -197,9 +117,9 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn('Выбери действие', text)
                 self.assertEqual({}, self.context.user_data)
         text = self.messages[-1][1][0]
-        for phrase in ('Тип запроса определяется автоматически.', '«/vod значение» — получить чат VOD.',
-                       '«/channel значение» — посмотреть VODs канала.', 'При необходимости укажите его явно, отправив одну из команд вместе со значением:'):
-            self.assertIn(phrase, text)
+        self.assertIn('ID или ссылку на VOD', text)
+        self.assertIn('название канала или ссылку', text)
+        self.assertNotIn('Premium', text)
         self.assertNotIn('http', text)
         self.app.create_task.assert_not_called()
         videos.fetch_user_by_login.assert_not_awaited()
@@ -221,36 +141,11 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.metadata.assert_not_awaited()
         self.app.create_task.assert_not_called()
 
-    async def test_addressed_commands_use_ptb_arguments_and_ignore_other_bots(self):
-        bot = SimpleNamespace(username='TDBBot')
-        for name, callback, argument in (('vod', inputs.vod_command, '123456789'),
-                                          ('channel', inputs.channel_command, 'channel')):
-            with self.subTest(name=name):
-                self.context = self.context_for_user()
-                command = '/'+name+'@TDBBot'
-                payload = {'update_id': 1, 'message': {
-                    'message_id': 1, 'date': 0, 'chat': {'id': 10, 'type': 'private'},
-                    'from': {'id': 7, 'is_bot': False, 'first_name': 'Test'},
-                    'text': command+' '+argument,
-                    'entities': [{'type': 'bot_command', 'offset': 0, 'length': len(command)}],
-                }}
-                update = Update.de_json(payload, bot)
-                handler = CommandHandler(name, callback)
-                check = handler.check_update(update)
-                self.assertIsInstance(check, tuple)
-                request = self.request()
-                handler.collect_additional_context(self.context, update, self.app, check)
-                self.assertEqual([argument], self.context.args)
-                await handler.callback(request, self.context)
-                payload['message']['text'] = '/'+name+'@OtherBot '+argument
-                payload['message']['entities'][0]['length'] = len('/'+name+'@OtherBot')
-                self.assertIsNone(handler.check_update(Update.de_json(payload, bot)))
-
-    async def test_help_and_empty_commands_preserve_existing_format_selection(self):
+    async def test_help_and_start_preserve_existing_format_selection(self):
         set_pending(self.context, 'vod', '999')
         bind_pending_message(self.context, self.message(90))
         pending = self.context.user_data['vod_pending']
-        for command in (commands.start_command, commands.help_command, inputs.vod_command, inputs.channel_command):
+        for command in (commands.start_command, commands.help_command):
             await command(self.request(), self.context)
             self.assertIs(pending, self.context.user_data['vod_pending'])
         await inputs.text_input(self.request('123456789'), self.context)
@@ -265,7 +160,7 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(status=status):
                 videos.fetch_user_by_login.side_effect = error
                 videos.fetch_user_by_login.return_value = None
-                result = await inputs.channel_command(self.request(args=['channel']), self.context)
+                result = await inputs.text_input(self.request('channel'), self.context)
                 self.assertEqual(status, result.status)
                 self.assertNotIn(inputs._ROUTE, self.context.user_data)
                 self.assertNotIn('vod_pending', self.context.user_data)
@@ -299,8 +194,8 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(error=type(error).__name__):
                 self.metadata.side_effect = error
                 self.metadata.return_value = None
-                update = self.request(args=['123456789'])
-                result = await inputs.vod_command(update, self.context)
+                update = self.request('123456789')
+                result = await inputs.text_input(update, self.context)
                 self.assertIn(result, ('missing', 'error'))
                 text = update.message.reply_text.await_args.args[0]
                 self.assertIn('не найден' if error is None else 'Не удалось', text)
@@ -345,7 +240,7 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
         async def slow(*args):entered.set();await release.wait();return videos.TwitchUser('123','channel','Channel')
         videos.fetch_user_by_login.side_effect=slow
         first=self.task(inputs.text_input(self.request('channel'),self.context));await asyncio.wait_for(entered.wait(),1)
-        second=self.task(inputs.channel_command(self.request(args=['other']),self.context))
+        second=self.task(inputs.text_input(self.request('other'),self.context))
         for _ in range(10):
             if videos.fetch_user_by_login.await_count==2:break
             await asyncio.sleep(0)
@@ -353,7 +248,7 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
         release.set();a,b=await asyncio.gather(first,second)
         self.assertTrue(self.browser.is_current(a));self.assertTrue(self.browser.is_current(b))
 
-    async def test_help_and_empty_commands_during_lookup_do_not_cancel_or_replace_request(self):
+    async def test_help_and_start_during_lookup_do_not_cancel_or_replace_request(self):
         entered, release = asyncio.Event(), asyncio.Event()
         async def slow(*args):
             entered.set()
@@ -363,7 +258,7 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
         first = self.task(inputs.text_input(self.request('123456789'), self.context))
         await asyncio.wait_for(entered.wait(), 1)
         route = self.context.user_data[inputs._ROUTE]
-        for command in (commands.start_command, commands.help_command, inputs.vod_command, inputs.channel_command):
+        for command in (commands.start_command, commands.help_command):
             await command(self.request(), self.context)
             self.assertIs(route, self.context.user_data[inputs._ROUTE])
             self.assert_no_input_mode()
@@ -391,7 +286,7 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
         other = self.context_for_user()
         operation = begin_download(other)
         try:
-            await inputs.vod_command(self.request(args=['123456789']), self.context)
+            await inputs.text_input(self.request('123456789'), self.context)
             self.assertNotIn('vod_pending', self.context.user_data)
             self.metadata.assert_not_awaited()
             self.ready.return_value = self.ready_result()
@@ -405,7 +300,7 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
         await inputs.text_input(self.request('123456789'), self.context)
         old_prompt = self.messages[-1][0]
         await commands.cancel_command(self.request(), self.context)
-        await inputs.vod_command(self.request(args=['999']), self.context)
+        await inputs.text_input(self.request('999'), self.context)
         pending = self.context.user_data['vod_pending']
         await vod.vod_format_chosen(self.callback('vodfmt:html_online', old_prompt), self.context)
         await vod.format_cancel_callback(self.callback('ui:format_cancel', old_prompt), self.context)

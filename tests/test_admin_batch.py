@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 import unittest
 from src import admin_access, admin_batch as admin, config
 from src.vod_scheduler import scheduler, stop_scheduler
-from src.handlers import handlers_cmd as commands
+from src.handlers import handlers_cmd as commands, handlers_input as inputs
 from src.twitch_api import videos
 from src.twitch_api.client import TwitchAPIError
 from src.vod_cancellation import request_owner, finish_owner
@@ -21,18 +21,20 @@ class Authorization(unittest.IsolatedAsyncioTestCase):
                     patch.object(admin_access.db_privileges, 'has_access', return_value=False):
                 if value is not None:os.environ['TCD_ADMIN_USER_ID']=value
                 message=NS(reply_text=AsyncMock())
-                app=NS(bot_data={});ctx=NS(application=app,args=['channel'])
+                app=NS(bot_data={});ctx=NS(application=app)
+                message.text='channel all'
                 with patch.object(videos,'fetch_user_by_login',AsyncMock()) as api:
-                    await admin.allvods_command(NS(effective_user=NS(id=user),effective_message=message),ctx)
+                    await inputs.text_input(NS(effective_user=NS(id=user),message=message),ctx)
                 message.reply_text.assert_awaited_once_with('Команда недоступна');api.assert_not_awaited()
                 self.assertEqual({},app.bot_data)
 
-    async def test_authorized_invalid_arguments_do_not_create_batch(self):
-        for args in ([],['channel','extra'],['https://evil.invalid/x'],['https://twitch.tv/videos/123']):
-            ctx=NS(application=NS(bot_data={}),args=args);msg=NS(reply_text=AsyncMock())
+    async def test_invalid_batch_syntax_never_creates_batch(self):
+        for raw in ('channel all extra', 'https://evil.invalid/x new', 'https://twitch.tv/videos/123 all'):
+            ctx=NS(application=NS(bot_data={}))
+            msg=NS(text=raw,reply_text=AsyncMock())
             with patch.dict(os.environ,{'TCD_ADMIN_USER_ID':'7'}):
-                await admin.allvods_command(NS(effective_user=NS(id=7),effective_message=msg),ctx)
-            self.assertIn('/allvods',msg.reply_text.await_args.args[0]);self.assertFalse(ctx.application.bot_data)
+                await inputs.text_input(NS(effective_user=NS(id=7),message=msg),ctx)
+            self.assertIn('/help',msg.reply_text.await_args.args[0]);self.assertFalse(ctx.application.bot_data)
 
 
 class Lifecycle(unittest.IsolatedAsyncioTestCase):
@@ -44,7 +46,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         await stop_scheduler(self.app)
         await shared.SharedCards.asyncTearDown(self)
 
-    async def launch(self, records=None, argument='channel', *, owner=7, command=admin.allvods_command, photo=False):
+    async def launch(self, records=None, argument='channel', *, owner=7, mode='all', photo=False):
         if records is not None:self.vods[:]=records
         source=NS(reply_text=AsyncMock(),reply_photo=AsyncMock())
         control=NS(chat_id=10,message_id=9000,edit_text=AsyncMock(),edit_caption=AsyncMock())
@@ -52,9 +54,10 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         if not photo and isinstance(self.fetch.return_value,videos.TwitchUser):
             self.fetch.return_value=replace(self.fetch.return_value,profile_image_url='')
         source.reply_text.return_value=control
-        ctx=self.context(owner);ctx.args=[argument]
+        ctx=self.context(owner)
+        source.text=f'{argument} {mode}'
         with patch.dict(os.environ,{'TCD_ADMIN_USER_ID':'7'}):
-            await command(NS(effective_user=NS(id=owner),effective_message=source),ctx)
+            await inputs.text_input(NS(effective_user=NS(id=owner),message=source),ctx)
         batch=self.app.bot_data[admin.KEY]
         return batch,control,source
 
@@ -131,7 +134,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         records = [replace(self.vods[i-1], created_at=f'2026-01-0{day}T00:00:00Z')
                    for i, day in ((1, 1), (2, 3), (3, 2))]
         ready = self.ready['2'] = self.saved('2')
-        batch, card, source = await self.launch(records, command=admin.newvods_command)
+        batch, card, source = await self.launch(records, mode='new')
         for vid, index in (('3', 2), ('1', 3)):
             job = await self.entered(vid)
             self.assertEqual(index, batch.index)
@@ -235,9 +238,9 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         with patch.object(videos,'fetch_user_by_login',AsyncMock(side_effect=slow)):
             batch,_,_=await self.launch()
             await asyncio.wait_for(entered.wait(),1)
-            msg=NS(reply_text=AsyncMock())
+            msg=NS(text='channel new',reply_text=AsyncMock())
             with patch.dict(os.environ,{'TCD_ADMIN_USER_ID':'7'}):
-                await admin.allvods_command(NS(effective_user=NS(id=7),effective_message=msg),self.context(7))
+                await inputs.text_input(NS(effective_user=NS(id=7),message=msg),self.context(7))
             msg.reply_text.assert_awaited_once_with('Массовая обработка уже выполняется')
             await self.cancel_all()
         self.assertTrue(batch.cancelled);self.assertTrue(batch.task.done());self.assertFalse(self.started)

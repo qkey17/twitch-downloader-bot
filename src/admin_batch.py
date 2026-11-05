@@ -10,7 +10,6 @@ from telegram.error import BadRequest, RetryAfter, TelegramError
 from src import config
 from src.admin_access import role
 from src.channel_browser import ChannelBrowser
-from src.input_classifier import classify_input, InputClassificationError
 from src.channel_archive import order
 from src.vod_scheduler import scheduler, INPUT_TICKET
 from src.job_context import JobContext
@@ -169,30 +168,14 @@ def stop_batch(app, owner=None):
     return None
 
 
-async def allvods_command(update, context):
-    await _batch_command(update, context, new_only=False)
-
-
-async def newvods_command(update, context):
-    await _batch_command(update, context, new_only=True)
-
-
-async def _batch_command(update, context, *, new_only):
-    owner = getattr(update.effective_user, 'id', None)
+async def start_batch(message, context, owner, login, *, new_only):
     if role(owner) is None:
-        await update.effective_message.reply_text('Команда недоступна')
-        return
-    try:
-        if len(context.args or [])!=1:raise InputClassificationError()
-        login=classify_input(context.args[0],expected_kind='channel').value
-    except (InputClassificationError,TypeError):
-        command = 'newvods' if new_only else 'allvods'
-        await update.effective_message.reply_text(f'/{command} «канал»')
+        await message.reply_text('Команда недоступна')
         return
     if KEY in context.application.bot_data:
-        await update.effective_message.reply_text('Массовая обработка уже выполняется')
+        await message.reply_text('Массовая обработка уже выполняется')
         return
-    batch=Batch(owner,context,source=update.effective_message,channel=login,new_only=new_only)
+    batch=Batch(owner,context,source=message,channel=login,new_only=new_only)
     # No await between the access lookup and this claim. Revocation either
     # prevents the claim or finds the already registered batch.
     context.application.bot_data[KEY]=batch
