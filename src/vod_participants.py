@@ -104,7 +104,9 @@ class Participants:
                 terminal = part.terminal
                 try:
                     async with asyncio.timeout(DELIVERY_TIMEOUT):
-                        if callable(value):
+                        if getattr(part.context, 'batch_silent', False):
+                            pass  # One batch summary owns UI; job/history/publication are unchanged.
+                        elif callable(value):
                             await value(part)
                         elif value is not None:
                             from .workers.worker_progress import safe_edit_html

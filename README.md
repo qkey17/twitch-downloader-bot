@@ -47,6 +47,7 @@ Required:
 
 Optional:
 
+- `TCD_ADMIN_USER_ID` — optional positive numeric Telegram User ID authorized for `/allvods channel` (a safe Twitch channel link is also accepted). Missing/invalid values disable administrative commands. No usernames are trusted and this command is not added to public help/menu. One in-memory batch at a time, oldest VOD first, up to 500 VODs / 10 Helix pages; existing results are regenerated through the same scheduler. `/cancel` cancels all own participations across cards/chats and stops issuing batch items; other users keep their shared work. Commit-in-progress is allowed to finish. Batches are never automatically restored after restart. Configure this only through your normal process environment; do not commit actual IDs.
 - `TCD_HISTORY_ENABLED` — defaults to `false`; set `true` to enable personal download history (case-insensitive). When disabled, `/history` is hidden from the command menu, manual requests and old history buttons report that history is disabled, and new personal history rows are not recorded. Existing rows and the technical VOD cache are preserved; enabling the setting on restart restores history access.
 - `TCD_DB_PATH` — SQLite path. Without it, the database is `vod_history.db` in the project root.
 - `TCD_LOG_LEVEL` — logging level; defaults to `INFO`.
