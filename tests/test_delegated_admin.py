@@ -73,7 +73,7 @@ class PrivilegeCommands(unittest.IsolatedAsyncioTestCase):
         for expected in ('Premium предоставлен', 'Premium уже предоставлен'):
             self.assertEqual(expected, await invoke(self.app, 7, ['9', 'add']))
         self.assertEqual([9], db_privileges.list_users())
-        self.assertEqual('Пользователи с Premium:\n• 9',
+        self.assertEqual('Пользователи с Premium:\n• Telegram ID: 9',
                          await invoke(self.app, 7, ['list']))
         self.assertEqual('Premium отозван', await invoke(self.app, 7, ['9', 'remove']))
         self.assertEqual('У пользователя нет Premium',
@@ -112,9 +112,9 @@ class PrivilegeCommands(unittest.IsolatedAsyncioTestCase):
         calls = update.effective_message.reply_text.await_args_list
         self.assertEqual(2, len(calls))
         text = '\n'.join(call.args[0] for call in calls)
-        rows = [row.split()[1] for row in text.splitlines() if row.startswith('• ')]
+        rows = [row.split()[3] for row in text.splitlines() if row.startswith('• Telegram ID: ')]
         self.assertEqual([str(user_id) for user_id in range(10, 72)], rows)
-        self.assertIn('• 10 · <a href="https://t.me/Valid_10">@Valid_10</a>', text)
+        self.assertIn('• Telegram ID: 10 · <a href="https://t.me/Valid_10">@Valid_10</a>', text)
         self.assertEqual(1, text.count('<a '))
         self.assertEqual(7, get_chat.await_count)
         self.assertTrue(all(call.kwargs['parse_mode'] == 'HTML' for call in calls))
@@ -124,7 +124,7 @@ class PrivilegeCommands(unittest.IsolatedAsyncioTestCase):
             db_privileges.grant(user_id)
         self.app.bot = NS(get_chat=AsyncMock(side_effect=Forbidden('no access')))
         text = await invoke(self.app, 7, ['list'])
-        self.assertIn('• 39', text)
+        self.assertIn('• Telegram ID: 39', text)
         self.assertEqual(10, self.app.bot.get_chat.await_count)
 
     async def test_invalid_owner_and_database_read_failure_deny_allvods_before_twitch(self):
