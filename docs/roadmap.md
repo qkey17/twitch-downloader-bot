@@ -1,8 +1,20 @@
 # Краткая дорожная карта TCD Main
 
-## В работе: полная загрузка VODs, точные страницы и окончательная справка
+## В работе: display name и настоящий login в новых HTML
 
-Ожидает review, merge и deployment. Существующий VodListBrowser сначала получает
+Ожидает review/merge/deployment. При различии имён без учёта регистра подпись
+`display_name (login)`, иначе только исходное display_name. Источник — существующие
+commenter.displayName/login; нет транслитерации, новых запросов или изменения identity.
+Отсутствующий login сохраняет прежнюю подпись. Дополнительное поле проходит прежний
+spool и compact extra, без schema migration. DOM textContent сохраняет XSS-защиту,
+цвет/бейджи/поиск/выделение и перенос длинных имён. Только будущие HTML generations;
+существующие файлы не переписываются. Старые данные без login остаются совместимыми.
+
+## Выпущен PR #63: полная загрузка VODs, точные страницы и окончательная справка
+
+[PR #63](https://github.com/qkey17/twitch-downloader-bot/pull/63) объединён squash merge
+и развёрнут через [Actions 41897493853](https://github.com/qkey17/twitch-downloader-bot/actions/runs/41897493853).
+Техническая приёмка PASS; ручная приёмка списка и справки подтверждена владельцем. Существующий VodListBrowser сначала получает
 все страницы Twitch в пределах 500 VODs / 10 Helix страниц и 60 секунд, затем
 проверяет архив прежними пакетами (до 500 кандидатов, до 5 запросов, timeout 5 секунд).
 Только после завершения объединения и сортировки дата DESC / VOD ID ASC появляется
@@ -159,7 +171,7 @@ SQLite schema, HTML viewer, публикация и совместная обр�
 ## Текущее состояние — 4 ноября 2026
 
 Последний подтверждённый production SHA:
-`d0edece40f84823437e26a2d42b85f100585ed98` (PR #62).
+`5d8425ef6ba5eca62795782ae72b9e59a7586325` (PR #63).
 PR #37 развёрнут через [Actions 41341845343](https://github.com/qkey17/twitch-downloader-bot/actions/runs/41341845343),
 PR #38 — через [Actions 41345871255](https://github.com/qkey17/twitch-downloader-bot/actions/runs/41345871255).
 Оба релиза прошли техническую и ручную приёмку владельца. PR #38 исправил
