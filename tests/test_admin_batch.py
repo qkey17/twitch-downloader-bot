@@ -59,6 +59,52 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         await commands.cancel_command(NS(effective_user=NS(id=owner),effective_message=msg),self.context(owner))
         return msg
 
+    async def test_cancel_restoration_exception_drains_other_parts_and_reports_failure(self):
+        import src.vod_cancellation as cancellation
+        completed=asyncio.Event()
+        job=NS(critical=False)
+        plan=(None,[(job,NS()),(job,NS())],[])
+        calls=0
+        async def finish(*args,**kwargs):
+            nonlocal calls
+            calls+=1
+            if calls==1:raise OSError('synthetic failure')
+            completed.set()
+        with patch.object(cancellation,'request_owner',return_value=plan),patch.object(cancellation,'finish_member',side_effect=finish):
+            notice=await asyncio.wait_for(self.cancel_all(),2)
+        self.assertTrue(completed.is_set());self.assertEqual(2,calls)
+        self.assertEqual('Не удалось подтвердить штатное завершение отмены',notice.reply_text.await_args.args[0])
+
+    async def test_summary_failures_do_not_stop_next_vod_or_change_final_results(self):
+        from telegram.error import BadRequest
+        for failure in (BadRequest('synthetic failure'),TimeoutError()):
+            with self.subTest(failure=type(failure).__name__):
+                batch,control,_=await self.launch(self.vods[:2])
+                control.edit_text.side_effect=failure
+                for vid in ('2','1'):
+                    job=await self.entered(vid);await self.finish(job)
+                await asyncio.wait_for(batch.task,2)
+                self.assertEqual((2,0,0,0),(batch.success,batch.skipped,batch.errors,batch.cancelled_vods))
+                self.assertIn('1',self.ready);self.assertIn('2',self.ready)
+                self.assertIs(False,await batch.summary('Итог'))
+                self.assertEqual(2,batch.success)
+                # Reset fixture's worker entry events for another independent batch.
+                self.started.clear();self.gates.clear()
+
+    async def test_cancel_with_failing_summary_still_fences_next_vod(self):
+        from telegram.error import NetworkError
+        batch,control,_=await self.launch(self.vods[:2])
+        control.edit_text.side_effect=NetworkError('synthetic failure')
+        job=await self.entered('2')
+        cancel=asyncio.create_task(self.cancel_all())
+        while not job.cancelled:await asyncio.sleep(0)
+        self.gates['2'].set();await asyncio.wait_for(cancel,2)
+        self.assertEqual({'2'},set(self.started));self.assertEqual(2,batch.cancelled_vods)
+
+    async def test_summary_does_not_swallow_task_cancellation(self):
+        batch=admin.Batch(7,self.context(7),message=NS(edit_text=AsyncMock(side_effect=asyncio.CancelledError())))
+        with self.assertRaises(asyncio.CancelledError):await batch.summary('Итог')
+
     async def test_one_at_a_time_oldest_first_including_regeneration_and_one_control_card(self):
         records=[replace(self.vods[i-1],created_at=f'2026-01-0{4-i}T00:00:00Z') for i in (1,2,3)]
         self.ready['2']=self.saved('2');old=self.ready['2']

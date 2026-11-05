@@ -1,7 +1,9 @@
 """One ephemeral admin batch; all work belongs to the existing VOD scheduler."""
 import asyncio
 import html
+import logging
 import time
+from telegram.error import TelegramError
 from dataclasses import dataclass
 from src import config
 from src.channel_browser import ChannelBrowser
@@ -50,8 +52,13 @@ class Batch:
               f'Всего: {self.total}\nТекущий: {self.index}\nУспешно: {self.success}\n'
               f'Пропущено: {self.skipped}\nОшибок: {self.errors}\nОтменено: {self.cancelled_vods}\n'
               f'Осталось: {max(0,self.total-self.success-self.skipped-self.errors-self.cancelled_vods)}')
-        async with asyncio.timeout(10):
-            await self.message.edit_text(text,parse_mode='HTML')
+        try:
+            async with asyncio.timeout(10):
+                await self.message.edit_text(text,parse_mode='HTML')
+        except (TelegramError, OSError, TimeoutError):
+            logging.getLogger(__name__).warning('Batch summary update unavailable')
+            return False
+        return True
 
 
 def stop_batch(app, owner=None):

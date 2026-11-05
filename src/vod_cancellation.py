@@ -79,7 +79,8 @@ async def finish_owner(plan):
             logging.getLogger(__name__).warning('Cancelled card restoration failed')
     for job in commits:
         await job.finished.wait()  # Already publishing: never cross the commit fence.
-    return not any(job.critical for job,_ in work) and not any(job.critical for job in commits)
+    return (not any(isinstance(result,BaseException) for result in results)
+            and not any(job.critical for job,_ in work) and not any(job.critical for job in commits))
 
 
 def invalidate_inputs(context, owner):
