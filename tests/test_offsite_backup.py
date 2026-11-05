@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import patch
 
 import test_backup_restore as fixture
+from src.database import db_privileges
 from tools import backup_restore as snapshots, offsite_backup as offsite
 
 
@@ -157,6 +158,7 @@ class OffsiteTests(unittest.TestCase):
         self.setUp_fixture = self.setUp_base
         fixture.BackupRestoreTests.setUp(self)
         self.ready()
+        db_privileges.grant(9)
         self.snapshot = self.create()
         self.state = self.root/'offsite-state'
         self.cloud = Cloud()
