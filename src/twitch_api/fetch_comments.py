@@ -35,15 +35,23 @@ class CommentPage:
     number: int
 
 
+class CommentRow(tuple):
+    """Seven legacy values plus optional author metadata, not pagination state."""
+    def __new__(cls, values, login):
+        row = super().__new__(cls, values)
+        row.login = login if isinstance(login, str) else None
+        return row
+
+
 def message_row(node):
     """The existing public seven-field row; identity stays internal."""
     commenter = node.get("commenter") or {}
     fragments = extract_message_fragments(node)
     text = render_message(node)
-    return (node.get("contentOffsetSeconds"), node.get("createdAt") or "",
+    return CommentRow((node.get("contentOffsetSeconds"), node.get("createdAt") or "",
             commenter.get("displayName") or commenter.get("login") or "unknown",
             text, fragments,
-            extract_user_color(node), extract_user_badges(node))
+            extract_user_color(node), extract_user_badges(node)), commenter.get("login"))
 
 
 async def validated_pages(

@@ -130,6 +130,8 @@ async def download_and_send(
                 t = fmt_hhmmss(int(offset)) if isinstance(offset, (int, float)) else "00:00:00"
                 row = {"t": t, "user": user, "text": text, "fragments": fragments,
                        "color": color, "badges": badges}
+                if isinstance(getattr(comment, 'login', None), str) and comment.login:
+                    row['login'] = comment.login
                 encoded = encode_row(row)
                 size = len(encoded[1].encode("utf-8"))
                 if batch and batch_bytes + size > SPOOL_BATCH_BYTES:

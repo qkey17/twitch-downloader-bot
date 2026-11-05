@@ -1524,11 +1524,17 @@ function noticeForRow(r){
      || n.comment_fragments.map(f=>f.text).join('')!==n.comment)) return null;
   return n;
 }
+function authorLabel(r){
+  const display=typeof r.user==='string' && r.user ? r.user : '—';
+  const login=typeof r.login==='string' ? r.login : '';
+  return login && display!=='—' && display.toLowerCase()!==login.toLowerCase()
+    ? display+' ('+login+')' : display;
+}
 function appendUserMessage(parent,r,text,fragments,document){
   const nameWrap=document.createElement('span');
   renderBadges(nameWrap,r.badges||[]);
   const userEl=document.createElement('span');userEl.className='user';
-  userEl.textContent=r.user||'—';userEl.style.color=String(r.color||colorForUser(r.user)).trim();
+  userEl.textContent=authorLabel(r);userEl.style.color=String(r.color||colorForUser(r.user)).trim();
   nameWrap.appendChild(userEl);
   const colonEl=document.createElement('span');colonEl.className='colon';colonEl.textContent=':';
   nameWrap.appendChild(colonEl);
