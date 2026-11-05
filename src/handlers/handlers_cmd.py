@@ -43,11 +43,14 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tasks = context.application.bot_data.setdefault('tdb_owner_cancellations', {})
     existing = tasks.get(owner)
     if existing is not None:
-        clean = await asyncio.shield(existing)
-        await msg.reply_text('Ваши текущие и ожидающие обработки отменены' if clean else 'Не удалось подтвердить штатное завершение отмены')
+        task, silent = existing
+        clean = await asyncio.shield(task)
+        if not silent:
+            await msg.reply_text('Ваши текущие и ожидающие обработки отменены' if clean else 'Не удалось подтвердить штатное завершение отмены')
         return
     batch = context.application.bot_data.get(KEY)
     batch_owned = batch is not None and batch.owner == owner
+    batch_part = batch.current_part if batch_owned else None
     batch_task = stop_batch(context.application, owner)  # Fence issuance first.
     plan = request_owner(context.application, owner)
     inputs = invalidate_inputs(context, owner)
@@ -62,6 +65,16 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not has_work:
         await msg.reply_text('Действие отменено.' if inputs else 'Нет активных обработок')
         return
+    ordinary = True
+    if batch_owned:
+        ordinary = any(part is not batch_part for _, part in plan[1])
+        for job in plan[2]:
+            if job is not batch.current_job or job.participants is None:
+                ordinary = True
+            elif any(part is not batch_part and part.owner == owner and part.active
+                     for part in job.participants.members.values()):
+                ordinary = True
+    silent = batch_owned and not (ordinary or inputs or legacy)
     async def finish():
         try:
             clean = await finish_owner(plan)
@@ -73,7 +86,10 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         finally:
             tasks.pop(owner, None)
     task = asyncio.create_task(finish())
-    tasks[owner] = task
+    tasks[owner] = task, silent
+    if silent:
+        await asyncio.shield(task)
+        return
     await msg.reply_text('Отмена обработок…' if not plan[2] else 'Обработка уже завершается. Ожидайте завершения.')
     clean = await asyncio.shield(task)
     if not clean:

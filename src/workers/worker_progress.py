@@ -62,19 +62,21 @@ def _fmt_date_ru(dt: str) -> str:
         return dt
 
 
-def _build_progress_card(meta, vod_url, messages, users_len, done):
+def _build_progress_card(meta, vod_url, messages, users_len, done, *, status=None):
     channel = html.escape((meta.get("channel") or "—")[:120])
     title = html.escape((meta.get("title") or "Без названия")[:240])
     duration = _fmt_len(meta.get("length_seconds"))
     dt = _fmt_date_ru(_fmt_dt_utc(meta.get("created_at")))
 
-    status = "Чат загружен. Подготовка HTML…" if done else "Загрузка чата…"
+    if status is None:
+        status = "Чат загружен. Подготовка HTML…" if done else "Загрузка чата…"
+    chat_stats = f" • 💬 {messages} • 👥 {users_len}" if messages is not None else ""
 
     return (
         f"⏳ <b>{status}</b>\n"
         f"🟣 {channel}\n"
         f"🎬 {title}\n"
-        f"⏱ {duration} • 💬 {messages} • 👥 {users_len}\n"
+        f"⏱ {duration}{chat_stats}\n"
         f"🗓 {dt}"
         + lines(meta)
     )

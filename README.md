@@ -58,7 +58,9 @@ Optional:
 
 Use `.env.example` as a list of variable names and configure the real values through the shell, a process manager, or another secret-management mechanism. Never commit real credentials.
 
-The owner and delegates can use `/allvods channel` (a safe Twitch channel link is also accepted). One in-memory batch runs at a time, oldest VOD first, up to 500 VODs / 10 Helix pages / 60 seconds for list loading. Existing results are regenerated through the same scheduler. Revocation stops the delegate's batch while preserving ordinary jobs and other participants. `/cancel` remains available to all users for their own processing. A generation already committing finishes safely, and a batch is never automatically restored after restart. Admin commands stay out of public help and the Telegram menu.
+The owner and delegates can use `/admin` for role-specific help, `/allvods channel` for all public VODs, or `/newvods channel` to skip VODs with valid ready HTML. Both batch commands accept a safe Twitch channel link. Only the owner sees access management in the help. Private Telegram menus include `/admin` for authorized users alongside `/help`. The bot synchronizes scopes on grant, revoke and subsequent private interactions, including after restart or a temporary Telegram failure.
+
+One in-memory batch runs at a time, newest VOD first, up to 500 VODs / 10 Helix pages / 60 seconds for list loading. The same card shows the current VOD, its position in the source list, worker progress and the final totals. It uses a Twitch channel avatar when available and a text card otherwise. The initiator can cancel from that card. Revocation stops the delegate's batch while preserving ordinary jobs and other participants. `/cancel` remains available to all users for their own processing. A generation already committing finishes safely. Batches require a new command after restart.
 
 ## Running
 

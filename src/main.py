@@ -1,11 +1,14 @@
 import aiohttp
+import asyncio
 import logging
 from .log_setup import setup_logging
-from telegram import BotCommand
+from telegram import Update
+from telegram.error import TelegramError
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
+    TypeHandler,
     CallbackQueryHandler,
     ContextTypes,
     filters,
@@ -13,6 +16,7 @@ from telegram.ext import (
 
 from src.database import database as db
 from src import config
+from .admin_access import public_commands, refresh_private_menu
 from .config import ConfigurationError, get_telegram_bot_token, validate_credentials
 from .html_publisher import cleanup_stale_html_temp_files
 from .chat_spool import cleanup_orphaned_chat_spools
@@ -93,10 +97,11 @@ async def post_init(app: Application):
     start_sender(app)
     app.bot_data["aiohttp"] = aiohttp.ClientSession()
 
-    commands = [
-        BotCommand("help", "Справка"),
-    ]
-    await app.bot.set_my_commands(commands)
+    try:
+        async with asyncio.timeout(5):
+            await app.bot.set_my_commands(public_commands())
+    except (TelegramError, OSError, TimeoutError):
+        logging.getLogger("tcd").warning("Public menu synchronization unavailable")
     await start_maintenance(app)
 
 
@@ -158,9 +163,12 @@ def main():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("about", about_command))
-    from .admin_batch import allvods_command
-    from .handlers.handlers_admin import adminadd_command, adminremove_command, adminlist_command
+    from .admin_batch import allvods_command, newvods_command, batch_cancel_callback
+    from .handlers.handlers_admin import admin_command, adminadd_command, adminremove_command, adminlist_command
+    app.add_handler(TypeHandler(Update, refresh_private_menu, block=False), group=-1)
+    app.add_handler(CommandHandler("admin", admin_command, block=False))
     app.add_handler(CommandHandler("allvods", allvods_command, block=False))
+    app.add_handler(CommandHandler("newvods", newvods_command, block=False))
     app.add_handler(CommandHandler("adminadd", adminadd_command, block=False))
     app.add_handler(CommandHandler("adminremove", adminremove_command, block=False))
     app.add_handler(CommandHandler("adminlist", adminlist_command, block=False))
@@ -184,6 +192,7 @@ def main():
     app.add_handler(CallbackQueryHandler(input_menu_callback, pattern=INPUT_CALLBACK_PATTERN))
 
     app.add_handler(CallbackQueryHandler(format_cancel_callback, pattern=r"^ui:format_cancel$"))
+    app.add_handler(CallbackQueryHandler(batch_cancel_callback, pattern=r"^ui:batch_cancel:", block=False))
     app.add_handler(CallbackQueryHandler(pending_cancel_callback, pattern=r"^ui:pending_cancel(?::[0-9a-f]{32})?$"))
 
     app.add_handler(CallbackQueryHandler(ui_buttons, pattern=r"^ui:(history)$", block=False))

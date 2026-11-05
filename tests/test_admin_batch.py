@@ -5,7 +5,7 @@ from dataclasses import replace
 from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock, patch
 import unittest
-from src import admin_batch as admin, config
+from src import admin_access, admin_batch as admin, config
 from src.vod_scheduler import scheduler, stop_scheduler
 from src.handlers import handlers_cmd as commands
 from src.twitch_api import videos
@@ -18,7 +18,7 @@ class Authorization(unittest.IsolatedAsyncioTestCase):
     async def test_missing_invalid_and_other_ids_fail_before_any_side_effect(self):
         for value,user in ((None,7),('',7),('0',7),('-7',7),('7.0',7),(' 7',7),('٧',7),('9'*30,7),('8',7),('7',True)):
             with self.subTest(value=value,user=user),patch.dict(os.environ,{},clear=True), \
-                    patch.object(admin.db_privileges, 'has_access', return_value=False):
+                    patch.object(admin_access.db_privileges, 'has_access', return_value=False):
                 if value is not None:os.environ['TCD_ADMIN_USER_ID']=value
                 message=NS(reply_text=AsyncMock())
                 app=NS(bot_data={});ctx=NS(application=app,args=['channel'])
@@ -44,14 +44,17 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         await stop_scheduler(self.app)
         await shared.SharedCards.asyncTearDown(self)
 
-    async def launch(self, records=None, argument='channel', *, owner=7):
+    async def launch(self, records=None, argument='channel', *, owner=7, command=admin.allvods_command, photo=False):
         if records is not None:self.vods[:]=records
-        source=NS(reply_text=AsyncMock())
-        control=NS(chat_id=10,message_id=9000,edit_text=AsyncMock())
+        source=NS(reply_text=AsyncMock(),reply_photo=AsyncMock())
+        control=NS(chat_id=10,message_id=9000,edit_text=AsyncMock(),edit_caption=AsyncMock())
+        source.reply_photo.return_value=control
+        if not photo and isinstance(self.fetch.return_value,videos.TwitchUser):
+            self.fetch.return_value=replace(self.fetch.return_value,profile_image_url='')
         source.reply_text.return_value=control
         ctx=self.context(owner);ctx.args=[argument]
         with patch.dict(os.environ,{'TCD_ADMIN_USER_ID':'7'}):
-            await admin.allvods_command(NS(effective_user=NS(id=owner),effective_message=source),ctx)
+            await command(NS(effective_user=NS(id=owner),effective_message=source),ctx)
         batch=self.app.bot_data[admin.KEY]
         return batch,control,source
 
@@ -87,7 +90,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(batch.task,2)
                 self.assertEqual((2,0,0,0),(batch.success,batch.skipped,batch.errors,batch.cancelled_vods))
                 self.assertIn('1',self.ready);self.assertIn('2',self.ready)
-                self.assertIs(False,await batch.summary('Итог'))
+                self.assertIs(False,await batch.summary('Итог', terminal=True))
                 self.assertEqual(2,batch.success)
                 # Reset fixture's worker entry events for another independent batch.
                 self.started.clear();self.gates.clear()
@@ -106,11 +109,11 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         batch=admin.Batch(7,self.context(7),message=NS(edit_text=AsyncMock(side_effect=asyncio.CancelledError())))
         with self.assertRaises(asyncio.CancelledError):await batch.summary('Итог')
 
-    async def test_one_at_a_time_oldest_first_including_regeneration_and_one_control_card(self):
+    async def test_one_at_a_time_newest_first_including_regeneration_and_one_control_card(self):
         records=[replace(self.vods[i-1],created_at=f'2026-01-0{4-i}T00:00:00Z') for i in (1,2,3)]
         self.ready['2']=self.saved('2');old=self.ready['2']
         batch,control,source=await self.launch(records+[records[0]],'https://www.twitch.tv/channel')
-        for v,regen in (('3',False),('2',True),('1',False)):
+        for v,regen in (('1',False),('2',True),('3',False)):
             job=await self.entered(v)
             self.assertEqual(v,batch.current_job.vod);self.assertEqual(1,len(scheduler(self.app).jobs))
             self.assertEqual(regen,job.compatibility[-1]=='regeneration')
@@ -121,8 +124,110 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((3,3,0,0),(batch.total,batch.success,batch.skipped,batch.errors))
         source.reply_text.assert_awaited_once();self.assertFalse(self.calls) # all per-VOD Telegram UI suppressed
         self.assertNotIn(admin.KEY,self.app.bot_data)
-        self.assertIn('Успешно: 3',control.edit_text.await_args.args[0])
+        self.assertIn('Обработано: 3',control.edit_text.await_args.args[0])
         self.assertEqual(3,len(self.publications))
+
+    async def test_newvods_skips_ready_and_preserves_source_ordinals(self):
+        records = [replace(self.vods[i-1], created_at=f'2026-01-0{day}T00:00:00Z')
+                   for i, day in ((1, 1), (2, 3), (3, 2))]
+        ready = self.ready['2'] = self.saved('2')
+        batch, card, source = await self.launch(records, command=admin.newvods_command)
+        for vid, index in (('3', 2), ('1', 3)):
+            job = await self.entered(vid)
+            self.assertEqual(index, batch.index)
+            self.assertNotEqual('regeneration', job.compatibility[-1])
+            await self.finish(job)
+        await asyncio.wait_for(batch.task, 2)
+        self.assertEqual((3, 2, 1, 0), (batch.total, batch.success, batch.skipped, batch.errors))
+        self.assertIs(ready, self.ready['2'])
+        self.assertNotIn('2', self.started)
+        source.reply_text.assert_awaited_once()
+        source.reply_photo.assert_not_awaited()
+        edited = [call.args[0] for call in card.edit_text.await_args_list]
+        self.assertTrue(any('VOD 2 из 3' in text for text in edited))
+        self.assertTrue(any('VOD 3 из 3' in text for text in edited))
+        self.assertIn('HTML уже готов: 1', edited[-1])
+        self.assertNotIn('Отменено', edited[-1])
+        self.assertIsNone(card.edit_text.await_args.kwargs['reply_markup'])
+
+    async def test_avatar_card_edits_only_caption_and_reuses_worker_progress(self):
+        from src.workers.worker_progress import _build_progress_card
+        from src.ui.result_preview import caption_fits
+        batch, card, source = await self.launch(self.vods[:1], photo=True)
+        job = await self.entered('1')
+        async with batch.render_lock:
+            batch.last_summary = 0
+        observed = asyncio.Event()
+
+        async def edit(**kwargs):
+            if '💬 123' in kwargs['caption']:
+                observed.set()
+
+        card.edit_caption.side_effect = edit
+        text = _build_progress_card(dict(vars(self.meta), title='<&>'*150), None, 123, 7, True)
+        job.participants.progress(text)
+        await asyncio.wait_for(observed.wait(), 2)
+        self.assertTrue(caption_fits(card.edit_caption.await_args.kwargs['caption']))
+        self.assertNotIn('<&>', card.edit_caption.await_args.kwargs['caption'])
+        self.assertNotIn('Обработано:', card.edit_caption.await_args.kwargs['caption'])
+        await self.finish(job)
+        await asyncio.wait_for(batch.task, 2)
+        source.reply_photo.assert_awaited_once()
+        source.reply_text.assert_not_awaited()
+        card.edit_text.assert_not_awaited()
+        self.assertIn('Обработано: 1', card.edit_caption.await_args.kwargs['caption'])
+        self.assertIsNone(card.edit_caption.await_args.kwargs['reply_markup'])
+        self.assertFalse(self.calls)
+
+    async def test_batch_cancel_callback_owns_surface_and_never_sends_another_message(self):
+        batch, card, source = await self.launch(self.vods[:3])
+        await self.finish(await self.entered('3'))
+        job = await self.entered('2')
+        payload = source.reply_text.await_args.kwargs['reply_markup'].inline_keyboard[0][0].callback_data
+        self.assertLessEqual(len(payload.encode()), 64)
+
+        async def press(user, data=payload, message=card):
+            query = NS(message=message, data=data, answer=AsyncMock())
+            await admin.batch_cancel_callback(NS(callback_query=query, effective_user=NS(id=user)), self.ctx)
+            query.answer.assert_awaited_once_with()
+
+        await press(8)
+        await press(7, admin.BATCH_CANCEL+'a'*32)
+        await press(7, message=NS(chat_id=card.chat_id, message_id=card.message_id+1))
+        self.assertFalse(batch.cancelled)
+        await press(7)
+        await press(7)
+        self.assertTrue(batch.cancelled)
+        self.gates[job.vod].set()
+        await asyncio.wait_for(batch.task, 2)
+        await press(7)
+        source.reply_text.assert_awaited_once()
+        source.reply_photo.assert_not_awaited()
+        self.assertFalse(self.calls)
+        self.assertEqual({'3'}, set(self.ready))
+        self.assertNotIn('1', self.started)
+        self.assertTrue(any('Остановка обработки' in call.args[0] for call in card.edit_text.await_args_list))
+        self.assertIn('остановлена по запросу', card.edit_text.await_args.args[0])
+        self.assertIsNone(card.edit_text.await_args.kwargs['reply_markup'])
+        next_batch, next_card, _ = await self.launch(self.vods[:1])
+        next_job = await self.entered('1')
+        await press(7, message=next_card)
+        self.assertFalse(next_batch.cancelled)
+        await self.finish(next_job)
+        await asyncio.wait_for(next_batch.task, 2)
+
+    async def test_batch_only_cancel_command_keeps_same_card(self):
+        batch, card, source = await self.launch(self.vods[:2])
+        job = await self.entered('2')
+        cancel = asyncio.create_task(self.cancel_all())
+        while not job.cancelled:
+            await asyncio.sleep(0)
+        self.gates['2'].set()
+        notice = await asyncio.wait_for(cancel, 2)
+        notice.reply_text.assert_not_awaited()
+        source.reply_text.assert_awaited_once()
+        self.assertTrue(batch.task.done())
+        self.assertIn('остановлена по запросу', card.edit_text.await_args.args[0])
 
     async def test_repeated_batch_is_rejected_while_fetching_and_cancel_stops_it(self):
         entered=asyncio.Event()
@@ -177,14 +282,14 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         await self.cancel_all(7)  # Also consume the restored ready/Create offer.
         notice=await self.cancel_all(7);self.assertEqual('Нет активных обработок',notice.reply_text.await_args.args[0])
 
-    async def test_missing_vod_is_skipped_local_error_continues_critical_error_stops(self):
+    async def test_missing_vod_counts_as_error_and_batch_continues(self):
         from src.handlers import handlers_vod as vod
         # A missing freshly fetched VOD never reserves a scheduler job.
         metadata=AsyncMock(side_effect=[NS(length_seconds=None),self.meta])
         with patch.object(vod,'fetch_vod_meta',metadata):
             batch,_,_=await self.launch(self.vods[:2]);job=await self.entered('1');await self.finish(job)
             await asyncio.wait_for(batch.task,2)
-        self.assertEqual((1,1),(batch.skipped,batch.success));self.assertNotIn('2',self.started)
+        self.assertEqual((1,1),(batch.errors,batch.success));self.assertNotIn('2',self.started)
 
     async def test_local_chat_error_continues_and_keeps_previous_ready_generation(self):
         from src.handlers import handlers_vod as vod
@@ -231,10 +336,11 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
             [([NS()],None)],
         ):
             with self.subTest(pages=len(pages)),patch.object(videos,'fetch_archive_vods',AsyncMock(side_effect=pages)),patch.object(vod,'fetch_vod_meta',AsyncMock()) as meta:
-                batch,control,_=await self.launch()
+                batch,control,source=await self.launch()
                 await asyncio.wait_for(batch.task,2)
                 meta.assert_not_awaited();self.assertFalse(scheduler(self.app).jobs)
-                self.assertTrue(any(label in control.edit_text.await_args.args[0] for label in ('Полный список','остановлена из-за ошибки')))
+                rendered = control.edit_text.await_args or source.reply_text.await_args
+                self.assertTrue(any(label in rendered.args[0] for label in ('Полный список','остановлена из-за ошибки')))
         self.assertFalse(self.publications)
 
     async def test_empty_and_missing_channel_do_not_create_workers(self):
