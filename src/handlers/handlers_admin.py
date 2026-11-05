@@ -1,11 +1,18 @@
 """Owner-only management of Premium access."""
 
 import asyncio
+import html
 import logging
+import re
 import sqlite3
+import time
+from datetime import timedelta
+
+from telegram import LinkPreviewOptions
+from telegram.error import RetryAfter, TelegramError
 
 from src import config
-from src.admin_access import PREMIUM_SYNTAX
+from src.admin_access import premium_instructions
 from src.admin_batch import KEY, stop_batch
 from src.database import db_privileges
 
@@ -29,19 +36,13 @@ async def premium_command(update, context):
         await message.reply_text(_UNAVAILABLE)
         return
     args = context.args or []
-    action = args[0].lower() if args else None
-    if action not in PREMIUM_SYNTAX:
-        await message.reply_text("\n".join(PREMIUM_SYNTAX.values()))
+    if len(args) == 1 and args[0].lower() == 'list':
+        await _list(message, context, owner_id)
         return
-    if action == 'list':
-        if len(args) == 1:
-            await _list(message, owner_id)
-        else:
-            await message.reply_text(PREMIUM_SYNTAX[action])
-        return
-    user_id = config.parse_telegram_user_id(args[1]) if len(args) == 2 else None
-    if user_id is None:
-        await message.reply_text(PREMIUM_SYNTAX[action])
+    user_id = config.parse_telegram_user_id(args[0]) if len(args) == 2 else None
+    action = args[1].lower() if len(args) == 2 else None
+    if user_id is None or action not in ('add', 'remove'):
+        await message.reply_text(premium_instructions())
         return
     if user_id == owner_id:
         await message.reply_text("Права владельца задаются в конфигурации")
@@ -85,7 +86,37 @@ async def _revoke(message, app, user_id):
     await message.reply_text("Premium отозван" if removed else "У пользователя нет Premium")
 
 
-async def _list(message, owner_id):
+async def _usernames(context, users):
+    # Profile access by numeric ID depends on Telegram. A single bounded sweep
+    # per bot can enrich the list without making the IDs depend on the API.
+    state = context.application.bot_data
+    lock = state.setdefault('tdb_premium_profile_lock', asyncio.Lock())
+    if lock.locked() or time.monotonic() < state.get('tdb_premium_profile_retry_at', 0):
+        return {}
+    usernames = {}
+    async with lock:
+        try:
+            async with asyncio.timeout(3):
+                for user_id in users[:10]:
+                    try:
+                        chat = await context.bot.get_chat(user_id)
+                    except RetryAfter as exc:
+                        delay = exc.retry_after
+                        seconds = delay.total_seconds() if isinstance(delay, timedelta) else float(delay)
+                        state['tdb_premium_profile_retry_at'] = time.monotonic() + seconds
+                        break
+                    except (TelegramError, OSError):
+                        continue
+                    username = getattr(chat, 'username', None)
+                    if (getattr(chat, 'type', None) == 'private' and getattr(chat, 'id', None) == user_id
+                            and isinstance(username, str) and re.fullmatch(r'[A-Za-z0-9_]{1,32}', username)):
+                        usernames[user_id] = html.escape(username, quote=True)
+        except TimeoutError:
+            pass
+    return usernames
+
+
+async def _list(message, context, owner_id):
     try:
         users = [user_id for user_id in db_privileges.list_users() if user_id != owner_id]
     except (sqlite3.Error, OSError):
@@ -95,7 +126,12 @@ async def _list(message, owner_id):
     if not users:
         await message.reply_text("Список Premium пуст")
         return
-    # Each numeric line is at most 20 characters including its newline.
-    for start in range(0, len(users), 180):
-        ids = "\n".join(str(user_id) for user_id in users[start:start + 180])
-        await message.reply_text(f"Пользователи с Premium:\n{ids}")
+    usernames = await _usernames(context, users)
+    for start in range(0, len(users), 60):
+        rows = ["Пользователи с Premium:"]
+        for user_id in users[start:start + 60]:
+            username = usernames.get(user_id)
+            profile = f' · <a href="https://t.me/{username}">@{username}</a>' if username else ''
+            rows.append(f'• {user_id}{profile}')
+        await message.reply_text("\n".join(rows), parse_mode='HTML',
+                                 link_preview_options=LinkPreviewOptions(is_disabled=True))

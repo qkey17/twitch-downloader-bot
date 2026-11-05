@@ -47,7 +47,7 @@ Required:
 
 Optional:
 
-- `TCD_ADMIN_USER_ID` — optional positive numeric Telegram User ID of the owner (Admin). Set it through the existing process environment and keep the actual ID out of Git. In a private chat, Admin manages access with `/premium add ID`, `/premium remove ID` and `/premium list`. Previously delegated users retain Premium through the existing `privileged_users` table. A missing or invalid owner setting closes privileged access.
+- `TCD_ADMIN_USER_ID` — optional positive numeric Telegram User ID of the owner (Admin). Set it through the existing process environment and keep the actual ID out of Git. In a private chat, Admin manages access with `/premium ID add`, `/premium ID remove` and `/premium list`. The list always includes IDs and links to available usernames from a bounded Telegram lookup. Previously delegated users retain Premium through the existing `privileged_users` table. A missing or invalid owner setting closes privileged access.
 
 - `TCD_HISTORY_ENABLED` — defaults to `false`; set `true` to enable personal download history (case-insensitive). When disabled, `/history` is hidden from the command menu, manual requests and old history buttons report that history is disabled, and new personal history rows are not recorded. Existing rows and the technical VOD cache are preserved; enabling the setting on restart restores history access.
 - `TCD_DB_PATH` — SQLite path. Without it, the database is `vod_history.db` in the project root.
@@ -58,11 +58,13 @@ Optional:
 
 Use `.env.example` as a list of variable names and configure the real values through the shell, a process manager, or another secret-management mechanism. Never commit real credentials.
 
-Users send a VOD ID, VOD link, channel name or channel link as ordinary text. Premium and Admin can append `all` to a channel for all public VODs, including regeneration, or `new` to skip VODs with valid ready HTML. A channel link can also precede either modifier.
+Users send a VOD ID, VOD link, channel name or channel link as ordinary text. Any user can append `last` to a channel name or link to open the normal card for the newest public VOD. When the channel is LIVE, the video must match the active Twitch stream ID. Twitch may not list a public VOD during a broadcast, and the usual chat reader still requires Twitch to expose its comments.
+
+Premium and Admin can append `all` to a channel for all public VODs, including regeneration. The `new` mode queues VODs with no usable ready HTML, ready results explicitly known to be incomplete, and the matching current LIVE VOD. It checks readiness again before dispatch. A successfully captured LIVE chat is marked incomplete in the generation metadata and stays available while another generation is attempted. After a successful offline capture, `capture_complete` records completion of the chat Twitch exposed. Unknown LIVE status leaves completeness unset. Older results without completeness metadata remain usable, and a saved `captured_during_live` flag still identifies an incomplete result.
 
 `/help` shows the general instructions in all chats. In private chats it also shows the Premium modes and, for Admin, access management. The public Telegram menu contains `/help`. Legacy private command scopes are cleared in the background at startup for known users and on later private interactions, including for previously revoked users.
 
-One in-memory batch runs at a time, newest VOD first, up to 500 VODs / 10 Helix pages / 60 seconds for list loading. The same card shows the current VOD, its position in the source list, worker progress and the final totals. It uses a Twitch channel avatar when available and a text card otherwise. The initiator can cancel from that card. Revocation stops the delegate's batch while preserving ordinary jobs and other participants. `/cancel` remains available to all users for their own processing. A generation already committing finishes safely. Batches require a new command after restart.
+One in-memory batch runs at a time, newest VOD first, up to 500 VODs / 10 Helix pages / 60 seconds for list loading. The same card shows worker progress and the current position in the fixed candidate queue, then a status and the number of successful VODs. It uses a Twitch channel avatar when available and a text card otherwise. The initiator can cancel from that card and use «Открыть список» on the final card to open the usual VOD browser in the same message. Revocation stops the delegate's batch while preserving ordinary jobs and other participants. `/cancel` remains available to all users for their own processing. A generation already committing finishes safely. Batches require a new command after restart.
 
 ## Running
 

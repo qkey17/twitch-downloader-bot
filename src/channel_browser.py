@@ -1,4 +1,5 @@
 """Bounded, temporary archive browsing. Independent of personal history/chat jobs."""
+import asyncio
 from dataclasses import dataclass, field
 import math
 import re
@@ -9,6 +10,7 @@ from src.config import ConfigurationError
 from src.twitch_api import videos
 from src.twitch_api.client import TwitchAPIError
 from src.twitch_api.videos import ArchiveVod, TwitchUser
+from src.twitch_api.live import current_stream, match_stream
 
 
 CALLBACK_PREFIX = 'ui:cv:'
@@ -273,3 +275,29 @@ class ChannelBrowser:
                 if session.status == 'loading':
                     session.status, session.reason = 'api_error', 'interrupted'
         return self._view(session) if self._live(session, revision) else BrowseView('expired')
+
+
+async def latest_channel_vod(http, owner, login, chat, message):
+    """Resolve a public VOD with the same bounded Helix archive loader."""
+    browser = ChannelBrowser()
+    async with asyncio.timeout(60):
+        view = await browser.open(http, owner, login, chat, message)
+        session = browser._sessions.get(view.session_id)
+        if view.status == 'not_found':
+            return 'Канал не найден. Проверьте имя или ссылку.', None
+        if session is not None and view.status in ('ready', 'empty', 'empty_page', 'limit'):
+            stream_id = await current_stream(http, session.channel.id, fresh=True)
+            if stream_id is not None:
+                from src.channel_archive import order
+                while True:
+                    candidates = [item for item in session.vods if item.viewable == 'public'
+                                  and (stream_id == '' or match_stream(item.stream_id, stream_id) is True)]
+                    if candidates:
+                        return None, min(candidates, key=order).id
+                    if view.status not in ('ready', 'empty', 'empty_page'):
+                        break
+                    if session.complete:
+                        return ('Текущая запись LIVE пока недоступна.' if stream_id
+                                else 'У канала нет опубликованных VODs.'), None
+                    view = await browser._load(http, session, len(session.vods))
+    return 'Не удалось определить последний VOD. Повторите попытку позже.', None

@@ -13,10 +13,19 @@ from src import config
 from src.database import db_privileges
 
 PREMIUM_SYNTAX = {
-    'add': '/premium add «ID»',
-    'remove': '/premium remove «ID»',
+    'add': '/premium «ID» add',
+    'remove': '/premium «ID» remove',
     'list': '/premium list',
 }
+PREMIUM_HELP = {
+    'add': 'Предоставить Premium',
+    'remove': 'Отозвать Premium',
+    'list': 'Показать пользователей с Premium',
+}
+
+
+def premium_instructions():
+    return '\n'.join(f'{syntax} — {PREMIUM_HELP[action]}' for action, syntax in PREMIUM_SYNTAX.items())
 
 
 def role(user_id):

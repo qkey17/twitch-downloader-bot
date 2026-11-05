@@ -1,6 +1,6 @@
 from telegram import Update, LinkPreviewOptions
 from telegram.ext import ContextTypes
-from src.admin_access import PREMIUM_SYNTAX, role
+from src.admin_access import premium_instructions, role
 from src.ui.ui import about_text, build_about_keyboard
 from .handlers_state import is_busy, get_pending, clear_pending
 from .handlers_input import cancel_input_request
@@ -8,22 +8,15 @@ from .handlers_input import cancel_input_request
 
 _HELP_TEXT = (
     "Отправьте ID или ссылку на VOD, чтобы получить его чат\n"
-    "Отправьте название канала или ссылку на него, чтобы посмотреть доступные VODs"
+    "Отправьте название канала или ссылку на него, чтобы посмотреть доступные VODs\n"
+    "«канал» last — Открыть последний VOD или доступную запись текущей трансляции"
 )
 _PREMIUM_HELP = (
-    "Premium\n"
+    "<b>Premium</b>\n"
     "«канал» all — Обработать все публичные VODs канала, включая ранее готовые\n"
-    "«канал» new — Обработать VODs без действительного готового HTML\n"
+    "«канал» new — Обработать текущий LIVE VOD и VODs без полного готового чата\n"
     "Вместо названия канала можно указать ссылку"
 )
-_ADMIN_HELP = "\n".join((
-    "Admin",
-    f"{PREMIUM_SYNTAX['add']} — Предоставить Premium",
-    f"{PREMIUM_SYNTAX['remove']} — Отозвать Premium",
-    f"{PREMIUM_SYNTAX['list']} — Показать пользователей с Premium",
-))
-
-
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await help_command(update, context)
 
@@ -35,9 +28,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if access is not None:
             text += '\n\n' + _PREMIUM_HELP
         if access == 'owner':
-            text += '\n\n' + _ADMIN_HELP
+            text += '\n\n<b>Admin</b>\n' + premium_instructions()
     await update.effective_message.reply_text(
         text,
+        parse_mode='HTML',
         link_preview_options=LinkPreviewOptions(is_disabled=True),
     )
 

@@ -5,7 +5,8 @@ from src.ui.callbacks import CallbackReply
 from src.ui.ui_labels import STALE_ACTION_NOTICE
 
 from src.config import PENDING_TTL_SECONDS
-from src.input_classifier import InputClassificationError, classify_chat_input
+from src.input_classifier import ClassifiedInput, InputClassificationError, classify_chat_input
+from src.channel_browser import latest_channel_vod
 from .handlers_channel_vods import show_channel_vods
 from .handlers_chat import prepare_chat as prepare_vod_choice
 
@@ -88,6 +89,18 @@ async def _dispatch_one(message, context, owner_id, value):
     try:
         if value.kind == 'vod':
             return await prepare_vod_choice(message, context, owner_id, value.value, is_current=current)
+        if value.batch == 'last':
+            try:
+                notice, vod_id = await latest_channel_vod(context.application.bot_data['aiohttp'],
+                    owner_id, value.value, message.chat_id, message.message_id)
+            except (TimeoutError, ValueError):
+                notice, vod_id = 'Не удалось определить последний VOD. Повторите попытку позже.', None
+            if not current():
+                return
+            if vod_id is None:
+                return await message.reply_text(notice)
+            context.user_data.pop(_ROUTE, None)
+            return await _dispatch(message, context, owner_id, ClassifiedInput('vod', vod_id))
         task = await show_channel_vods(message, context, owner_id, value.value)
         return await task if task is not None else None  # Already PTB-owned; uncertain delivery stops here.
     finally:
@@ -105,7 +118,7 @@ async def text_input(update, context):
         await message.reply_text(_INVALID)
         return
     owner = getattr(update.effective_user, 'id', None)
-    if value.batch is not None:
+    if value.batch in ('all', 'new'):
         from src.admin_batch import start_batch
         return await start_batch(message, context, owner, value.value, new_only=value.batch == 'new')
     if type(owner) is not int:

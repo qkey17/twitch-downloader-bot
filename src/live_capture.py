@@ -9,12 +9,21 @@ def captured_live(meta):
 
 
 def generation_capture(ready):
+    return captured_live(_generation_meta(ready))
+
+
+def generation_incomplete(ready):
+    meta = _generation_meta(ready)
+    return captured_live(meta) or (isinstance(meta, dict) and meta.get('capture_complete') is False)
+
+
+def _generation_meta(ready):
     if not isinstance(ready, dict):
-        return False
+        return None
     meta = ready.get('meta')
     if not isinstance(meta, dict):
         try:
             meta = json.loads(ready.get('meta_json') or '{}')
         except (TypeError, ValueError):
-            return False
-    return captured_live(meta)
+            return None
+    return meta

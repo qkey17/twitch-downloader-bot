@@ -2,10 +2,12 @@
 import hashlib
 import os
 import re
+import sqlite3
 import stat
+from pathlib import Path
 from src.document_name import document_name
 
-from src.database import db_results as results
+from src.database import db_core, db_results as results
 
 
 MAX_CLOUD_HTML_BYTES = 40 * 1024 * 1024
@@ -17,6 +19,34 @@ class HtmlUnavailable(Exception):
 
 class HtmlTooLarge(HtmlUnavailable):
     pass
+
+
+def available_results(vod_ids):
+    """Read registered current results for one bounded Twitch list, without HTML reads."""
+    if not vod_ids:
+        return {}
+    con = sqlite3.connect(Path(db_core.DB_PATH).resolve().as_uri() + '?mode=ro', uri=True)
+    con.row_factory = sqlite3.Row
+    try:
+        placeholders = ','.join('?' for _ in vod_ids)
+        rows = con.execute(f"""SELECT r.* FROM html_current h JOIN html_results r
+            ON r.id=h.result_id AND r.vod_id=h.vod_id AND r.fmt=h.fmt
+            WHERE h.vod_id IN ({placeholders}) AND h.fmt='html_online' AND r.state='ready'
+            AND NOT EXISTS(SELECT 1 FROM html_deletions d WHERE d.result_id=r.id AND d.phase!='cancelled')""",
+            tuple(vod_ids))
+        available = {}
+        for row in rows:
+            result = dict(row)
+            if results.file_status(result) != 'available' or not results._reference_matches(result):
+                continue
+            try:
+                result['meta'], result['stats'] = results._payload(result)
+            except (ValueError, TypeError):
+                continue
+            available[result['vod_id']] = result
+        return available
+    finally:
+        con.close()
 
 
 def _row(vod_id, generation_id=None):
