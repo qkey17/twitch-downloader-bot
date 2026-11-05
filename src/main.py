@@ -158,7 +158,9 @@ def main():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("about", about_command))
-    app.add_handler(CommandHandler("cancel", cancel_command))
+    from .admin_batch import allvods_command
+    app.add_handler(CommandHandler("allvods", allvods_command, block=False))
+    app.add_handler(CommandHandler("cancel", cancel_command, block=False))
     app.add_handler(CommandHandler("vod", vod_command, block=False))
     app.add_handler(CommandHandler("channel", channel_command, block=False))
 

@@ -423,24 +423,9 @@ async def pending_cancel_callback(update: Update, context: ContextTypes.DEFAULT_
         manager = scheduler(context.application)
         if group is not None:
             if job.committing:return
-            try:cancel_ready=results.get_ready_result(job.vod)
-            except Exception:
-                cancel_ready=None
-                logging.getLogger(__name__).warning('Cancel restore metadata unavailable')
-            part = manager.cancel_participant(job,part.id)
-            if part is None:return
-            record['cancel_ready']=cancel_ready
-            await group.detach(part)
-            if job.cancelled and job.state=='running':
-                part.restore_after_close=True
-                return  # Last active cancellation retains its card/slot until safe cleanup.
-            await part.ready.wait()
-            finish_download(target,job.id)
-            try:await _show_cancelled(target,record['chat'],record['message'],record)
-            finally:
-                manager.release_context(job,target)
-                if target.user_data.get('download_ui') is record:target.user_data.pop('download_ui',None)
-                if group.members.get(part.id) is part:group.members.pop(part.id)
+            from src.vod_cancellation import request_member, finish_member
+            selected = request_member(manager, job, part)
+            if selected:await finish_member(manager, job, selected, wait_last=False)
             return
         waiting = job.state == 'waiting'
         if not manager.cancel(job):return
@@ -794,6 +779,7 @@ async def _runner(
                 # Cancellation linearizes before this fence or is declined.
                 job.committing = True
             cache_id = await run_blocking(publication.complete)
+            if job is not None:job.generation_committed = True
             members = group.seal() if group is not None else None
             if config.HISTORY_ENABLED:
                 if members is None:
@@ -842,6 +828,8 @@ async def _runner(
         job = context.user_data.get('_vod_job')
         if job is not None:
             job.outcome = 'cancelled' if str(e) == CANCELLED_MESSAGE else 'error'
+        if job is not None:
+            job.critical = str(e) not in ('CHAT_EMPTY', CANCELLED_MESSAGE)
         record_failure(e)
         await _record_generation_failure(publication,e)
         if str(e) == "CHAT_EMPTY":
@@ -861,6 +849,8 @@ async def _runner(
         job = context.user_data.get('_vod_job')
         if job is not None:
             job.outcome = 'error'
+        if job is not None:
+            job.critical = not isinstance(e,TwitchAPIError) or e.status in (401,403)
         record_failure(e)
         await _record_generation_failure(publication,e)
         logging.exception("Download failed")
@@ -921,6 +911,7 @@ async def _runner(
 
 
 async def _show_cancelled(context, chat_id, message_id, ui):
+    if getattr(context,'batch_silent',False):return
     from .handlers_vod_info import _diagnostic
     from src.ui.result_preview import render_card, cleanup_card
     def current():

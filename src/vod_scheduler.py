@@ -2,7 +2,7 @@
 import asyncio
 import logging
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import uuid
 from contextvars import ContextVar
 
@@ -27,6 +27,9 @@ class Job:
     processing_done: bool = False
     compatibility: object = None
     participants: object = None
+    finished: asyncio.Event = field(default_factory=asyncio.Event)
+    generation_committed: bool = False
+    critical: bool = False
 
 
 class Scheduler:
@@ -160,6 +163,7 @@ class Scheduler:
         contexts = [job.context] if job.participants is None else [p.context for p in job.participants.members.values()]
         from .ui.result_preview import finish_error_card
         async def notify(context):
+            if getattr(context,'batch_silent',False):return
             ui = context.user_data.get('download_ui') if context is not None else None
             if ui:
                 try:
@@ -184,6 +188,8 @@ class Scheduler:
         outcome = 'cancelled' if task.cancelled() or job.cancelled else job.outcome
         if not task.cancelled() and task.exception() is not None:
             outcome = 'error'
+        if not task.cancelled() and task.exception() is not None and not job.processing_done:
+            job.critical = True
         self.drop(job, outcome)
         self.pump()
 
@@ -214,6 +220,8 @@ class Scheduler:
         for context in contexts:
             if context is not None:
                 self.release_context(job, context)
+
+        job.finished.set()
 
     def release_context(self, job, context):
         from .handlers.handlers_state import finish_download
@@ -297,5 +305,9 @@ def scheduler(app):
 
 
 async def stop_scheduler(app):
+    from .admin_batch import stop_batch
+    task = stop_batch(app)
     if KEY in app.bot_data:
         await app.bot_data[KEY].close()
+    if task is not None:
+        await asyncio.gather(task, return_exceptions=True)

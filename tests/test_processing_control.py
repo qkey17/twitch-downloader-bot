@@ -467,6 +467,8 @@ class ProcessingControlTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertTrue({'start', 'help', 'vod', 'channel', 'cancel', 'about'}
                         <= {name for handler in commands for name in handler.commands})
         self.assertNotIn('history',{name for handler in commands for name in handler.commands})
+        for name in ('allvods','cancel'):
+            self.assertFalse(next(h for h in commands if name in h.commands).block)
         for name, callback in (('vod', vod_command), ('channel', channel_command)):
             handler = next(h for h in commands if name in h.commands)
             self.assertIs(callback, handler.callback)
