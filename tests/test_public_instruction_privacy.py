@@ -38,7 +38,7 @@ class PublicInstructionPrivacyTests(unittest.IsolatedAsyncioTestCase):
     async def test_public_commands_and_format_errors_contain_no_examples(self):
         # Also prevent example logins from slipping into plain text. Keep this
         # allowlist free of private identifiers, including in failure messages.
-        allowed_terms = {'VOD', 'VODs', 'ID', 'help'}
+        allowed_terms = {'VOD', 'VODs', 'ID', 'help', 'last'}
         cases = (
             (commands.start_command, []), (commands.help_command, []),
             (commands.about_command, []),
@@ -60,7 +60,7 @@ class PublicInstructionPrivacyTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual([], parser.examples)
                     urls = {url.rstrip('.,;') for url in re.findall(r'https?://(?:www\.)?twitch\.tv/[^\s]+', plain)}
                     self.assertEqual(set(), urls)
-                    self.assertIsNone(re.search(r'(?i)Twitch|архив|запис|видео|пример', plain))
+                    self.assertIsNone(re.search(r'(?i)Twitch|архив|видео|пример', plain))
                     self.assertIsNone(re.search(r'\b[0-9]{5,}\b', plain),
                                       'Public instruction contains a concrete numeric ID')
                     if parser.examples:
@@ -72,7 +72,8 @@ class PublicInstructionPrivacyTests(unittest.IsolatedAsyncioTestCase):
     async def test_commands_match_approved_copy(self):
         expected = (
             'Отправьте ID или ссылку на VOD, чтобы получить его чат\n'
-            'Отправьте название канала или ссылку на него, чтобы посмотреть доступные VODs'
+            'Отправьте название канала или ссылку на него, чтобы посмотреть доступные VODs\n'
+            '«канал» last — Открыть последний VOD или доступную запись текущей трансляции'
         )
         cases = (
             commands.start_command, commands.help_command,
@@ -83,7 +84,7 @@ class PublicInstructionPrivacyTests(unittest.IsolatedAsyncioTestCase):
                 await command(SimpleNamespace(effective_message=message), SimpleNamespace(args=[]))
                 self.assertEqual(expected, message.reply_text.await_args.args[0])
                 self.assertNotIn('reply_markup', message.reply_text.await_args.kwargs)
-                self.assertNotIn('parse_mode', message.reply_text.await_args.kwargs)
+                self.assertEqual('HTML', message.reply_text.await_args.kwargs['parse_mode'])
                 self.assertNotIn('entities', message.reply_text.await_args.kwargs)
                 self.assertTrue(message.reply_text.await_args.kwargs['link_preview_options'].is_disabled)
 

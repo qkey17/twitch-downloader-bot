@@ -41,6 +41,12 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
     for name in ('_setupAsyncioRunner','setUp','task','api','message','update','saved','publication','worker','context','request','entered','finish','cancel'):
         locals()[name]=getattr(shared.SharedCards,name)
 
+    def setUp(self):
+        shared.SharedCards.setUp(self)
+        self.enterContext(patch.object(admin, 'available_results',
+            side_effect=lambda ids: {key: self.ready[key] for key in ids if key in self.ready}))
+        self.stream = self.enterContext(patch.object(admin, 'current_stream', AsyncMock(return_value='')))
+
     async def asyncTearDown(self):
         for gate in self.gates.values():gate.set()
         await stop_scheduler(self.app)
@@ -127,31 +133,144 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((3,3,0,0),(batch.total,batch.success,batch.skipped,batch.errors))
         source.reply_text.assert_awaited_once();self.assertFalse(self.calls) # all per-VOD Telegram UI suppressed
         self.assertNotIn(admin.KEY,self.app.bot_data)
-        self.assertIn('Обработано: 3',control.edit_text.await_args.args[0])
+        self.assertIn('Количество обработанных VODs: 3',control.edit_text.await_args.args[0])
         self.assertEqual(3,len(self.publications))
 
-    async def test_newvods_skips_ready_and_preserves_source_ordinals(self):
+    async def test_newvods_skips_ready_and_counts_only_candidate_ordinals(self):
         records = [replace(self.vods[i-1], created_at=f'2026-01-0{day}T00:00:00Z')
                    for i, day in ((1, 1), (2, 3), (3, 2))]
         ready = self.ready['2'] = self.saved('2')
         batch, card, source = await self.launch(records, mode='new')
-        for vid, index in (('3', 2), ('1', 3)):
+        for vid, index in (('3', 1), ('1', 2)):
             job = await self.entered(vid)
             self.assertEqual(index, batch.index)
             self.assertNotEqual('regeneration', job.compatibility[-1])
             await self.finish(job)
         await asyncio.wait_for(batch.task, 2)
-        self.assertEqual((3, 2, 1, 0), (batch.total, batch.success, batch.skipped, batch.errors))
+        self.assertEqual((2, 2, 1, 0), (batch.total, batch.success, batch.skipped, batch.errors))
         self.assertIs(ready, self.ready['2'])
         self.assertNotIn('2', self.started)
         source.reply_text.assert_awaited_once()
         source.reply_photo.assert_not_awaited()
         edited = [call.args[0] for call in card.edit_text.await_args_list]
-        self.assertTrue(any('VOD 2 из 3' in text for text in edited))
-        self.assertTrue(any('VOD 3 из 3' in text for text in edited))
-        self.assertIn('HTML уже готов: 1', edited[-1])
+        self.assertTrue(any('VOD 1 из 2' in text for text in edited))
+        self.assertTrue(any('VOD 2 из 2' in text for text in edited))
+        self.assertIn('Количество обработанных VODs: 2', edited[-1])
         self.assertNotIn('Отменено', edited[-1])
-        self.assertIsNone(card.edit_text.await_args.kwargs['reply_markup'])
+        self.assertEqual('Открыть список', card.edit_text.await_args.kwargs['reply_markup'].inline_keyboard[0][0].text)
+
+    async def test_new_combines_current_live_incomplete_and_missing_and_rechecks_ready(self):
+        from src.handlers import handlers_vod as vod
+        records = [replace(item, stream_id='55' if item.id == '4' else '54') for item in self.vods[:5]]
+        self.stream.return_value = '55'
+        for vid in ('3', '4', '5'):
+            self.ready[vid] = self.saved(vid)
+        self.ready['3']['meta']['captured_during_live'] = True
+        self.ready['5']['meta']['capture_complete'] = True
+        old = self.ready['3']
+        async def metadata(_http, _client, vod_id):
+            return NS(**(vars(self.meta) | {'is_live': vod_id == '4'}))
+        with patch.object(vod, 'fetch_vod_meta', AsyncMock(side_effect=metadata)):
+            batch, card, _ = await self.launch(records + [records[3]], mode='new')
+            job = await self.entered('4')
+            self.assertEqual((1, 4), (batch.index, batch.total))
+            self.assertEqual('regeneration', job.compatibility[-1])
+            self.ready['2'] = self.saved('2')  # Published after the queue was fixed.
+            self.ready['2']['meta']['capture_complete'] = True
+            await self.finish(job)
+            job = await self.entered('3')
+            self.assertIs(old, self.ready['3'])
+            self.assertEqual('regeneration', job.compatibility[-1])
+            await self.finish(job)
+            job = await self.entered('1')
+            self.assertEqual((4, 4), (batch.index, batch.total))
+            await self.finish(job)
+            await asyncio.wait_for(batch.task, 2)
+        self.assertEqual({'1', '3', '4'}, set(self.started))
+        self.assertEqual((3, 2, 0), (batch.success, batch.skipped, batch.errors))
+        self.assertNotEqual(old['id'], self.ready['3']['id'])
+        edits = [call.args[0] for call in card.edit_text.await_args_list]
+        for index in range(1, 5):
+            self.assertTrue(any(f'🎬 VOD {index} из 4' in text for text in edits), index)
+
+    async def test_final_card_opens_the_normal_list_without_new_messages(self):
+        from src import channel_archive
+        from src.handlers import handlers_channel_vods as lists
+        from src.ui.ui_labels import STALE_ACTION_NOTICE
+
+        for photo in (False, True):
+            with self.subTest(photo=photo), patch.object(channel_archive, 'candidates', return_value=[]):
+                self.fetch.return_value = self.user if photo else replace(self.user, profile_image_url='')
+                self.vods[:] = self.vods[:6]
+                self.started.clear()
+                self.gates.clear()
+                # Use the real synthetic Telegram transport for both surfaces.
+                source = self.message(20, 'channel new')
+                self.ready.update({item.id: self.saved(item.id) for item in self.vods})
+                with patch.dict(os.environ, {'TCD_ADMIN_USER_ID': '7'}):
+                    await inputs.text_input(self.update(source), self.ctx)
+                batch = self.app.bot_data[admin.KEY]
+                await asyncio.wait_for(batch.task, 2)
+                card = batch.message
+                self.assertIs(bool(card.photo), photo)
+                button = card.reply_markup.inline_keyboard[0][0]
+                self.assertEqual('Открыть список', button.text)
+                before = len(self.calls)
+                for update in (self.update(card, button.callback_data, owner=9),
+                               self.update(source, button.callback_data)):
+                    await admin.batch_list_callback(update, self.ctx)
+                    update.callback_query.answer.assert_awaited_once_with(STALE_ACTION_NOTICE, show_alert=False)
+                self.assertEqual(before, len(self.calls))
+
+                entered, release = asyncio.Event(), asyncio.Event()
+                fetch = self.fetch.return_value
+                async def delayed(*_):
+                    entered.set()
+                    await release.wait()
+                    return fetch
+                with patch.object(videos, 'fetch_user_by_login', AsyncMock(side_effect=delayed)):
+                    opened = asyncio.create_task(admin.batch_list_callback(self.update(card, button.callback_data), self.ctx))
+                    await asyncio.wait_for(entered.wait(), 2)
+                    duplicate = self.update(card, button.callback_data)
+                    await admin.batch_list_callback(duplicate, self.ctx)
+                    duplicate.callback_query.answer.assert_awaited_once_with(STALE_ACTION_NOTICE, show_alert=False)
+                    release.set()
+                    await asyncio.wait_for(opened, 2)
+                nav = next(b for row in card.reply_markup.inline_keyboard for b in row if b.text == '➡️')
+                moved = await lists.channel_vods_callback(self.update(card, nav.callback_data), self.ctx)
+                self.assertEqual(1, moved.page)
+                await admin.batch_list_callback(self.update(card, button.callback_data), self.ctx)
+                await batch.summary('Старый итог', terminal=True)
+                await batch.summary('Старый прогресс')
+                self.assertEqual(['edit_message_caption' if photo else 'edit_message_text'] * 2,
+                                 [name for name, _ in self.calls[before:]])
+
+    async def test_batch_list_definite_edit_failure_preserves_final_card_for_retry(self):
+        from src import channel_archive
+        from src.handlers import handlers_vod as vod
+        from telegram.error import BadRequest
+
+        source = self.message(20, 'channel all')
+        self.vods[:] = self.vods[:1]
+        self.fetch.return_value = replace(self.user, profile_image_url='')
+        with patch.dict(os.environ, {'TCD_ADMIN_USER_ID': '7'}), \
+                patch.object(vod, 'fetch_vod_meta', AsyncMock(side_effect=TwitchAPIError('missing', status=404))):
+            await inputs.text_input(self.update(source), self.ctx)
+            batch = self.app.bot_data[admin.KEY]
+            await asyncio.wait_for(batch.task, 2)
+        card = batch.message
+        self.assertIn('завершена с ошибками', card.text)
+        before = (card.text, card.reply_markup)
+        payload = card.reply_markup.inline_keyboard[0][0].callback_data
+        with patch.object(channel_archive, 'candidates', return_value=[]):
+            self.bot.edit_message_text.side_effect = BadRequest('synthetic rejection')
+            await admin.batch_list_callback(self.update(card, payload), self.ctx)
+            self.assertEqual(before, (card.text, card.reply_markup))
+            self.bot.edit_message_text.side_effect = lambda **kw: self.api('edit_message_text', **kw)
+            await admin.batch_list_callback(self.update(card, payload), self.ctx)
+        self.assertNotEqual(before, (card.text, card.reply_markup))
+        self.assertEqual(1, sum(name.startswith('send_') for name, _ in self.calls))
+        self.bot.delete_message.assert_not_awaited()
 
     async def test_avatar_card_edits_only_caption_and_reuses_worker_progress(self):
         from src.workers.worker_progress import _build_progress_card
@@ -178,15 +297,17 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         source.reply_photo.assert_awaited_once()
         source.reply_text.assert_not_awaited()
         card.edit_text.assert_not_awaited()
-        self.assertIn('Обработано: 1', card.edit_caption.await_args.kwargs['caption'])
-        self.assertIsNone(card.edit_caption.await_args.kwargs['reply_markup'])
+        self.assertIn('Количество обработанных VODs: 1', card.edit_caption.await_args.kwargs['caption'])
+        self.assertEqual('Открыть список', card.edit_caption.await_args.kwargs['reply_markup'].inline_keyboard[0][0].text)
         self.assertFalse(self.calls)
 
     async def test_batch_cancel_callback_owns_surface_and_never_sends_another_message(self):
         batch, card, source = await self.launch(self.vods[:3])
         await self.finish(await self.entered('3'))
         job = await self.entered('2')
-        payload = source.reply_text.await_args.kwargs['reply_markup'].inline_keyboard[0][0].callback_data
+        cancel = source.reply_text.await_args.kwargs['reply_markup'].inline_keyboard[0][0]
+        self.assertEqual('❌ Отмена', cancel.text)
+        payload = cancel.callback_data
         self.assertLessEqual(len(payload.encode()), 64)
 
         async def press(user, data=payload, message=card):
@@ -211,7 +332,7 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('1', self.started)
         self.assertTrue(any('Остановка обработки' in call.args[0] for call in card.edit_text.await_args_list))
         self.assertIn('остановлена по запросу', card.edit_text.await_args.args[0])
-        self.assertIsNone(card.edit_text.await_args.kwargs['reply_markup'])
+        self.assertEqual('Открыть список', card.edit_text.await_args.kwargs['reply_markup'].inline_keyboard[0][0].text)
         next_batch, next_card, _ = await self.launch(self.vods[:1])
         next_job = await self.entered('1')
         await press(7, message=next_card)

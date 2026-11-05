@@ -1,4 +1,4 @@
-"""One ephemeral admin batch; all work belongs to the existing VOD scheduler."""
+"""One ephemeral privileged batch on the existing VOD scheduler."""
 import asyncio
 import html
 import logging
@@ -11,6 +11,9 @@ from src import config
 from src.admin_access import role
 from src.channel_browser import ChannelBrowser
 from src.channel_archive import order
+from src.live_capture import generation_incomplete
+from src.ready_html import available_results
+from src.twitch_api.live import current_stream, match_stream
 from src.vod_scheduler import scheduler, INPUT_TICKET
 from src.job_context import JobContext
 from src.handlers.handlers_state import begin_download
@@ -18,9 +21,13 @@ from src.ui.callbacks import CallbackReply
 from src.ui.card_images import DEFAULT, telegram_image
 from src.ui.channel_image import channel_image
 from src.ui.result_preview import caption_fits
+from src.ui.ui_labels import CANCEL, STALE_ACTION_NOTICE
 
 KEY = 'tdb_admin_batch'
 BATCH_CANCEL = 'ui:batch_cancel:'
+BATCH_LIST = 'ui:batch_list:'
+_LIST_FIELD = 'batch_list'
+_PROGRESS = '<b>⏳ Обработка VODs…</b>'
 
 
 async def _finish_delivery(coro):
@@ -56,6 +63,7 @@ class Batch:
     errors: int = 0
     cancelled_vods: int = 0
     channel: str = ''
+    channel_login: str = ''
     current_job: object = None
     current_part: object = None
     last_summary: float = 0
@@ -76,13 +84,23 @@ class Batch:
             if self.task is not None:self.task.cancel()
 
     def keyboard(self):
-        return InlineKeyboardMarkup([[InlineKeyboardButton('Отмена', callback_data=BATCH_CANCEL + self.id)]])
+        return InlineKeyboardMarkup([[InlineKeyboardButton(CANCEL, callback_data=BATCH_CANCEL + self.id)]])
+
+    def final_keyboard(self):
+        if self.channel_login:
+            return InlineKeyboardMarkup([[InlineKeyboardButton('Открыть список', callback_data=BATCH_LIST + self.id)]])
+
+    def remember_list(self):
+        from src.ui.card_context import for_message
+        if self.channel_login and self.message is not None:
+            scoped = for_message(self.context, self.owner, self.message.chat_id, self.message.message_id, fresh=True)
+            scoped.card.data[_LIST_FIELD] = (BATCH_LIST + self.id, self.channel_login, self.photo, asyncio.Lock())
 
     async def open_card(self, text, image=DEFAULT):
         if self.attempted:
             return
         self.attempted = True
-        markup = None if self.closed or self.cancelled else self.keyboard()
+        markup = self.final_keyboard() if self.closed else None if self.cancelled else self.keyboard()
 
         async def send():
             async with asyncio.timeout(10):
@@ -102,17 +120,14 @@ class Batch:
 
     async def summary(self, state, *, detail=None, terminal=False, job=None):
         if terminal:
-            self.closed = True
-            remaining = max(0, self.total-self.success-self.skipped-self.errors)
-            text = (f'<b>{state}</b>\n🟣 {html.escape(self.channel[:100])}\n\n'
-                    f'Всего VODs: {self.total}\nОбработано: {self.success}\n'
-                    f'HTML уже готов: {self.skipped}\nНе удалось обработать: {self.errors}')
-            if remaining:
-                text += f'\nНе завершено: {remaining}'
+            icon = ('⚠️' if self.errors or self.halted or self.cleanup_failed
+                    else '⏹' if self.cancelled else '✅')
+            text = (f'<b>{icon} {state}</b>\n🟣 {html.escape(self.channel[:100])}\n\n'
+                    f'📊 Количество обработанных VODs: {self.success}')
         else:
-            prefix = '<b>Обработка VODs…</b>'
+            prefix = _PROGRESS
             if self.index and self.total:
-                prefix += f'\nVOD {self.index} из {self.total}'
+                prefix += f'\n🎬 VOD {self.index} из {self.total}'
             text = f'{prefix}\n\n{detail or state}'
             if not caption_fits(text):
                 # Worker cards may contain long escaped names. Keep their
@@ -124,6 +139,8 @@ class Batch:
                     if caption_fits(text):
                         break
         async with self.render_lock:
+            if self.closed:
+                return False
             if not terminal and job is not None:
                 if self.cancelled or self.closed or self.current_job is not job:
                     return
@@ -131,18 +148,21 @@ class Batch:
                     return
             if not terminal and not self.cancelled and time.monotonic() < self.retry_at:
                 return
-            if self.closed and not terminal:
-                return
+            if terminal:
+                self.closed = True
             self.last_summary = time.monotonic()
-            return await self._edit_card(text, terminal)
+            shown = await self._edit_card(text, terminal)
+            if terminal and shown:
+                self.remember_list()
+            return shown
 
     async def _edit_card(self, text, terminal):
         try:
             if self.message is None:
                 if terminal:
                     await self.open_card(text)
-                return
-            markup = None if self.cancelled or terminal else self.keyboard()
+                return self.message is not None
+            markup = self.final_keyboard() if terminal else None if self.cancelled else self.keyboard()
             async def edit():
                 async with asyncio.timeout(10):
                     if self.photo:
@@ -204,6 +224,29 @@ async def batch_cancel_callback(update, context):
     await CallbackReply(query).send()
 
 
+async def batch_list_callback(update, context):
+    from src.ui.card_context import KEY as CARD_KEY, for_message
+    from src.handlers.handlers_channel_vods import open_batch_list
+    query = update.callback_query
+    message = query.message
+    owner = getattr(update.effective_user, 'id', None)
+    reply = CallbackReply(query)
+    if message is None or type(owner) is not int:
+        return await reply.send(STALE_ACTION_NOTICE)
+    key = (owner, message.chat_id, message.message_id)
+    store = context.application.bot_data.get(CARD_KEY, {})
+    card = store.get(key)
+    record = card.data.get(_LIST_FIELD) if card and card.expires > time.monotonic() else None
+    if record is None or query.data != record[0] or record[3].locked():
+        return await reply.send(STALE_ACTION_NOTICE)
+    scoped = for_message(context, *key, fresh=True)
+    async with record[3]:
+        if not await reply.send():
+            return
+        if await open_batch_list(message, scoped, owner, record[1], photo=record[2]):
+            card.data.pop(_LIST_FIELD, None)
+
+
 async def submit(batch, vod_id, meta, regenerate):
     """Adapter only: normal reserve/Participants/JobContext and production _runner."""
     from src.handlers.handlers_vod import compatibility_key, _runner
@@ -261,27 +304,43 @@ async def run_batch(batch):
     from src.workers.worker_progress import _build_progress_card
     app=batch.context.application
     manager=scheduler(app)
+    excluded = 0
     try:
         browser=ChannelBrowser()  # Twitch only; never the merged Telegram list.
         http=app.bot_data['aiohttp']
         async with asyncio.timeout(60):
-            view=await browser.open(http,batch.owner,batch.channel,
-                                    getattr(batch.source,'chat_id',0),getattr(batch.source,'message_id',0))
-            session=browser._sessions.get(view.session_id)
+            try:
+                view=await browser.open(http,batch.owner,batch.channel,
+                                        getattr(batch.source,'chat_id',0),getattr(batch.source,'message_id',0))
+            finally:
+                # The private browser owns one session. Keep a verified login
+                # even if cancellation interrupted its first videos request.
+                session = next(iter(browser._sessions.values()), None)
+                if session is not None and session.channel is not None:
+                    batch.channel = session.channel.display_name[:100]
+                    batch.channel_login = session.channel.login
             image = DEFAULT
             if session is not None and session.channel is not None:
-                batch.channel = session.channel.display_name[:100]
                 image = await channel_image(batch.context, session, session.channel.profile_image_url)
-            await batch.open_card('<b>Обработка VODs…</b>\n\nЗагрузка списка VODs канала…', image)
+            await batch.open_card(_PROGRESS + '\n\nЗагрузка списка VODs канала…', image)
             while session is not None and not session.complete and session.status in ('ready','empty_page'):
                 view=await browser._load(http,session,len(session.vods))
         if session is None or not session.complete or session.status not in ('ready','empty'):
+            batch.halted = True
             await batch.summary('Полный список VODs получить не удалось (ошибка или ограничение)', terminal=True)
             return
         def newest_first(vod):
             date, vod_id = order(vod)
             return date, -vod_id  # Same-date VODs retain their previous ID tie-break.
         records=sorted((v for v in session.vods if v.viewable=='public'),key=newest_first)
+        if batch.new_only and records:
+            stream_id = await current_stream(http, session.channel.id)
+            ready_results = available_results([item.id for item in records])
+            queue = [item for item in records if item.id not in ready_results
+                     or generation_incomplete(ready_results[item.id])
+                     or match_stream(item.stream_id, stream_id) is True]
+            excluded = batch.skipped = len(records) - len(queue)
+            records = queue
         batch.channel=session.channel.display_name[:120];batch.total=len(records)
         for item in records:
             if batch.cancelled or manager.closing:
@@ -295,31 +354,31 @@ async def run_batch(batch):
             if ticket is None:
                 batch.errors+=1;batch.halted=True;break  # Admission/queue pressure is not bypassed or retried.
             token=INPUT_TICKET.set(ticket)
+            job, skipped = None, False
             try:
-                if batch.new_only and vod.results.get_ready_result(item.id):
-                    batch.skipped += 1
-                    continue
                 meta=await vod.fetch_vod_meta(http,vod.get_client_id(),item.id)
                 if batch.cancelled or manager.closing:break
-                if getattr(meta,'length_seconds',None) is None:
-                    batch.errors+=1;continue
-                ready=vod.results.get_ready_result(item.id)
-                if batch.new_only and ready:
-                    batch.skipped += 1
-                    continue
-                job=await submit(batch,item.id,vars(meta),bool(ready))
+                if getattr(meta,'length_seconds',None) is not None:
+                    ready=vod.results.get_ready_result(item.id)
+                    skipped = (batch.new_only and ready and not generation_incomplete(ready)
+                               and getattr(meta, 'is_live', None) is not True)
+                    if not skipped:
+                        job = await submit(batch, item.id, vars(meta), bool(ready))
             except Exception as exc:
-                batch.errors+=1
                 from src.twitch_api.client import TwitchAPIError
                 if not isinstance(exc,TwitchAPIError) or exc.status in (401,403,429):
-                    batch.halted=True;break
-                continue
+                    batch.errors+=1;batch.halted=True;break
             finally:
                 manager.release_input(ticket);INPUT_TICKET.reset(token)
+            if skipped:
+                batch.skipped += 1
+                await batch.summary('Готовый чат уже доступен')
+                continue
             if job is None:
                 batch.errors+=1
                 if batch.critical_refusal:
                     batch.halted=True;break
+                await batch.summary('Не удалось начать обработку VOD')
                 continue
             detail = _build_progress_card(vars(meta), None, None, None, False,
                                           status='Ожидание обработки…' if job.state=='waiting' else 'Подготовка чата…')
@@ -358,16 +417,18 @@ async def run_batch(batch):
                 batch.cleanup_failed=job.critical
             except Exception:
                 logging.getLogger(__name__).warning('Batch cancellation cleanup failed')
-            if job.generation_committed:batch.success+=1
-            elif job.outcome=='error':batch.errors+=1
+            if job.generation_committed and job.outcome=='success' and not part.history_failed:batch.success+=1
+            elif job.generation_committed or job.outcome=='error':batch.errors+=1
             else:batch.cancelled_vods+=1
-        batch.cancelled_vods += max(0,batch.total-batch.success-batch.skipped-batch.errors-batch.cancelled_vods)
+        finished = batch.success + (batch.skipped - excluded) + batch.errors + batch.cancelled_vods
+        batch.cancelled_vods += max(0, batch.total - finished)
         state = ('Не удалось подтвердить остановку обработки VODs' if batch.cleanup_failed
                  else 'Обработка VODs остановлена по запросу')
         await batch.summary(state, terminal=True)
     except Exception:
-        if batch.index > batch.success + batch.skipped + batch.errors + batch.cancelled_vods:
+        if batch.index > batch.success + (batch.skipped - excluded) + batch.errors + batch.cancelled_vods:
             batch.errors += 1
+        batch.halted = True
         await batch.summary('Обработка VODs остановлена из-за ошибки', terminal=True)
     finally:
         if app.bot_data.get(KEY) is batch:app.bot_data.pop(KEY,None)

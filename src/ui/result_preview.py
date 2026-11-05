@@ -66,7 +66,8 @@ async def cleanup_card(bot, chat_id, shown):
         await _delete(bot, chat_id, shown.retired_id)
 
 
-async def edit_surface(bot, chat_id, message_id, text, keyboard, *, photo=False, current=lambda:True, parse_mode='HTML'):
+async def edit_surface(bot, chat_id, message_id, text, keyboard, *, photo=False, current=lambda:True,
+                       parse_mode='HTML', allow_type_retry=True):
     """Edit the owned surface in place; one definite type rejection may switch API."""
     if not current():return None
     async def edit(as_photo):
@@ -82,7 +83,7 @@ async def edit_surface(bot, chat_id, message_id, text, keyboard, *, photo=False,
         try:await edit(photo)
         except BadRequest as exc:
             reason=str(exc).lower()
-            if not ('no caption' in reason if photo else 'no text' in reason) or not current():raise
+            if not allow_type_retry or not ('no caption' in reason if photo else 'no text' in reason) or not current():raise
             photo=not photo
             await edit(photo)
     except BadRequest as exc:

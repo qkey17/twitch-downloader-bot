@@ -1,10 +1,12 @@
 """Automatic text reuse the existing VOD/browser flows."""
 import asyncio
+from dataclasses import replace
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
 import test_channel_selection as fixture
+from test_channel_vods import vod as archive_vod
 from src.handlers import handlers_input as inputs, handlers_cmd as commands, handlers_vod as vod
 from src.handlers.handlers_state import (
     set_pending, bind_pending_message, begin_download, finish_download, is_cancelled,
@@ -50,7 +52,7 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_ordinary_input_never_claims_a_batch(self):
         from src import admin_batch
-        for text, kind in (('all', 'channel'), ('new', 'channel'), ('channel', 'channel'),
+        for text, kind in (('all', 'channel'), ('new', 'channel'), ('last', 'channel'), ('channel', 'channel'),
                            ('https://twitch.tv/channel', 'channel'), ('123', 'vod'),
                            ('https://twitch.tv/videos/123', 'vod')):
             with self.subTest(text=text), patch.object(inputs, '_dispatch', AsyncMock()) as dispatch, \
@@ -58,6 +60,50 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
                 await inputs.text_input(self.request(text), self.context)
                 self.assertEqual(kind, dispatch.await_args.args[-1].kind)
                 batch.assert_not_called()
+
+    async def test_last_routes_offline_or_confirmed_live_to_the_same_vod_flow(self):
+        from src import admin_batch, channel_browser
+        from src.vod_scheduler import scheduler
+        old = replace(archive_vod(1), created_at='2026-01-01T00:00:00Z', stream_id='51')
+        recent = replace(archive_vod(2), created_at='2026-01-02T00:00:00Z', stream_id='52')
+        for stream_id, expected, text in (
+            ('', '2', 'fixture_channel last'),
+            ('51', '1', 'https://www.twitch.tv/fixture_channel LAST'),
+        ):
+            with self.subTest(stream=stream_id), \
+                    patch.object(channel_browser, 'current_stream', AsyncMock(return_value=stream_id)), \
+                    patch.object(videos, 'fetch_archive_vods', AsyncMock(return_value=([recent, old], None))), \
+                    patch.object(admin_batch, 'role', side_effect=AssertionError('last is public')), \
+                    patch.object(inputs, 'prepare_vod_choice', AsyncMock()) as prepare:
+                update = self.request(text, owner=42)
+                await inputs.text_input(update, self.context)
+                prepare.assert_awaited_once()
+                self.assertEqual((42, expected), prepare.await_args.args[2:])
+                self.assertNotIn(admin_batch.KEY, self.app.bot_data)
+                self.assertFalse(scheduler(self.app).jobs)
+                update.message.reply_text.assert_not_awaited()
+
+    async def test_last_reports_unavailable_live_empty_channel_and_api_failure(self):
+        from src import channel_browser
+        archived = replace(archive_vod(1), stream_id='51')
+        for stream_id, page, notice in (
+            ('52', ([archived], None), 'Текущая запись LIVE пока недоступна.'),
+            ('', ([], None), 'У канала нет опубликованных VODs.'),
+            (None, ([archived], None), 'Не удалось определить последний VOD. Повторите попытку позже.'),
+            ('', TwitchAPIError('rate limit', status=429), 'Не удалось определить последний VOD. Повторите попытку позже.'),
+        ):
+            with self.subTest(notice=notice), \
+                    patch.object(channel_browser, 'current_stream', AsyncMock(return_value=stream_id)), \
+                    patch.object(videos, 'fetch_archive_vods', AsyncMock(side_effect=[page])), \
+                    patch.object(inputs, 'prepare_vod_choice', AsyncMock()) as prepare:
+                update = self.request('fixture_channel last')
+                await inputs.text_input(update, self.context)
+                update.message.reply_text.assert_awaited_once_with(notice)
+                prepare.assert_not_awaited()
+        for text in ('https://twitch.tv.evil/channel last', 'https://twitch.tv/videos/123 last', 'last new extra'):
+            update = self.request(text)
+            await inputs.text_input(update, self.context)
+            self.assertIn('/help', update.message.reply_text.await_args.args[0])
 
     async def test_text_for_vod_reuse_bound_confirmation_without_download(self):
         for text in ('https://twitch.tv/videos/123456789', '123456789'):

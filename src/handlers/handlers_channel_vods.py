@@ -2,7 +2,7 @@
 from src.ui.card_context import callback_context
 import asyncio
 from dataclasses import replace
-from telegram.error import BadRequest
+from telegram.error import BadRequest, Forbidden, RetryAfter, TelegramError
 from telegram.ext import CallbackQueryHandler
 
 from src.channel_browser import CALLBACK_PREFIX, ChannelBrowser, VodSelection
@@ -43,14 +43,20 @@ def _ui_lock(session):
     return session.ui_lock
 
 
-async def _render_list(message, view, session, *, bot=None, current=lambda: True, context=None):
-    from src.ui.result_preview import render_card
+async def _render_list(message, view, session, *, bot=None, current=lambda: True, context=None, in_place=False):
+    from src.ui.result_preview import caption_fits, edit_surface, render_card
     from src.ui.card_images import DEFAULT
     from src.ui.channel_image import channel_image
     text,keyboard = build_list(view) if isinstance(view,ListView) else build_channel_vod_card(view)
-    image = await channel_image(context,session,getattr(view.channel,'profile_image_url',None)) if context else DEFAULT
-    shown = await render_card(bot,message.chat_id,text,keyboard,image,message_id=message.message_id,
-                              photo=getattr(session,'photo',False),current=current,file_context=context)
+    if in_place or (getattr(session, 'batch_list_surface', False) and getattr(session, 'list_render', None)):
+        if session.photo and not caption_fits(text):
+            return None
+        shown = await edit_surface(bot, message.chat_id, message.message_id, text, keyboard,
+                                   photo=session.photo, current=current, allow_type_retry=False)
+    else:
+        image = await channel_image(context,session,getattr(view.channel,'profile_image_url',None)) if context else DEFAULT
+        shown = await render_card(bot,message.chat_id,text,keyboard,image,message_id=message.message_id,
+                                  photo=getattr(session,'photo',False),current=current,file_context=context)
     if shown is not None:
         session.message_id,session.photo=shown.message_id,shown.photo
         session.list_render=(shown.message or message,text)
@@ -135,6 +141,37 @@ async def _open_and_show(message, context, owner_id, login):
             message_id=message.message_id,photo=bool(getattr(message,'photo',False)),file_context=context)
         await cleanup_card(context.bot,message.chat_id,shown)
     return view
+
+
+async def open_batch_list(message, context, owner, login, *, photo):
+    """Transfer the existing message to the normal list without a replacement."""
+    browser = get_channel_browser(context.application)
+    view = await browser.open(context.application.bot_data['aiohttp'], owner, login,
+                              message.chat_id, message.message_id)
+    if not isinstance(view, ListView):
+        return False
+    if not view.complete or view.status not in ('ready', 'empty'):
+        browser.retire(view)
+        return False
+    session = browser._sessions.get(view.session_id)
+    if session is None:
+        return False
+    session.photo, session.batch_list_surface = photo, True
+    async with _ui_lock(session):
+        try:
+            shown = await _render_list(message, view, session, bot=context.bot, context=context,
+                                       current=lambda: browser.is_current(view), in_place=True)
+        except (BadRequest, Forbidden, RetryAfter):
+            pass  # Definite refusal: preserve the batch card and permit a retry.
+        except (TelegramError, OSError, TimeoutError):
+            # The edit may have reached Telegram. Keep this session and do not
+            # let the old batch button replace a potentially delivered list.
+            return True
+        else:
+            if shown is not None:
+                return True
+    browser.retire(view)
+    return False
 
 
 async def _list_callback(update, context, browser):

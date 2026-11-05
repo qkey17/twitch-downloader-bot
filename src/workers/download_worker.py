@@ -59,6 +59,7 @@ async def download_and_send(
             )
             raise_if_cancelled(context, operation_id)
 
+        live = getattr(meta, 'is_live', None)
         meta_dict = {
             "title": meta.title,
             "channel": meta.channel,
@@ -68,7 +69,7 @@ async def download_and_send(
             "created_at": meta.created_at,
             "thumbnail_preview_url": meta.thumbnail_preview_url,
             "thumbnail_full_url": meta.thumbnail_full_url,
-            "captured_during_live": getattr(meta, 'is_live', None),
+            "captured_during_live": live,
         }
 
         out_dir = Path(OUT_DIR)
@@ -155,6 +156,11 @@ async def download_and_send(
             raise_if_cancelled(context, operation_id)
             await progress(spool.messages, spool.unique_users, done=True)
             raise_if_cancelled(context, operation_id)
+
+        # Reaching the end of Twitch's available chat is only conclusive for
+        # a known non-LIVE VOD. An unavailable LIVE lookup is left unknown.
+        if type(live) is bool:
+            meta_dict["capture_complete"] = not live
 
         sent_files: List[Dict[str, str]] = []
         html_result_ref: Optional[str] = None

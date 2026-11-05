@@ -166,7 +166,7 @@ def main():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("about", about_command))
-    from .admin_batch import batch_cancel_callback
+    from .admin_batch import batch_cancel_callback, batch_list_callback, BATCH_LIST
     from .handlers.handlers_admin import premium_command
     app.add_handler(TypeHandler(Update, clear_private_menu, block=False), group=-1)
     app.add_handler(CommandHandler("premium", premium_command, block=False))
@@ -189,6 +189,7 @@ def main():
 
     app.add_handler(CallbackQueryHandler(format_cancel_callback, pattern=r"^ui:format_cancel$"))
     app.add_handler(CallbackQueryHandler(batch_cancel_callback, pattern=r"^ui:batch_cancel:", block=False))
+    app.add_handler(CallbackQueryHandler(batch_list_callback, pattern='^'+BATCH_LIST, block=False))
     app.add_handler(CallbackQueryHandler(pending_cancel_callback, pattern=r"^ui:pending_cancel(?::[0-9a-f]{32})?$"))
 
     app.add_handler(CallbackQueryHandler(ui_buttons, pattern=r"^ui:(history)$", block=False))

@@ -11,7 +11,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from src.twitch_api import live, meta, videos
-from src.live_capture import WARNING, captured_live, generation_capture
+from src.live_capture import WARNING, captured_live, generation_capture, generation_incomplete
+from src.ready_html import available_results
 from src.ui.live_status import WARNING as TELEGRAM_WARNING, LIVE
 from src.html_renderer import render_viewer_html, write_viewer_html
 from src.ui.ui_history import ready_offer_text, format_vod_summary
@@ -100,22 +101,25 @@ class LiveAPITests(unittest.IsolatedAsyncioTestCase):
         publication=SimpleNamespace(meta={},stats={})
         async def comments(*a,**k):
             yield (1,None,'fixture','message',[],None,[])
-        async def build(**kw):
-            self.assertTrue(kw['publication'].meta['captured_during_live'])
-            self.assertTrue(kw['meta'].is_live)
-            return [],'https://example.invalid/chat.html'
         with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as folder, \
              patch.object(worker,'OUT_DIR',folder),patch.object(worker,'SPOOL_DIR',str(Path(folder)/'spool')), \
-             patch.object(worker,'fetch_vod_meta',AsyncMock(return_value=meta.VodMeta('11',length_seconds=30,is_live=True,channel_id='123'))), \
+             patch.object(worker,'fetch_vod_meta',AsyncMock()) as fetch, \
              patch.object(worker,'get_client_id',return_value='client'), \
              patch.object(worker,'gql_fetch_comments',comments), \
              patch.object(worker,'make_progress_updater',return_value=AsyncMock()), \
-             patch.object(worker,'build_html_result',side_effect=build):
-            saved,_,_,_=await worker.download_and_send(context,1,2,'vod','11','html_online',publication=publication)
-        self.assertTrue(saved['captured_during_live'])
-        self.assertEqual('123',saved['channel_id'])
-        self.assertNotIn('live_state',saved)
-        self.assertNotIn('live_checked_at',saved)
+             patch.object(worker,'build_html_result',AsyncMock(return_value=([], 'https://example.invalid/chat.html'))) as build:
+            for is_live, complete in ((True, False), (False, True), (None, None)):
+                with self.subTest(live=is_live):
+                    fetch.return_value = meta.VodMeta('11', length_seconds=30, is_live=is_live, channel_id='123')
+                    saved, _, _, _ = await worker.download_and_send(
+                        context, 1, 2, 'vod', '11', 'html_online', publication=publication)
+                    self.assertIs(build.await_args.kwargs['meta'].is_live, is_live)
+                    self.assertIs(publication.meta, saved)
+                    self.assertIs(saved['captured_during_live'], is_live)
+                    self.assertIs(saved.get('capture_complete'), complete)
+                    self.assertEqual('123', saved['channel_id'])
+                    self.assertNotIn('live_state', saved)
+                    self.assertNotIn('live_checked_at', saved)
 
     async def test_list_refreshes_channel_once_and_preserves_navigation(self):
         browser=VodListBrowser();session=object()
@@ -169,10 +173,19 @@ class CaptureTests(unittest.TestCase):
             self.assertTrue(generation_capture(row))
             request.assert_not_called()
         old_html=plan.path().read_bytes()
-        replacement=self.plan();self.publish(replacement);replacement.complete();replacement.close()
+        self.assertTrue(generation_incomplete(available_results(['123456789'])['123456789']))
+        replacement=self.plan()
+        replacement.meta.update(captured_during_live=False, capture_complete=True)
+        self.publish(replacement);replacement.complete();replacement.close()
         self.assertEqual(old_html,plan.path().read_bytes())
         self.assertFalse(generation_capture(db_results.get_ready_result('123456789')))
         self.assertTrue(generation_capture(self.rows()[0]))
+        selected = available_results(['123456789', '345'])
+        self.assertEqual({'123456789'}, set(selected))
+        self.assertEqual(replacement.id, selected['123456789']['id'])
+        self.assertFalse(generation_incomplete(selected['123456789']))
+        replacement.path().unlink()
+        self.assertFalse(available_results(['123456789']))
 
     def test_old_and_malformed_metadata_do_not_gain_live_warning(self):
         for value in ({}, {'captured_during_live':False},{'captured_during_live':'true'},None):
@@ -180,6 +193,9 @@ class CaptureTests(unittest.TestCase):
             self.assertNotIn(WARNING,format_vod_summary(value or {}))
         for value in ('invalid','[]','null'):
             self.assertFalse(generation_capture({'meta_json':value}))
+            self.assertFalse(generation_incomplete({'meta_json':value}))
+        self.assertFalse(generation_incomplete({'meta': {'capture_complete': 0}}))
+        self.assertTrue(generation_incomplete({'meta': {'capture_complete': False}}))
         self.assertNotIn(TELEGRAM_WARNING,_build_progress_card({'captured_during_live':True},'vod',1,1,False))
         self.assertIn(LIVE,information_text('<x>','<script>','00:01',None,is_live=True))
         self.assertNotIn('<script>',information_text('<x>','<script>','00:01',None,is_live=True))

@@ -37,12 +37,12 @@ class AdminMenuTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('ID или ссылку на VOD', basic)
         self.assertIn('название канала или ссылку', basic)
         self.assertNotIn('Premium', basic)
-        self.assertTrue(premium.startswith(basic + '\n\nPremium'))
+        self.assertTrue(premium.startswith(basic + '\n\n<b>Premium</b>'))
         self.assertIn('«канал» all', premium)
         self.assertIn('«канал» new', premium)
         self.assertNotIn('/premium', premium)
-        self.assertTrue(owner.startswith(premium + '\n\nAdmin'))
-        for command in ('/premium add «ID»', '/premium remove «ID»', '/premium list'):
+        self.assertTrue(owner.startswith(premium + '\n\n<b>Admin</b>'))
+        for command in ('/premium «ID» add', '/premium «ID» remove', '/premium list'):
             self.assertIn(command, owner)
         for user in (7, 9):
             self.assertEqual(basic, await self.help(user, 'supergroup'))
@@ -65,9 +65,9 @@ class AdminMenuTests(unittest.IsolatedAsyncioTestCase):
     async def test_cleanup_failure_can_retry_and_never_gates_privilege_writes(self):
         self.bot.delete_my_commands.side_effect = Forbidden('synthetic inaccessible chat')
         await self.refresh(9)
-        self.assertEqual('Premium предоставлен', await invoke(self.app, 7, ['add', '9']))
+        self.assertEqual('Premium предоставлен', await invoke(self.app, 7, ['9', 'add']))
         self.assertTrue(db_privileges.has_access(9))
-        self.assertEqual('Premium отозван', await invoke(self.app, 7, ['remove', '9']))
+        self.assertEqual('Premium отозван', await invoke(self.app, 7, ['9', 'remove']))
         self.assertFalse(db_privileges.has_access(9))
         self.assertEqual(1, self.bot.delete_my_commands.await_count)
         await self.refresh(9)

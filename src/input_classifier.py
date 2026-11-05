@@ -25,7 +25,7 @@ class InputClassificationError(ValueError):
 class ClassifiedInput:
     kind: Literal['vod', 'channel']
     value: str
-    batch: Literal['all', 'new'] | None = None
+    batch: Literal['all', 'new', 'last'] | None = None
 
 
 def _vod(value):
@@ -52,13 +52,13 @@ def classify_input(text: str, *, expected_kind: Literal['vod', 'channel'] | None
 
 
 def classify_chat_input(text: str) -> ClassifiedInput:
-    """Recognize one optional batch modifier after a valid channel input."""
+    """Recognize one optional modifier after a valid channel input."""
     if isinstance(text, str):
-        match = re.fullmatch(r'(\S+)[ \t]+(all|new)', text.strip(), re.IGNORECASE | re.ASCII)
+        match = re.fullmatch(r'(\S+)[ \t]+(all|new|last)', text.strip(), re.IGNORECASE | re.ASCII)
         if match:
             channel = classify_input(match[1])
             if channel.kind != 'channel':
-                raise InputClassificationError('Batch modifiers require a Twitch channel')
+                raise InputClassificationError('Modifiers require a Twitch channel')
             return ClassifiedInput('channel', channel.value, match[2].lower())
     return classify_input(text)
 

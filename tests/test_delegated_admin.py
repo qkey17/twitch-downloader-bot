@@ -10,6 +10,7 @@ import threading
 from types import SimpleNamespace as NS
 import unittest
 from unittest.mock import AsyncMock, patch
+from telegram.error import Forbidden, NetworkError, RetryAfter
 
 from src import admin_access, admin_batch
 from src.database import db_core, db_privileges
@@ -29,7 +30,7 @@ def isolated_privileges(test):
 def invocation(app, user, args, chat='private'):
     message = NS(reply_text=AsyncMock())
     update = NS(effective_user=NS(id=user), effective_chat=NS(type=chat), effective_message=message)
-    return update, NS(application=app, args=args)
+    return update, NS(application=app, args=args, bot=getattr(app, 'bot', NS(get_chat=AsyncMock())))
 
 
 async def invoke(app, user, args, chat='private'):
@@ -53,8 +54,8 @@ class PrivilegeCommands(unittest.IsolatedAsyncioTestCase):
     async def test_management_is_private_and_owner_only_even_with_a_delegation(self):
         db_privileges.grant(9)
         for args, database_call in (
-            (['add','11'], 'grant'),
-            (['remove','9'], 'revoke'),
+            (['11','add'], 'grant'),
+            (['9','remove'], 'revoke'),
             (['list'], 'list_users'),
         ):
             for user, chat, configured in ((9, 'private', '7'), (8, 'private', '7'),
@@ -70,28 +71,61 @@ class PrivilegeCommands(unittest.IsolatedAsyncioTestCase):
     async def test_grant_list_revoke_and_repeated_commands(self):
         self.assertIn('пуст', await invoke(self.app, 7, ['list']))
         for expected in ('Premium предоставлен', 'Premium уже предоставлен'):
-            self.assertEqual(expected, await invoke(self.app, 7, ['add', '9']))
+            self.assertEqual(expected, await invoke(self.app, 7, ['9', 'add']))
         self.assertEqual([9], db_privileges.list_users())
-        self.assertEqual('Пользователи с Premium:\n9',
+        self.assertEqual('Пользователи с Premium:\n• 9',
                          await invoke(self.app, 7, ['list']))
-        self.assertEqual('Premium отозван', await invoke(self.app, 7, ['remove', '9']))
+        self.assertEqual('Premium отозван', await invoke(self.app, 7, ['9', 'remove']))
         self.assertEqual('У пользователя нет Premium',
-                         await invoke(self.app, 7, ['remove', '9']))
+                         await invoke(self.app, 7, ['9', 'remove']))
         self.assertEqual([], db_privileges.list_users())
 
     async def test_owner_id_and_malformed_arguments_are_rejected(self):
-        syntax = '/premium add «ID»\n/premium remove «ID»\n/premium list'
-        for args in ([], ['unknown']):
+        syntax = admin_access.premium_instructions()
+        for args in ([], ['unknown'], ['add', '9'], ['remove', '9']):
             self.assertEqual(syntax, await invoke(self.app, 7, args))
         for action in ('add', 'remove'):
-            self.assertIn('владельца', await invoke(self.app, 7, [action, '7']))
+            self.assertIn('владельца', await invoke(self.app, 7, ['7', action]))
             for args in ([], ['9', '10'], ['0'], ['-9'], ['9.1'], [' 9'], ['٠٩'], ['09'],
                          ['9223372036854775808'], ['9 OR 1=1'], ['9); DROP TABLE privileged_users;--']):
-                self.assertIn('«ID»', await invoke(self.app, 7, [action, *args]))
+                self.assertIn('«ID»', await invoke(self.app, 7, [*args, action]))
         self.assertIn('/premium list', await invoke(self.app, 7, ['list','9']))
         self.assertEqual([], db_privileges.list_users())
         self.assertEqual('Premium предоставлен',
-                         await invoke(self.app, 7, ['add', '9223372036854775807']))
+                         await invoke(self.app, 7, ['9223372036854775807', 'add']))
+
+    async def test_list_links_only_verified_private_profiles_and_preserves_all_ids(self):
+        for user_id in range(10, 72):
+            db_privileges.grant(user_id)
+        get_chat = AsyncMock(side_effect=[
+            NS(type='private', id=10, username='Valid_10'),
+            NS(type='private', id=11, username=None),
+            Forbidden('no access'),
+            NS(type='private', id=13, username='"><script>'),
+            NS(type='private', id=99, username='WrongUser'),
+            NetworkError('unavailable'),
+            RetryAfter(5),
+        ])
+        self.app.bot = NS(get_chat=get_chat)
+        update, context = invocation(self.app, 7, ['list'])
+        await handlers_admin.premium_command(update, context)
+        calls = update.effective_message.reply_text.await_args_list
+        self.assertEqual(2, len(calls))
+        text = '\n'.join(call.args[0] for call in calls)
+        rows = [row.split()[1] for row in text.splitlines() if row.startswith('• ')]
+        self.assertEqual([str(user_id) for user_id in range(10, 72)], rows)
+        self.assertIn('• 10 · <a href="https://t.me/Valid_10">@Valid_10</a>', text)
+        self.assertEqual(1, text.count('<a '))
+        self.assertEqual(7, get_chat.await_count)
+        self.assertTrue(all(call.kwargs['parse_mode'] == 'HTML' for call in calls))
+
+    async def test_profile_lookup_has_a_request_cap(self):
+        for user_id in range(10, 40):
+            db_privileges.grant(user_id)
+        self.app.bot = NS(get_chat=AsyncMock(side_effect=Forbidden('no access')))
+        text = await invoke(self.app, 7, ['list'])
+        self.assertIn('• 39', text)
+        self.assertEqual(10, self.app.bot.get_chat.await_count)
 
     async def test_invalid_owner_and_database_read_failure_deny_allvods_before_twitch(self):
         db_privileges.grant(9)
@@ -113,7 +147,7 @@ class PrivilegeCommands(unittest.IsolatedAsyncioTestCase):
         for action, operation in (('add', 'grant'), ('remove', 'revoke')):
             with patch.object(db_privileges, operation, side_effect=sqlite3.OperationalError), \
                     patch.object(handlers_admin, 'stop_batch') as stop:
-                self.assertIn('Не удалось', await invoke(self.app, 7, [action, '9']))
+                self.assertIn('Не удалось', await invoke(self.app, 7, ['9', action]))
                 stop.assert_not_called()
         self.assertEqual([9], db_privileges.list_users())
 
@@ -146,7 +180,7 @@ class Revocation(unittest.IsolatedAsyncioTestCase):
         db_privileges.grant(9)
 
     async def remove(self):
-        return await invoke(self.app, 7, ['remove', '9'])
+        return await invoke(self.app, 7, ['9', 'remove'])
 
     async def denied(self):
         calls_before = self.fetch.await_count
@@ -180,7 +214,7 @@ class Revocation(unittest.IsolatedAsyncioTestCase):
     async def test_launch_racing_revocation_response_cannot_use_old_access(self):
         reply_started = asyncio.Event()
         release_reply = asyncio.Event()
-        update, ctx = invocation(self.app, 7, ['remove', '9'])
+        update, ctx = invocation(self.app, 7, ['9', 'remove'])
 
         async def reply(*args):
             reply_started.set()
