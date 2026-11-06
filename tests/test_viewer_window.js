@@ -42,17 +42,27 @@ test('display names and logins match independently in both formats with Unicode'
     }
   }
 });
+test('mentions use full known ASCII logins and Unicode-aware boundaries',()=>{
+  const ctx=vm.createContext({});
+  vm.runInContext(part('const MENTION_URL=', 'function renderMentions('),ctx);
+  const users=new Map([['example',{}],['abc_123',{}],['www',{}],['mailto',{}]]);
+  const text='(@ExAmPlE), -@abc_123! 🎮@example. @www. @mailto: @exampleSuffix @unknown '+
+    'перед@example @exampleпосле @example\u0301 @example@example person+@example person@EXAMPLE.net '+
+    'https://host/#@example https://host/?to=@example mailto:a@abc_123 www.host/@example host.tld/@example';
+  const found=Array.from(ctx.mentionRanges(text,users),m=>[text.slice(m.start,m.start+m.text.length),m.login]);
+  assert.deepEqual(found,[['@ExAmPlE','example'],['@abc_123','abc_123'],['@example','example'],['@www','www'],['@mailto','mailto']]);
+});
 test('new query cancels old full-chat scan before committing results',async()=>{
   let commits=0;
   const ctx=vm.createContext({Uint32Array,performance,rows:Array.from({length:100000},(_,i)=>({user:'user',text:'row '+i})),FILTER_TOKEN:0,selectionGesture:{active:true},elQ:{value:'row'},elU:{value:''},elStat:{},window:{getSelection:()=>({removeAllRanges(){}}),scrollTo(){}},yieldViewer:()=>new Promise(r=>setTimeout(r,0)),showWindow:async()=>{commits++},resetScrubber(){},ensureEmotesLoaded(){}});
-  ctx.setMetadataGroup=metadataText;ctx.closeContext=()=>{};
+  ctx.setMetadataGroup=metadataText;ctx.closeContext=()=>{};ctx.buildMentionIndex=()=>{};
   vm.runInContext(legacyAccess+'let filtered=null,searchTerms=null;const rowCount=()=>filtered===null?rows.length:filtered.length;'+part('function searchKey(', "document.addEventListener('scroll'"),ctx);
   const first=ctx.applyFilters();ctx.elQ.value='row 99999';const second=ctx.applyFilters();
   await Promise.all([first,second]);assert.equal(ctx.selectionGesture,null);assert.equal(commits,1);assert.equal(ctx.elStat.textContent,'💬 1 / 100000');
 });
 test('clearing query reuses payload without a second full-length array',async()=>{
   const rows=[{text:'hello'}];const ctx=vm.createContext({rows,elQ:{value:''},elU:{value:''},elStat:{},window:{getSelection:()=>({removeAllRanges(){}}),scrollTo(){}},showWindow:async()=>{},resetScrubber(){},ensureEmotesLoaded(){}});
-  ctx.setMetadataGroup=metadataText;ctx.closeContext=()=>{};
+  ctx.setMetadataGroup=metadataText;ctx.closeContext=()=>{};ctx.buildMentionIndex=()=>{};
   vm.runInContext('let filtered=null,searchTerms=null,FILTER_TOKEN=0;const rowCount=()=>filtered===null?rows.length:filtered.length;'+part('function searchKey(', "document.addEventListener('scroll'"),ctx);
   await ctx.applyFilters();assert.equal(vm.runInContext('filtered',ctx),null);
   assert.equal(ctx.elStat.textContent,'💬 1 / 1');

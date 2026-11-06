@@ -32,7 +32,13 @@ async def run(args):
             from viewer_context_cases import prepare_context_rows
             prepare_context_rows(rows)
         for mode in ('online','offline'):
-            page=render_viewer_html(rows,'Synthetic title','Synthetic channel','https://www.twitch.tv/videos/123',created_at='2026-10-29T14:28:00Z',mode=mode,local_emotes={'Kappa':pixel},badge_images={'subscriber/1':pixel,'subscriber/2':pixel},captured_during_live=True,**(dict(duration_seconds=435088) if args.scrubber or args.panel or controls else {}))
+            badge_images={'subscriber/1':pixel,'subscriber/2':pixel}
+            context_meta={}
+            if context:
+                badge_images.update({key:pixel for key in ('event/1','lead_moderator/1','unknown/1')})
+                context_meta=dict(channel_login='FixtureStreamer',badge_titles={'event/1':'Event <Final>'},
+                                  global_twitch_emote_ids=['25'])
+            page=render_viewer_html(rows,'Synthetic title','Synthetic channel','https://www.twitch.tv/videos/123',created_at='2026-10-29T14:28:00Z',mode=mode,local_emotes={'Kappa':pixel},badge_images=badge_images,captured_during_live=True,**context_meta,**(dict(duration_seconds=435088) if args.scrubber or args.panel or controls else {}))
             new_data=re.search(r'<script id="chat-data" type="application/json">(.*?)</script>',page,re.S).group(1)
             old_data=new_data if args.scrubber or args.panel or controls or context else json.dumps(dict(meta=json.loads(new_data)['meta'],rows=rows),ensure_ascii=False).replace('<','\\u003c')
             for version,html in [('new',page),('base',baseline.replace('{{CHAT_DATA_JSON}}',old_data))]:

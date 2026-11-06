@@ -280,11 +280,17 @@ header{
   align-items:center;
 }
 .chat-context[hidden]{display:none;}
-.chat-context a{color:inherit;text-decoration:none;}
-.chat-context a::after{content:"";position:absolute;inset:0;}
-.chat-context a:hover{text-decoration:underline;}
+.chat-context-profile{padding:0;overflow:visible;}
+.chat-context-profile>a{
+  display:flex;align-items:center;justify-content:center;align-self:stretch;flex:1;
+  min-width:0;padding:0 14px;border-radius:inherit;color:inherit;text-decoration:none;
+  cursor:pointer;user-select:none;-webkit-user-select:none;
+}
+.chat-context-profile>a::after{content:"";position:absolute;inset:0;}
+.chat-context-emote{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:0;}
+.chat-context-source{font-size:12px;color:var(--muted);}
 [data-chat-context]{cursor:pointer;}
-[data-chat-context]:focus-visible,.chat-context a:focus-visible{outline:2px solid #b3adff;outline-offset:2px;}
+[data-chat-context]:focus-visible{outline:2px solid #b3adff;outline-offset:2px;}
 .chat-match{background:#ffdc82;color:#20212b;}
 img.chat-match{outline:2px solid #ffdc82;outline-offset:-2px;}
 .button-toggle.active{
@@ -332,6 +338,11 @@ img.chat-match{outline:2px solid #ffdc82;outline-offset:-2px;}
   cursor:pointer;
   transition: background .15s ease, border-color .15s ease, transform .08s ease;
 }
+.chat-context-profile{
+  font-family:Arial;
+  transition:background .15s ease,border-color .15s ease,transform .08s ease;
+}
+.chat-context-profile>a:focus{outline:none;}
 
 .meta-buttons .button-toggle.is-active{
   background:#2a2a35;
@@ -352,7 +363,7 @@ button, .vod-card{
 }
 
 /* активное состояние */
-.meta-buttons button.is-active{
+.meta-buttons button.is-active,.chat-context-profile{
   background:#2a2a35;
   border-color:#3a3a48;
 }
@@ -376,19 +387,19 @@ button, .vod-card{
 }
 
 /* нажатие */
-.meta-buttons button:active{
+.meta-buttons button:active,.chat-context-profile:active{
   transform:scale(0.96);
   border-color:rgba(145,70,255,0.9);
   box-shadow:0 0 0 3px rgba(145,70,255,0.35);
 }
 
-.meta-buttons button:hover{
-  transform:translateY(-1px);
+.meta-buttons button:hover,.chat-context-profile:hover{
   border-color:rgba(145,70,255,0.8);
   box-shadow:
     0 0 0 2px rgba(145,70,255,0.35),
     0 14px 34px rgba(0,0,0,.28);
 }
+.meta-buttons button:hover{transform:translateY(-1px);}
 
 .snapshot-overlay{
   position:fixed;
@@ -895,13 +906,15 @@ html{overflow-anchor:none;}
   #mobileChannel img{width:18px;height:18px;flex:none;}
   #mobileChannel span{margin-left:0;}
   header .vod-card,header .vod-card:hover,header .vod-card:active,
-  header .meta-buttons button,header .meta-buttons button:hover,header .meta-buttons button:active{
+  header .meta-buttons button,header .meta-buttons button:hover,header .meta-buttons button:active,
+  .chat-context-profile,.chat-context-profile:hover,.chat-context-profile:active{
     transform:none;box-shadow:none;border-color:var(--border);
   }
-  header .vod-card,header .meta-buttons button,header .controls input{transition:background-color .12s ease,border-color .12s ease;}
-  header .vod-card:active,header .meta-buttons button:active{background-color:#30303b;border-color:#626575;}
+  header .vod-card,header .meta-buttons button,header .controls input,.chat-context-profile{transition:background-color .12s ease,border-color .12s ease;}
+  header .vod-card:active,header .meta-buttons button:active,.chat-context-profile:active{background-color:#30303b;border-color:#626575;}
   header .controls input:focus{outline:none;box-shadow:none;}
-  header .vod-card:focus-visible,header .controls input:focus-visible,header .meta-buttons button:focus-visible{
+  header .vod-card:focus-visible,header .controls input:focus-visible,header .meta-buttons button:focus-visible,
+  .chat-context-profile:has(>a:focus-visible){
     outline:2px solid #b3adff;outline-offset:0;border-color:transparent;
   }
   .fast-scrubber{--scrub-inset:11px;--scrub-thumb-width:18px;--scrub-center:calc(var(--scrub-inset) + (100% - 2 * var(--scrub-inset)) * var(--scrub-ratio,0));--scrub-label-edge:calc(var(--scrub-center) + var(--scrub-thumb-width)/2);display:flex;align-items:center;position:relative;flex:1 1 0;height:var(--control-h);min-height:var(--control-h);min-width:0;touch-action:none;user-select:none;-webkit-user-select:none;cursor:ew-resize;outline-offset:0;}
@@ -931,7 +944,8 @@ html{overflow-anchor:none;}
   }
 }
 @media(max-width:900px) and (hover:hover){
-  header .vod-card:hover:not(:active):not(:focus-visible),header .meta-buttons button:hover:not(:active):not(:focus-visible){border-color:#626575;background-color:#23232d;}
+  header .vod-card:hover:not(:active):not(:focus-visible),header .meta-buttons button:hover:not(:active):not(:focus-visible),
+  .chat-context-profile:hover:not(:active):not(:has(>a:focus-visible)){border-color:#626575;background-color:#23232d;}
   .panel-toggle:hover:not(:active):not(:focus-visible){background-color:#23232d;border-color:#626575;}
 }
 </style>
@@ -1024,6 +1038,10 @@ function messageUser(record){
   return (typeof record[1]==='number' ? DATA.users[record[1]] : record[1])[0];
 }
 function messageLogin(record){return COMPACT_DATA ? record[6]?.login : record.login;}
+function messageColor(record){
+  if(!COMPACT_DATA) return record.color;
+  return (typeof record[1]==='number' ? DATA.users[record[1]] : record[1])[1];
+}
 function messageText(record){return COMPACT_DATA ? record[2] : record.text;}
 function decodeMessage(record){
   if(!COMPACT_DATA) return record;
@@ -1041,7 +1059,10 @@ function decodeMessage(record){
 const MODE = meta.mode || "online";
 const LOCAL_EMOTES = meta.local_emotes || {};
 const CDN_EMOTES = meta.cdn_emotes || {};
+const CDN_EMOTE_SOURCES = meta.cdn_emote_sources || {};
+const GLOBAL_TWITCH_EMOTE_IDS = new Set(Array.isArray(meta.global_twitch_emote_ids) ? meta.global_twitch_emote_ids : []);
 const BADGE_IMAGES = meta.badge_images || {};
+const BADGE_TITLES = meta.badge_titles || {};
 const TWITCH_CHANNEL_ID = meta.channel_id || null;
 
 const elTitle=document.getElementById("title");
@@ -1436,7 +1457,7 @@ function renderBadges(el, badges){
     img.className = "badge";
     img.src = src;
     img.alt = key;
-    const label = typeof badge.title==='string' && badge.title.trim() ? badge.title : badgeLabel(setId);
+    const label = badgeLabel(key,String(setId).toLowerCase());
     if(setContextTarget(img,label)) img.alt = label;
 
     wrap.appendChild(img);
@@ -1479,10 +1500,11 @@ function catalogEmoteUrl(catalog, name){
   return typeof value === "string" && value.trim() ? value : null;
 }
 
-function setContextTarget(element, label, login=false){
+function setContextTarget(element, label, login=false, source=null){
   if(typeof label!=='string' || !label.trim()) return false;
   element.dataset.chatContext=label;
   if(login) element.dataset.chatProfile='';
+  if(source) element.dataset.chatSource=source;
   element.tabIndex=0;
   element.setAttribute('role','button');
   element.setAttribute('aria-controls','chatContext');
@@ -1494,9 +1516,23 @@ function setContextTarget(element, label, login=false){
 const BADGE_LABELS=new Map([
   ['broadcaster','Broadcaster'],['moderator','Moderator'],['vip','VIP'],
   ['subscriber','Subscriber'],['founder','Founder'],['staff','Twitch Staff'],
-  ['partner','Verified'],['turbo','Twitch Turbo'],['premium','Prime Gaming'],['bits','Bits']
+  ['partner','Verified'],['turbo','Twitch Turbo'],['premium','Prime Gaming'],['bits','Bits'],
+  ['lead_moderator','Lead Moderator'],['artist','Artist']
 ]);
-function badgeLabel(id){return BADGE_LABELS.get(id);}
+function badgeLabel(key,id){
+  const title=Object.hasOwn(BADGE_TITLES,key) ? BADGE_TITLES[key] : null;
+  return typeof title==='string' && title.trim() ? title : BADGE_LABELS.get(id);
+}
+const EMOTE_SOURCE_LABELS=new Map([
+  ['7tv','7TV Emotes'],['ffz','FFZ Emotes'],['bttv','BTTV Emotes'],
+  ['twitch','Twitch Emotes'],['global','Global Emotes']
+]);
+function emoteSource(name,source){
+  if(!source && !catalogEmoteUrl(LOCAL_EMOTES,name) && Object.hasOwn(CDN_EMOTE_SOURCES,name)){
+    source=CDN_EMOTE_SOURCES[name];
+  }
+  return EMOTE_SOURCE_LABELS.get(source) || 'Other Emotes';
+}
 
 function renderTextWithEmotes(el,text,emotes){
   const document=el.ownerDocument || globalThis.document;
@@ -1507,11 +1543,11 @@ function renderTextWithEmotes(el,text,emotes){
     if(src){
       const img = document.createElement("img");
       img.src = src; img.crossOrigin="anonymous"; img.alt=p; img.className="emote";
-      setContextTarget(img,clean);el.appendChild(img);
+      setContextTarget(img,clean,false,emoteSource(clean));el.appendChild(img);
     } else if(emotes.has(clean)){
       const img = document.createElement("img");
       img.src = emotes.get(clean); img.crossOrigin="anonymous"; img.alt=p; img.className="emote";
-      setContextTarget(img,clean);el.appendChild(img);
+      setContextTarget(img,clean,false,emoteSource(clean,'7tv'));el.appendChild(img);
     } else {
       el.appendChild(document.createTextNode(p));
     }
@@ -1541,7 +1577,7 @@ function renderFragmentsWithEmotes(el, fragments, emotes){
       img.crossOrigin="anonymous";
       img.alt = rawText || emoteId;
       img.className="emote";
-      setContextTarget(img,cleanText);
+      setContextTarget(img,cleanText,false,emoteSource(cleanText,GLOBAL_TWITCH_EMOTE_IDS.has(String(emoteId)) ? 'global' : 'twitch'));
       el.appendChild(img);
       renderedAny = true;
       continue;
@@ -1551,7 +1587,7 @@ function renderFragmentsWithEmotes(el, fragments, emotes){
     if(src){
       const img = document.createElement("img");
       img.src = src; img.crossOrigin="anonymous"; img.alt=rawText; img.className="emote";
-      setContextTarget(img,cleanText);el.appendChild(img);
+      setContextTarget(img,cleanText,false,emoteSource(cleanText));el.appendChild(img);
       renderedAny = true;
       continue;
     }
@@ -1587,17 +1623,55 @@ function validProfileLogin(login){
   return typeof login==='string' && login.length>0 && login.length<=25 && !/[^a-z0-9_]/i.test(login)
     && !TWITCH_SITE_ROUTES.has(login.toLowerCase());
 }
+function authorColor(name,color){return String(color||colorForUser(name)).trim();}
+let mentionUsers=new Map();
+const MENTION_URL=/\b(?:[a-z][a-z\d+.-]*:\/\/|mailto:[^@]+@|www\.[\p{L}\p{N}])|(?:[\p{L}\p{N}-]+\.)+[\p{L}]{2,}[/:?#]/iu;
+const MENTION_LOGIN=/(?<![\p{L}\p{N}\p{M}\p{Pc}@/])(?<![\p{L}\p{N}\p{M}\p{Pc}][.+-])@([a-zA-Z0-9_]+)(?![\p{L}\p{N}\p{M}\p{Pc}@]|\.[\p{L}\p{N}])/gu;
+function* mentionRanges(text,users){
+  for(const token of text.matchAll(/\S+/gu)){
+    if(!token[0].includes('@') || MENTION_URL.test(token[0])) continue;
+    for(const match of token[0].matchAll(MENTION_LOGIN)){
+      const login=match[1].toLowerCase();
+      if(users.has(login)) yield {start:token.index+match.index,text:match[0],login};
+    }
+  }
+}
+function renderMentions(el){
+  // Twitch can split plain text across fragments. An image always breaks a text run.
+  let run=[],text='';
+  for(const node of [...el.childNodes,null]){
+    if(node?.nodeType===3){run.push(node);text+=node.data;continue;}
+    if(text.includes('@')){
+      const document=el.ownerDocument,output=document.createDocumentFragment();
+      let cursor=0;
+      for(const match of mentionRanges(text,mentionUsers)){
+        output.append(text.slice(cursor,match.start));
+        const mention=document.createElement('span');
+        mention.className='chat-mention';mention.textContent=match.text;
+        mention.style.color=mentionUsers.get(match.login).color;
+        setContextTarget(mention,match.login,true);output.append(mention);
+        cursor=match.start+match.text.length;
+      }
+      if(cursor){
+        output.append(text.slice(cursor));run[0].replaceWith(output);
+        for(const part of run.slice(1)) part.remove();
+      }
+    }
+    run=[];text='';
+  }
+}
 function appendUserMessage(parent,r,text,fragments,document){
   const nameWrap=document.createElement('span');
   renderBadges(nameWrap,r.badges||[]);
   const userEl=document.createElement('span');userEl.className='user';
-  userEl.textContent=authorLabel(r);userEl.style.color=String(r.color||colorForUser(r.user)).trim();
+  userEl.textContent=authorLabel(r);userEl.style.color=authorColor(r.user,r.color);
   if(validProfileLogin(r.login)) setContextTarget(userEl,r.login,true);
   nameWrap.appendChild(userEl);
   const colonEl=document.createElement('span');colonEl.className='colon';colonEl.textContent=':';
   nameWrap.appendChild(colonEl);
   const msgEl=document.createElement('span');msgEl.className='msg';
   if(!renderFragmentsWithEmotes(msgEl,fragments||[],EMOTES)) renderTextWithEmotes(msgEl,text||'',EMOTES);
+  if(mentionUsers.size && typeof text==='string' && text.includes('@')) renderMentions(msgEl);
   parent.appendChild(nameWrap);parent.appendChild(msgEl);
 }
 function noticeIcon(kind,document){
@@ -1665,12 +1739,20 @@ function showContext(target,pinned=false,keyboard=false){
   }
   closeContext();
   const value=target.dataset.chatContext;
-  if(Object.hasOwn(target.dataset,'chatProfile')){
+  const profile=Object.hasOwn(target.dataset,'chatProfile');
+  chatContext.classList.toggle('chat-context-profile',profile);
+  if(profile){
     if(!validProfileLogin(value)) return;
     const link=document.createElement('a');
     link.href='https://www.twitch.tv/'+value.toLowerCase();
     link.target='_blank';link.rel='noopener noreferrer';
     link.textContent='👤 Перейти в профиль';chatContext.appendChild(link);
+  }else if(target.dataset.chatSource){
+    const content=document.createElement('span');
+    content.className='chat-context-emote';
+    const name=document.createElement('span'),source=document.createElement('span');
+    name.textContent=value;source.textContent=target.dataset.chatSource;source.className='chat-context-source';
+    content.append(name,source);chatContext.append(content);
   }else{
     chatContext.textContent=value;
   }
@@ -1685,9 +1767,10 @@ function showContext(target,pinned=false,keyboard=false){
   chatContext.style.maxWidth=(right-left)+'px';
   chatContext.style.maxHeight=(bottom-top)+'px';
   chatContext.hidden=false;
+  const below=rect.bottom+gap,above=rect.top-gap-chatContext.offsetHeight;
+  if(above<top && bottom-below>=46) chatContext.style.maxHeight=(bottom-below)+'px';
   const width=chatContext.offsetWidth,height=chatContext.offsetHeight;
-  const below=rect.bottom+gap,above=rect.top-gap-height;
-  const y=below+height<=bottom || above<top && bottom-below>=rect.top-top ? below : above;
+  const y=above>=top ? above : below;
   chatContext.style.left=clampNumber(rect.left+(rect.width-width)/2,left,right-width)+'px';
   chatContext.style.top=clampNumber(y,top,bottom-height)+'px';
   contextAnchor=target;contextPinned=pinned;
@@ -1772,6 +1855,7 @@ let FILTER_TOKEN = 0;
 let FILTERING = false;
 let EMOTES = new Map();
 let EMOTES_READY = false;
+let mentionIndexStarted = false;
 const WINDOW_BLOCKS = 3;
 const blockNodes = new Map();
 let heights = [];
@@ -1919,8 +2003,33 @@ async function ensureEmotesLoaded(){
   EMOTES_READY=true;
   if(MODE!=="online" || !TWITCH_CHANNEL_ID) return;
   EMOTES=await fetch7tvEmotes(TWITCH_CHANNEL_ID);
+  if(!EMOTES.size) return;
   const block=targetBlock();heights=[];
   await showWindow(block,true);
+}
+async function buildMentionIndex(){
+  if(mentionIndexStarted) return;
+  mentionIndexStarted=true;
+  const users=new Map();
+  for(let i=0;i<rows.length;){
+    const deadline=performance.now()+6;
+    do {
+      const row=rows[i++],login=messageLogin(row);
+      if(!validProfileLogin(login)) continue;
+      const color=messageColor(row),key=login.toLowerCase(),explicit=Boolean(color);
+      const previous=users.get(key);
+      if(!previous || explicit && !previous.explicit){
+        users.set(key,{color:authorColor(messageUser(row),color),explicit});
+      }
+    } while(i<rows.length && performance.now()<deadline);
+    if(i<rows.length) await yieldViewer();
+  }
+  const streamer=meta.channel_login;
+  if(validProfileLogin(streamer) && !users.has(streamer.toLowerCase())){
+    users.set(streamer.toLowerCase(),{color:authorColor(meta.channel||streamer),explicit:false});
+  }
+  mentionUsers=users;
+  if(users.size) await showWindow(targetBlock(),true);
 }
 function searchKey(value){return String(value??'').normalize('NFC').toLowerCase().replace(/ς/g,'σ');}
 function matches(r,q,u){
@@ -1956,10 +2065,15 @@ function matchRanges(text, query){
 function highlightMatch(containers,query){
   const parts=[];
   let text='';
-  for(const container of containers) for(const node of container.childNodes){
+  function collect(node){
+    if(node.classList?.contains('chat-mention')){
+      for(const child of node.childNodes) collect(child);
+      return;
+    }
     const value=node.nodeType===3 ? node.data : node.tagName==='IMG' && node.dataset.chatContext ? node.alt : '';
     if(value){parts.push({node,value,start:text.length});text+=value;}
   }
+  for(const container of containers) for(const node of container.childNodes) collect(node);
   const ranges=matchRanges(text,query);
   if(!ranges.length) return;
   let next=0;
@@ -2007,6 +2121,7 @@ async function applyFilters(){
   setMetadataGroup(elStat,'💬',`${rowCount()} / ${rows.length}`);
   window.scrollTo(0,0);
   await showWindow(0,true);
+  buildMentionIndex();
   ensureEmotesLoaded();
 }
 document.addEventListener('scroll',()=>{if(!panelAnimating && !windowBusy && !resizeAnchor) stableAnchor=visibleAnchor();scheduleWindow();scheduleScrubSync();},{passive:true});

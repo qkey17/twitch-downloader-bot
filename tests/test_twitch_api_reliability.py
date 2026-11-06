@@ -605,25 +605,45 @@ class TwitchApiReliabilityTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def test_worker_preserves_emote_merge_precedence_and_badge_slash_keys(self):
         render = Mock(return_value="<html></html>")
-        with patch.object(worker_html, "fetch_7tv_emote_map", AsyncMock(return_value={"same": "7tv"})), \
-             patch.object(worker_html, "fetch_bttv_emote_map", AsyncMock(return_value={"same": "bttv"})), \
-             patch.object(worker_html, "fetch_ffz_emote_map", AsyncMock(return_value={"same": "ffz"})), \
-             patch.object(worker_html, "fetch_twitch_global_emote_map", AsyncMock(return_value={"same": "global"})), \
+        global_url = "https://static-cdn.jtvnw.net/emoticons/v2/25/default/dark/1.0"
+        global_data = {"data": [{"set_id": "shared", "versions": [
+            {"id": "1", "title": "Global title", "image_url_2x": "global-badge"},
+            {"id": "2", "title": "Global event", "image_url_1x": "event-badge"},
+        ]}]}
+        channel_data = {"data": [{"set_id": "shared", "versions": [
+            {"id": "1", "title": "Channel <title>", "image_url_2x": "channel-badge"},
+            {"id": "2", "title": "", "image_url_2x": "new-event-badge"},
+            {"id": "3", "title": "Event title", "image_url_2x": "another-event-badge"},
+        ]}]}
+        session = SimpleNamespace(get=Mock(side_effect=[
+            _ResponseContext(_Response(data=global_data)), _ResponseContext(_Response(data=channel_data)),
+        ]))
+        rows = [{"text": "same Seven Better Franker Kappa", "fragments": [{"text": "Kappa", "emoteID": "25"}]}]
+        with patch.object(worker_html, "fetch_7tv_emote_map", AsyncMock(return_value={"same": "7tv", "Seven": "s"})), \
+             patch.object(worker_html, "fetch_bttv_emote_map", AsyncMock(return_value={"same": "bttv", "Better": "b"})), \
+             patch.object(worker_html, "fetch_ffz_emote_map", AsyncMock(return_value={"same": "ffz", "Franker": "f"})), \
+             patch.object(worker_html, "fetch_twitch_global_emote_map", AsyncMock(return_value={"same": "global", "Kappa": global_url})), \
              patch.object(worker_html, "fetch_twitch_channel_emote_maps", AsyncMock(return_value=({"same": "channel"}, {}))), \
-             patch.object(worker_html, "fetch_twitch_global_badge_map", AsyncMock(return_value={"shared/1": "global-badge"})), \
-             patch.object(worker_html, "fetch_twitch_channel_badge_map", AsyncMock(return_value={"shared/1": "channel-badge"})), \
+             patch.object(badges, "get_api_headers", return_value={}), \
              patch.object(worker_html, "render_viewer_html", render), \
              patch.object(worker_html, "HTML_PUBLISH_MODE", "public"), \
              patch.object(worker_html, "publish_html", return_value="https://publisher.invalid/chat.html"):
             result = await worker_html.build_html_result(
-                None, object(), 1, "html_online",
-                meta.VodMeta(vod_id="123456789", channel_id="channel", channel="name", title="title"),
-                "vod-url", "base", Path("."), [], None,
+                None, session, 1, "html_online",
+                meta.VodMeta(vod_id="123456789", channel_id="channel", channel="Name", channel_login="login", title="title"),
+                "vod-url", "base", Path("."), rows, None,
             )
 
         self.assertEqual(([], "https://publisher.invalid/chat.html"), result)
         self.assertEqual("channel", render.call_args.kwargs["cdn_emotes"]["same"])
         self.assertEqual("channel-badge", render.call_args.kwargs["badge_images"]["shared/1"])
+        self.assertEqual("new-event-badge", render.call_args.kwargs["badge_images"]["shared/2"])
+        self.assertEqual({"shared/1": "Channel <title>", "shared/3": "Event title"}, render.call_args.kwargs["badge_titles"])
+        self.assertEqual({"same": "twitch", "Seven": "7tv", "Better": "bttv", "Franker": "ffz", "Kappa": "global"},
+                         render.call_args.kwargs["cdn_emote_sources"])
+        self.assertEqual(["25"], render.call_args.kwargs["global_twitch_emote_ids"])
+        self.assertEqual("login", render.call_args.kwargs["channel_login"])
+        self.assertEqual(2, session.get.call_count)
 
 
 if __name__ == "__main__":
