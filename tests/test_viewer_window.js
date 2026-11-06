@@ -20,23 +20,40 @@ test('measured and estimated block heights include short final block',()=>{
   ctx.heights[1]=0;assert.equal(ctx.heightBefore(3),506);
 });
 test('search uses original full rows and case-insensitive text/user matching',()=>{
-  const ctx=vm.createContext({});vm.runInContext(legacyAccess+part('function matches(', 'async function applyFilters('),ctx);
+  const ctx=vm.createContext({});vm.runInContext(legacyAccess+part('function searchKey(', 'async function applyFilters('),ctx);
   assert.ok(ctx.matches({user:'USER',text:'Hello Мир'},'мир','user'));
   assert.equal(ctx.matches({user:'OTHER',text:'Hello'},'hello','user'),false);
   assert.ok(ctx.matches({},'',''));assert.equal(ctx.matches({},'x',''),false);
 });
+test('display names and logins match independently in both formats with Unicode',()=>{
+  for(const compact of [false,true]){
+    const DATA={users:[['日本語 Café','#fff']]};
+    const legacy={user:'日本語 Café',login:'KanaUser',text:'ПрИвЕт Cafe\u0301'};
+    const record=compact ? ['0',0,legacy.text,[],[[]],63,{login:legacy.login}] : legacy;
+    const ctx=vm.createContext({DATA});
+    vm.runInContext('const COMPACT_DATA='+compact+';'+part('function messageUser(', 'const MODE =')+part('function searchKey(', 'function highlightMatch('),ctx);
+    for(const user of ['日本','CAFE\u0301','NAUS']) assert.ok(ctx.matches(record,ctx.searchKey('привет CAFÉ'),ctx.searchKey(user)));
+    assert.equal(ctx.matches(record,'','привет'),false);
+    assert.equal(ctx.matches(record,'missing','kana'),false);
+    const text='x Cafe\u0301 😀 İ';
+    for(const [query,expected] of [['CAFÉ','Cafe\u0301'],['😀','😀'],['i','İ']]){
+      const ranges=ctx.matchRanges(text,ctx.searchKey(query));
+      assert.equal(ranges.length,1);assert.equal(text.slice(...ranges[0]),expected);
+    }
+  }
+});
 test('new query cancels old full-chat scan before committing results',async()=>{
   let commits=0;
   const ctx=vm.createContext({Uint32Array,performance,rows:Array.from({length:100000},(_,i)=>({user:'user',text:'row '+i})),FILTER_TOKEN:0,selectionGesture:{active:true},elQ:{value:'row'},elU:{value:''},elStat:{},window:{getSelection:()=>({removeAllRanges(){}}),scrollTo(){}},yieldViewer:()=>new Promise(r=>setTimeout(r,0)),showWindow:async()=>{commits++},resetScrubber(){},ensureEmotesLoaded(){}});
-  ctx.setMetadataGroup=metadataText;
-  vm.runInContext(legacyAccess+'let filtered=null;const rowCount=()=>filtered===null?rows.length:filtered.length;'+part('function matches(', "document.addEventListener('scroll'"),ctx);
+  ctx.setMetadataGroup=metadataText;ctx.closeContext=()=>{};
+  vm.runInContext(legacyAccess+'let filtered=null,searchTerms=null;const rowCount=()=>filtered===null?rows.length:filtered.length;'+part('function searchKey(', "document.addEventListener('scroll'"),ctx);
   const first=ctx.applyFilters();ctx.elQ.value='row 99999';const second=ctx.applyFilters();
   await Promise.all([first,second]);assert.equal(ctx.selectionGesture,null);assert.equal(commits,1);assert.equal(ctx.elStat.textContent,'💬 1 / 100000');
 });
 test('clearing query reuses payload without a second full-length array',async()=>{
   const rows=[{text:'hello'}];const ctx=vm.createContext({rows,elQ:{value:''},elU:{value:''},elStat:{},window:{getSelection:()=>({removeAllRanges(){}}),scrollTo(){}},showWindow:async()=>{},resetScrubber(){},ensureEmotesLoaded(){}});
-  ctx.setMetadataGroup=metadataText;
-  vm.runInContext('let filtered=null,FILTER_TOKEN=0;const rowCount=()=>filtered===null?rows.length:filtered.length;'+part('async function applyFilters(', "document.addEventListener('scroll'"),ctx);
+  ctx.setMetadataGroup=metadataText;ctx.closeContext=()=>{};
+  vm.runInContext('let filtered=null,searchTerms=null,FILTER_TOKEN=0;const rowCount=()=>filtered===null?rows.length:filtered.length;'+part('function searchKey(', "document.addEventListener('scroll'"),ctx);
   await ctx.applyFilters();assert.equal(vm.runInContext('filtered',ctx),null);
   assert.equal(ctx.elStat.textContent,'💬 1 / 1');
 });

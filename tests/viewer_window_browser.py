@@ -17,6 +17,7 @@ async def run(args):
     out=Path(args.output);out.mkdir(parents=True,exist_ok=True)
     controls=getattr(args,'controls',False) or getattr(args,'marker',False)
     notices=getattr(args,'notices',False)
+    context=getattr(args,'context',False)
     baseline=subprocess.check_output(['git','show',args.baseline+':src/viewer_template.html'],cwd=ROOT).decode('utf-8')
     if getattr(args,'marker',False):
         from src.ui.card_images import fallback_data
@@ -27,10 +28,13 @@ async def run(args):
         if notices:
             from notice_fixtures import mixed_rows
             rows=list(mixed_rows(count,synthetic_rows))
+        if context:
+            from viewer_context_cases import prepare_context_rows
+            prepare_context_rows(rows)
         for mode in ('online','offline'):
             page=render_viewer_html(rows,'Synthetic title','Synthetic channel','https://www.twitch.tv/videos/123',created_at='2026-10-29T14:28:00Z',mode=mode,local_emotes={'Kappa':pixel},badge_images={'subscriber/1':pixel,'subscriber/2':pixel},captured_during_live=True,**(dict(duration_seconds=435088) if args.scrubber or args.panel or controls else {}))
             new_data=re.search(r'<script id="chat-data" type="application/json">(.*?)</script>',page,re.S).group(1)
-            old_data=new_data if args.scrubber or args.panel or controls else json.dumps(dict(meta=json.loads(new_data)['meta'],rows=rows),ensure_ascii=False).replace('<','\\u003c')
+            old_data=new_data if args.scrubber or args.panel or controls or context else json.dumps(dict(meta=json.loads(new_data)['meta'],rows=rows),ensure_ascii=False).replace('<','\\u003c')
             for version,html in [('new',page),('base',baseline.replace('{{CHAT_DATA_JSON}}',old_data))]:
                 # Test-only instrumentation: same decoder/renderer, no production metrics globals.
                 if not notices:
@@ -117,6 +121,10 @@ function sample(){
                 if notices:
                     from viewer_notice_cases import check_notices
                     await check_notices(call,evaluate,wait,out,args,errors,requests)
+                    return
+                if context:
+                    from viewer_context_cases import check_context
+                    await check_context(call,evaluate,wait,out,args,errors,requests)
                     return
                 if args.images:
                     from viewer_image_cases import check_images
@@ -271,4 +279,5 @@ if __name__=='__main__':
     parser.add_argument('--panel',action='store_true',help='Focused mobile panel visual checks and animation profile')
     parser.add_argument('--controls',action='store_true',help='Mobile control row, mode switches and endpoint gestures; no profiling')
     parser.add_argument('--images',action='store_true',help='Focused embedded preview checks only');parser.add_argument('--notices',action='store_true',help='Conservative notice rendering/search/copy/PNG in mixed virtual chat; no profiling')
+    parser.add_argument('--context',action='store_true',help='Focused search and context overlay checks')
     asyncio.run(run(parser.parse_args()),loop_factory=asyncio.SelectorEventLoop)

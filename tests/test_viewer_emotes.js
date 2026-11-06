@@ -8,7 +8,8 @@ const html = fs.readFileSync(path.join(__dirname, '../src/viewer_template.html')
 const script = html.split('<script>')[1].split('</script>')[0];
 
 function render(text, local = {}, cdn = {}, remote = new Map(), fragment = null) {
-  const element = tag => ({tag, children: [], appendChild(node) { this.children.push(node); }});
+  const element = tag => ({tag, dataset: {}, children: [], setAttribute() {},
+    appendChild(node) { this.children.push(node); }});
   const context = vm.createContext({LOCAL_EMOTES: local, CDN_EMOTES: cdn,
     document: {createElement: element, createTextNode: text => ({tag: '#text', text})}});
   const start = script.includes('function catalogEmoteUrl(')
@@ -37,7 +38,8 @@ test('own catalog emotes render with original attributes in both paths', () => {
     for (const fragment of paths(text)) {
       const [img] = render(text, local, {}, new Map(), fragment);
       assert.equal(img.tag, 'img'); assert.equal(img.src, local[text]);
-      assert.equal(img.alt, text); assert.equal(img.title, text);
+    assert.equal(img.alt, text); assert.equal(img.title, undefined);
+    assert.equal(img.dataset.chatContext, text);
       assert.equal(img.crossOrigin, 'anonymous'); assert.equal(img.className, 'emote');
     }
   }
@@ -71,6 +73,10 @@ test('Twitch fragment IDs keep priority over catalogs', () => {
     assert.equal(render('', {Kappa: 'local.png'}, {}, new Map(), fragment)[0].src,
       'https://static-cdn.jtvnw.net/emoticons/v2/25/default/dark/1.0');
   }
+});
+test('unnamed Twitch emotes do not use their asset ID as a context label', () => {
+  const [img] = render('', {}, {}, new Map(), {emoteID: '25'});
+  assert.equal(img.dataset.chatContext, undefined);
 });
 test('special characters, whitespace and Unicode stay safe text nodes', () => {
   const text = '<img onerror="synthetic"> & \\ Привет 🎮\n\t emoji';
