@@ -7,10 +7,11 @@ const vm = require('node:vm');
 const html = fs.readFileSync(path.join(__dirname, '../src/viewer_template.html'), 'utf8');
 const script = html.split('<script>')[1].split('</script>')[0];
 
-function render(text, local = {}, cdn = {}, remote = new Map(), fragment = null) {
+function render(text, local = {}, cdn = {}, remote = new Map(), fragment = null, sources = {}, globalIds = []) {
   const element = tag => ({tag, dataset: {}, children: [], setAttribute() {},
     appendChild(node) { this.children.push(node); }});
   const context = vm.createContext({LOCAL_EMOTES: local, CDN_EMOTES: cdn,
+    CDN_EMOTE_SOURCES: sources, GLOBAL_TWITCH_EMOTE_IDS: new Set(globalIds),
     document: {createElement: element, createTextNode: text => ({tag: '#text', text})}});
   const start = script.includes('function catalogEmoteUrl(')
     ? script.indexOf('function catalogEmoteUrl(') : script.indexOf('function renderTextWithEmotes(');
@@ -77,6 +78,24 @@ test('Twitch fragment IDs keep priority over catalogs', () => {
 test('unnamed Twitch emotes do not use their asset ID as a context label', () => {
   const [img] = render('', {}, {}, new Map(), {emoteID: '25'});
   assert.equal(img.dataset.chatContext, undefined);
+});
+test('context source identifies the rendered asset, including fallbacks', () => {
+  for (const fragment of paths('Kappa')) {
+    for (const [key, label] of [['7tv','7TV'], ['ffz','FFZ'], ['bttv','BTTV'],
+                                ['twitch','Twitch'], ['global','Global'], ['unknown','Other']]) {
+      const sources = {Kappa: key};
+      const [cdn] = render('Kappa', {}, {Kappa:'cdn.png'}, new Map(), fragment, sources);
+      const [local] = render('Kappa', {Kappa:'local.png'}, {Kappa:'cdn.png'}, new Map(), fragment, sources);
+      assert.equal(cdn.dataset.chatSource, label+' Emotes');
+      assert.equal(local.dataset.chatSource, 'Other Emotes');
+    }
+    const [online] = render('Kappa', {}, {}, new Map([['Kappa','7tv.png']]), fragment);
+    assert.equal(online.dataset.chatSource, '7TV Emotes');
+  }
+  for (const [ids, label] of [[[], 'Twitch'], [['25'], 'Global']]) {
+    const [fragment] = render('', {}, {}, new Map(), {text:'Kappa', emoteID:'25'}, {}, ids);
+    assert.equal(fragment.dataset.chatSource, label+' Emotes');
+  }
 });
 test('special characters, whitespace and Unicode stay safe text nodes', () => {
   const text = '<img onerror="synthetic"> & \\ Привет 🎮\n\t emoji';

@@ -5,7 +5,7 @@ import aiohttp
 from .client import get_api_headers
 
 
-async def _fetch_badge_map(session: aiohttp.ClientSession, url: str):
+async def _fetch_badge_map(session: aiohttp.ClientSession, url: str, titles=None):
     headers = get_api_headers()
     try:
         async with session.get(url, headers=headers, timeout=10) as resp:
@@ -35,17 +35,24 @@ async def _fetch_badge_map(session: aiohttp.ClientSession, url: str):
             version_id = str(version.get("id") or "").strip()
             image = version.get("image_url_2x") or version.get("image_url_1x")
             if version_id and isinstance(image, str) and image:
-                result[f"{set_id}/{version_id}"] = image
+                key = f"{set_id}/{version_id}"
+                result[key] = image
+                if titles is not None:
+                    title = version.get("title")
+                    if isinstance(title, str) and title.strip():
+                        titles[key] = title.strip()
+                    else:
+                        titles.pop(key, None)
 
     return result
 
 
-async def fetch_twitch_global_badge_map(session: aiohttp.ClientSession):
-    return await _fetch_badge_map(session, "https://api.twitch.tv/helix/chat/badges/global")
+async def fetch_twitch_global_badge_map(session: aiohttp.ClientSession, *, titles=None):
+    return await _fetch_badge_map(session, "https://api.twitch.tv/helix/chat/badges/global", titles)
 
 
-async def fetch_twitch_channel_badge_map(session: aiohttp.ClientSession, channel_id: str):
+async def fetch_twitch_channel_badge_map(session: aiohttp.ClientSession, channel_id: str, *, titles=None):
     if not channel_id:
         return {}
     url = f"https://api.twitch.tv/helix/chat/badges?broadcaster_id={channel_id}"
-    return await _fetch_badge_map(session, url)
+    return await _fetch_badge_map(session, url, titles)
