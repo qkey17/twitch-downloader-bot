@@ -92,10 +92,19 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
     await click(user)
     await wait(popup+".querySelector('a')?.href==='https://www.twitch.tv/kanauser'")
     assert await evaluate("!document.querySelector('.row[data-id=\"2\"] .user').hasAttribute('data-chat-context')")
-    await evaluate('''document.addEventListener('click',e=>{const a=e.target.closest('#chatContext a');
-        if(a){window.profileClick=[a.href,e.defaultPrevented,a.rel];e.preventDefault();}},{once:true})''')
+    await evaluate('''window.profileClicks=[];document.addEventListener('click',e=>{
+        const a=e.target.closest('#chatContext a');
+        if(a){profileClicks.push([a.href,e.defaultPrevented,a.rel]);e.preventDefault();}
+    })''')
     await click('#chatContext a')
-    assert await evaluate('profileClick') == ['https://www.twitch.tv/kanauser', False, 'noopener noreferrer']
+    padding = await evaluate('''(()=>{const r=chatContext.getBoundingClientRect();
+        const text=chatContext.querySelector('a').getBoundingClientRect();
+        const x=r.left+4,y=r.top+r.height/2;
+        return r.height===46 && x<text.left ? {x,y} : null;})()''')
+    assert padding
+    for event in ('mousePressed', 'mouseReleased'):
+        await call('Input.dispatchMouseEvent', dict(type=event, button='left', clickCount=1, **padding))
+    assert await evaluate('profileClicks') == [['https://www.twitch.tv/kanauser', False, 'noopener noreferrer']] * 2
     assert len(requests) == initial_requests
     await evaluate(f'document.querySelector({json.dumps(user)}).focus()')
     await call('Input.dispatchKeyEvent', dict(type='keyDown', key='Enter'))
