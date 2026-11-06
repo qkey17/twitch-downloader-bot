@@ -145,6 +145,9 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
     await evaluate(f'document.querySelector({json.dumps(user)}).focus()')
     await call('Input.dispatchKeyEvent', dict(type='keyDown', key='Enter'))
     await wait("document.activeElement===document.querySelector('#chatContext a')")
+    assert await evaluate("""chatContext.firstChild.matches(':focus-visible')
+        && getComputedStyle(chatContext).outlineStyle==='solid'
+        && getComputedStyle(chatContext).outlineWidth==='2px'""")
     await call('Input.dispatchKeyEvent', dict(type='keyDown', key='Escape'))
     assert await evaluate(f"{hidden} && document.activeElement===document.querySelector({json.dumps(user)})")
     await click(badge)

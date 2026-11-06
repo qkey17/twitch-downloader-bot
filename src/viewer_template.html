@@ -343,6 +343,9 @@ img.chat-match{outline:2px solid #ffdc82;outline-offset:-2px;}
   transition:background .15s ease,border-color .15s ease,transform .08s ease;
 }
 .chat-context-profile>a:focus{outline:none;}
+@media(min-width:901px){
+  .chat-context-profile:has(>a:focus-visible){outline:2px solid #b3adff;outline-offset:2px;}
+}
 
 .meta-buttons .button-toggle.is-active{
   background:#2a2a35;
