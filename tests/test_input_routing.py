@@ -163,8 +163,8 @@ class InputRoutingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn('Выбери действие', text)
                 self.assertEqual({}, self.context.user_data)
         text = self.messages[-1][1][0]
-        self.assertIn('прямую ссылку на трансляцию или ее ID', text)
-        self.assertIn('название канала или ссылку', text)
+        self.assertIn('прямую ссылку на запись', text)
+        self.assertIn('название канала, чтобы посмотреть список записей', text)
         self.assertNotIn('Premium', text)
         self.assertNotIn('http', text)
         self.app.create_task.assert_not_called()

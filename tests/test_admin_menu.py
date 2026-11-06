@@ -34,14 +34,14 @@ class AdminMenuTests(unittest.IsolatedAsyncioTestCase):
         basic = await self.help(8)
         premium = await self.help(9)
         owner = await self.help(7)
-        self.assertIn('прямую ссылку на трансляцию или ее ID', basic)
-        self.assertIn('название канала или ссылку', basic)
+        self.assertIn('прямую ссылку на запись', basic)
+        self.assertIn('название канала, чтобы посмотреть список записей', basic)
         self.assertNotIn('Premium', basic)
         self.assertEqual(
             basic + '\n\n<b>Premium</b>\n'
-            'Для массовой обработки добавьте к названию канала один из двух атрибутов:\n'
-            '<code>канал all</code> — обработать все доступные записи, включая уже обработанные.\n'
-            '<code>канал new</code> — обработать записи без полного готового чата.',
+            'Для массовой обработки добавьте к названию канала один из двух атрибутов «<code>all</code>» или «<code>new</code>»:\n'
+            '«<code>канал all</code>» — обработать все доступные записи, включая уже обработанные.\n'
+            '«<code>канал new</code>» — обработать все ранее не обработанные записи.',
             premium,
         )
         self.assertEqual(
