@@ -7,11 +7,12 @@ const vm = require('node:vm');
 const html = fs.readFileSync(path.join(__dirname, '../src/viewer_template.html'), 'utf8');
 const script = html.split('<script>')[1].split('</script>')[0];
 
-function render(text, local = {}, cdn = {}, remote = new Map(), fragment = null, sources = {}, globalIds = []) {
+function render(text, local = {}, cdn = {}, remote = new Map(), fragment = null, sources = {}, globalIds = [], subscriberIds = []) {
   const element = tag => ({tag, dataset: {}, children: [], setAttribute() {},
     appendChild(node) { this.children.push(node); }});
   const context = vm.createContext({LOCAL_EMOTES: local, CDN_EMOTES: cdn,
     CDN_EMOTE_SOURCES: sources, GLOBAL_TWITCH_EMOTE_IDS: new Set(globalIds),
+    SUBSCRIBER_TWITCH_EMOTE_IDS: new Set(subscriberIds),
     document: {createElement: element, createTextNode: text => ({tag: '#text', text})}});
   const start = script.includes('function catalogEmoteUrl(')
     ? script.indexOf('function catalogEmoteUrl(') : script.indexOf('function renderTextWithEmotes(');
@@ -74,6 +75,17 @@ test('Twitch fragment IDs keep priority over catalogs', () => {
     assert.equal(render('', {Kappa: 'local.png'}, {}, new Map(), fragment)[0].src,
       'https://static-cdn.jtvnw.net/emoticons/v2/25/default/dark/1.0');
   }
+});
+test('subscriber type only changes the source of the confirmed rendered Twitch asset', () => {
+  const fragment = {text:'Wave', emoteID:'123'};
+  const [sub] = render('', {}, {}, new Map(), fragment, {}, [], ['123']);
+  assert.equal(sub.dataset.chatSource, 'Other Emotes');
+  const [unknown] = render('', {}, {}, new Map(), {...fragment, emoteID:'124'}, {}, [], ['123']);
+  assert.equal(unknown.dataset.chatSource, 'Twitch Emotes');
+  const [global] = render('', {}, {}, new Map(), fragment, {}, ['123'], ['123']);
+  assert.equal(global.dataset.chatSource, 'Global Emotes');
+  const [cdn] = render('Wave', {}, {Wave:'sub.png'}, new Map(), null, {Wave:'other'});
+  assert.equal(cdn.dataset.chatSource, 'Other Emotes');
 });
 test('unnamed Twitch emotes do not use their asset ID as a context label', () => {
   const [img] = render('', {}, {}, new Map(), {emoteID: '25'});

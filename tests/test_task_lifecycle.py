@@ -282,7 +282,7 @@ class TaskLifecycleTestCase(unittest.IsolatedAsyncioTestCase):
         context = self.make_context()
         operation_id = begin_download(context)
 
-        async def emotes_then_cancel(*_args):
+        async def emotes_then_cancel(*_args, subscriber_ids=None):
             set_cancel(context, True)
             return {}, {}
 

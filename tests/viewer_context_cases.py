@@ -5,7 +5,9 @@ import json
 
 
 def prepare_context_rows(rows):
-    rows[:5] = [
+    mention_tail = ('mail@KanaUser https://example.org/@KanaUser @KanaUserSuffix @Unknown '
+                    'Ж@KanaUser @KanaUser界 <b> (@情報本部), @ijuos @共有名')
+    rows[:8] = [
         dict(t='00:00:00', user='日本語', login='KanaUser', color='#12abef', text='Cafe\u0301 Kappa', fragments=[
             dict(text='Ca'), dict(text='fe\u0301 '), dict(text='Kappa', emoteID='25')],
             badges=[dict(set_id='subscriber', version='1')]),
@@ -13,12 +15,14 @@ def prepare_context_rows(rows):
         dict(t='00:00:02', user='Unsafe', login='example/../../else', text='unsafe'),
         dict(t='00:00:03', user='Long', text='Long', fragments=[
             dict(text='<img onerror="window.fixtureXSS=1"> ' + 'A'*600, emoteID='26')]),
-        dict(t='00:00:04', user='Mentions', login='mentions', text=(
-            'Hi (@KANAuser), @FixtureStreamer @FarAway, mail@KanaUser https://example.org/@KanaUser '
-            '@KanaUserSuffix @Unknown Ж@KanaUser @KanaUser界 <b>'),
+        dict(t='00:00:04', user='Mentions', login='mentions',
+            text='Hi (@KANAuser), @FixtureStreamer @FarAway, '+mention_tail,
             fragments=[dict(text='Hi (@KA'), dict(text='NAuser), @FixtureStreamer @FarAway, '),
-                       dict(text='mail@KanaUser https://example.org/@KanaUser @KanaUserSuffix @Unknown Ж@KanaUser @KanaUser界 <b>')],
+                       dict(text=mention_tail)],
             badges=[dict(set_id=name, version='1') for name in ('event','lead_moderator','unknown')]),
+        dict(t='00:00:05', user='情報本部', login='ijuos', color='#317acb', text='test'),
+        dict(t='00:00:06', user='共有名', login='first', text='first'),
+        dict(t='00:00:07', user='共有名', login='second', text='second'),
     ]
     rows[-1].update(user='Far Away', login='FarAway', color='#fb73a2')
 
@@ -39,7 +43,7 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
             await wait("mentionUsers.has('faraway') && !windowBusy && !!document.querySelector('.chat-mention')")
 
     async def pos(selector):
-        return await evaluate('''(()=>{const r=document.querySelector(%s).getBoundingClientRect();
+        return await evaluate('''(()=>{const r=document.querySelector(%s).getClientRects()[0];
             return {x:r.left+r.width/2,y:r.top+r.height/2};})()''' % json.dumps(selector))
 
     async def mouse(event, selector=None):
@@ -159,10 +163,12 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
     assert await evaluate('''(()=>{
       const matches=[...document.querySelectorAll('.row[data-id="4"] .chat-mention')];
       const streamer=document.createElement('span');streamer.style.color=authorColor(meta.channel);
-      return matches.map(n=>n.textContent).join(',')==='@KANAuser,@FixtureStreamer,@FarAway'
+      const author=document.querySelector('.row[data-id="5"] .user');
+      return matches.map(n=>n.textContent).join(',')==='@KANAuser,@FixtureStreamer,@FarAway,@情報本部,@ijuos'
         && matches[0].style.color===document.querySelector('.row[data-id="0"] .user').style.color
         && matches[1].style.color===streamer.style.color
         && matches[2].style.color==='rgb(251, 115, 162)'
+        && matches.slice(3).every(n=>n.style.color===author.style.color && n.dataset.chatContext==='ijuos')
         && !document.querySelector(`.row[data-id="${rows.length-1}"]`)
         && !document.querySelector('.row[data-id="4"] .msg b');
     })()''')
@@ -174,12 +180,16 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
       const target=document.querySelector('.chat-mention').getBoundingClientRect(),r=chatContext.getBoundingClientRect();
       return Math.abs(target.top-r.bottom-6)<1 && Math.abs((target.left+target.right-r.left-r.right)/2)<1;
     })()''')
+    for suffix in ('', ':last-of-type'):
+        await call('Input.dispatchKeyEvent', dict(type='keyDown', key='Escape'))
+        await click('.row[data-id="4"] .chat-mention[data-chat-context="ijuos"]'+suffix)
+        await wait("chatContext.firstChild?.href==='https://www.twitch.tv/ijuos'")
     for i, title in enumerate(('Event <Final>', 'Lead Moderator')):
         await click(f'.row[data-id="4"] .badge:nth-child({i+1})')
         await wait(f"chatContext.textContent==={json.dumps(title)} && chatContext.children.length===0")
     await click('.row[data-id="4"] .badge:nth-child(3)')
     await wait(hidden)
-    await evaluate('elQ.value="@kanauser), @fixture";applyFilters()')
+    await evaluate('elQ.value="@情報本部), @IJU";applyFilters()')
     assert await evaluate('''(()=>{
       const msg=elList.querySelector('.msg'), selection=getSelection();
       selection.selectAllChildren(msg);rememberSelection();
@@ -188,15 +198,15 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
       const expected=messageText(rows[4]);
       const ok=rowCount()===1 && msg.textContent===expected && selection.toString()===expected
         && !event.defaultPrevented && selectionText(decodeMessage(rows[4])).endsWith(expected)
-        && msg.querySelector('.chat-mention mark')?.textContent==='@KANAuser'
-        && [...msg.querySelectorAll('mark')].map(n=>n.textContent).join('')==='@KANAuser), @Fixture';
+        && msg.querySelector('.chat-mention mark')?.textContent==='@情報本部'
+        && [...msg.querySelectorAll('mark')].map(n=>n.textContent).join('')==='@情報本部), @iju';
       selection.removeAllRanges();return ok;
     })()''')
     assert await evaluate("typeof html2canvas==='function'"), 'Provide cached html2canvas.min.js in output directory'
     assert await evaluate('''(async()=>{
       const data=[decodeMessage(rows[4])], wrap=await buildSnapshotWrap(data,true,false);
       return wrap.querySelector('.msg').textContent===data[0].text
-        && wrap.querySelectorAll('.chat-mention').length===3
+        && wrap.querySelectorAll('.chat-mention').length===5
         && (await createSnapshotDataUrl(data,true,false)).startsWith('data:image/png;base64,');
     })()''')
     await evaluate('elQ.value="CAFÉ";elU.value="NAUSER";applyFilters()')
@@ -253,7 +263,7 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
         await wait("!chatContext.hidden")
         assert await evaluate('''(()=>{const r=chatContext.getBoundingClientRect();return r.left>=0
             && r.right<=innerWidth && r.top>=viewportInset() && r.bottom<=innerHeight
-            && r.height>46 && chatContext.querySelector('.chat-context-source')?.textContent==='Twitch Emotes'
+            && r.height>46 && chatContext.querySelector('.chat-context-source')?.textContent==='Other Emotes'
             && window.fixtureXSS===undefined;})()''')
         await call('Emulation.setPageScaleFactor',dict(pageScaleFactor=1.25))
         await wait(hidden)

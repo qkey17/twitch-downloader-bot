@@ -1064,6 +1064,7 @@ const LOCAL_EMOTES = meta.local_emotes || {};
 const CDN_EMOTES = meta.cdn_emotes || {};
 const CDN_EMOTE_SOURCES = meta.cdn_emote_sources || {};
 const GLOBAL_TWITCH_EMOTE_IDS = new Set(Array.isArray(meta.global_twitch_emote_ids) ? meta.global_twitch_emote_ids : []);
+const SUBSCRIBER_TWITCH_EMOTE_IDS = new Set(Array.isArray(meta.subscriber_twitch_emote_ids) ? meta.subscriber_twitch_emote_ids : []);
 const BADGE_IMAGES = meta.badge_images || {};
 const BADGE_TITLES = meta.badge_titles || {};
 const TWITCH_CHANNEL_ID = meta.channel_id || null;
@@ -1536,6 +1537,10 @@ function emoteSource(name,source){
   }
   return EMOTE_SOURCE_LABELS.get(source) || 'Other Emotes';
 }
+function twitchFragmentSource(id){
+  if(GLOBAL_TWITCH_EMOTE_IDS.has(id)) return 'global';
+  return SUBSCRIBER_TWITCH_EMOTE_IDS.has(id) ? 'other' : 'twitch';
+}
 
 function renderTextWithEmotes(el,text,emotes){
   const document=el.ownerDocument || globalThis.document;
@@ -1580,7 +1585,7 @@ function renderFragmentsWithEmotes(el, fragments, emotes){
       img.crossOrigin="anonymous";
       img.alt = rawText || emoteId;
       img.className="emote";
-      setContextTarget(img,cleanText,false,emoteSource(cleanText,GLOBAL_TWITCH_EMOTE_IDS.has(String(emoteId)) ? 'global' : 'twitch'));
+      setContextTarget(img,cleanText,false,emoteSource(cleanText,twitchFragmentSource(String(emoteId))));
       el.appendChild(img);
       renderedAny = true;
       continue;
@@ -1628,14 +1633,25 @@ function validProfileLogin(login){
 }
 function authorColor(name,color){return String(color||colorForUser(name)).trim();}
 let mentionUsers=new Map();
+let mentionAliases=new Map();
 const MENTION_URL=/\b(?:[a-z][a-z\d+.-]*:\/\/|mailto:[^@]+@|www\.[\p{L}\p{N}])|(?:[\p{L}\p{N}-]+\.)+[\p{L}]{2,}[/:?#]/iu;
-const MENTION_LOGIN=/(?<![\p{L}\p{N}\p{M}\p{Pc}@/])(?<![\p{L}\p{N}\p{M}\p{Pc}][.+-])@([a-zA-Z0-9_]+)(?![\p{L}\p{N}\p{M}\p{Pc}@]|\.[\p{L}\p{N}])/gu;
-function* mentionRanges(text,users){
+const MENTION_NAME=/(?<![\p{L}\p{N}\p{M}\p{Pc}\u200c\u200d@/])(?<![\p{L}\p{N}\p{M}\p{Pc}][.+-])@([\p{L}\p{N}\p{M}\p{Pc}\u200c\u200d]+)(?![\p{L}\p{N}\p{M}\p{Pc}\u200c\u200d@]|\.[\p{L}\p{N}])/gu;
+function indexMentionAlias(aliases,display,login){
+  const key=searchKey(display);
+  if(!key || key===login && /^[a-zA-Z0-9_]+$/.test(display)) return;
+  if(!aliases.has(key)) aliases.set(key,login);
+  else if(aliases.get(key)!==login) aliases.set(key,null);
+}
+function* mentionRanges(text,users,aliases){
   for(const token of text.matchAll(/\S+/gu)){
     if(!token[0].includes('@') || MENTION_URL.test(token[0])) continue;
-    for(const match of token[0].matchAll(MENTION_LOGIN)){
-      const login=match[1].toLowerCase();
-      if(users.has(login)) yield {start:token.index+match.index,text:match[0],login};
+    for(const match of token[0].matchAll(MENTION_NAME)){
+      const name=match[1],key=searchKey(name);
+      const direct=/^[a-zA-Z0-9_]+$/.test(name) && users.has(key) ? key : undefined;
+      const alias=aliases.get(key);
+      if(alias===null || direct && alias && direct!==alias) continue;
+      const login=direct || alias;
+      if(login) yield {start:token.index+match.index,text:match[0],login};
     }
   }
 }
@@ -1647,7 +1663,7 @@ function renderMentions(el){
     if(text.includes('@')){
       const document=el.ownerDocument,output=document.createDocumentFragment();
       let cursor=0;
-      for(const match of mentionRanges(text,mentionUsers)){
+      for(const match of mentionRanges(text,mentionUsers,mentionAliases)){
         output.append(text.slice(cursor,match.start));
         const mention=document.createElement('span');
         mention.className='chat-mention';mention.textContent=match.text;
@@ -2013,25 +2029,28 @@ async function ensureEmotesLoaded(){
 async function buildMentionIndex(){
   if(mentionIndexStarted) return;
   mentionIndexStarted=true;
-  const users=new Map();
+  const users=new Map(),aliases=new Map();
   for(let i=0;i<rows.length;){
     const deadline=performance.now()+6;
     do {
       const row=rows[i++],login=messageLogin(row);
       if(!validProfileLogin(login)) continue;
-      const color=messageColor(row),key=login.toLowerCase(),explicit=Boolean(color);
+      const color=messageColor(row),key=login.toLowerCase(),explicit=Boolean(color),display=messageUser(row);
       const previous=users.get(key);
+      if(display!==previous?.display) indexMentionAlias(aliases,display,key);
       if(!previous || explicit && !previous.explicit){
-        users.set(key,{color:authorColor(messageUser(row),color),explicit});
-      }
+        users.set(key,{color:authorColor(display,color),explicit,display});
+      }else previous.display=display;
     } while(i<rows.length && performance.now()<deadline);
     if(i<rows.length) await yieldViewer();
   }
   const streamer=meta.channel_login;
-  if(validProfileLogin(streamer) && !users.has(streamer.toLowerCase())){
-    users.set(streamer.toLowerCase(),{color:authorColor(meta.channel||streamer),explicit:false});
+  if(validProfileLogin(streamer)){
+    const key=streamer.toLowerCase();
+    indexMentionAlias(aliases,meta.channel,key);
+    if(!users.has(key)) users.set(key,{color:authorColor(meta.channel||streamer),explicit:false});
   }
-  mentionUsers=users;
+  mentionUsers=users;mentionAliases=aliases;
   if(users.size) await showWindow(targetBlock(),true);
 }
 function searchKey(value){return String(value??'').normalize('NFC').toLowerCase().replace(/ς/g,'σ');}

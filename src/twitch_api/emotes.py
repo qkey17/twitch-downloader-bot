@@ -305,6 +305,8 @@ async def fetch_twitch_channel_badge_map(session: aiohttp.ClientSession, channel
 async def fetch_twitch_channel_emote_maps(
     session: aiohttp.ClientSession,
     channel_id: str,
+    *,
+    subscriber_ids: set[str] | None = None,
 ) -> Tuple[Dict[str, str], Dict[str, str]]:
     if not channel_id:
         return {}, {}
@@ -343,6 +345,9 @@ async def fetch_twitch_channel_emote_maps(
         if name and src:
             name_map[name] = src
         if emote_id and src:
-            id_map[str(emote_id)] = src
+            key = str(emote_id)
+            id_map[key] = src
+            if subscriber_ids is not None and e.get("emote_type") == "subscriptions":
+                subscriber_ids.add(key)
 
     return name_map, id_map

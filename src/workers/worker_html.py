@@ -49,6 +49,7 @@ async def build_html_result(
         combined_sources: Dict[str, str] = {}
         cdn_sources: Dict[str, str] = {}
         twitch_emote_id_map: Dict[str, str] = {}
+        subscriber_ids: set[str] = set()
         badge_images: Dict[str, str] = {}
         badge_titles: Dict[str, str] = {}
 
@@ -87,7 +88,7 @@ async def build_html_result(
         # Twitch Channel
         if meta.channel_id:
             check_cancelled()
-            name_map, id_map = await fetch_twitch_channel_emote_maps(session, meta.channel_id)
+            name_map, id_map = await fetch_twitch_channel_emote_maps(session, meta.channel_id, subscriber_ids=subscriber_ids)
             check_cancelled()
             add_emotes(name_map, "twitch")
             twitch_emote_id_map.update(id_map)
@@ -95,7 +96,12 @@ async def build_html_result(
             # a token boundary or the row has no fragment metadata.
             cdn_emotes.update(name_map)
             cdn_emotes.update(id_map)
-            cdn_sources.update(dict.fromkeys(cdn_emotes, "twitch"))
+            subscriber_urls = {id_map[key] for key in subscriber_ids}
+            for name, url in name_map.items():
+                source = "other" if url in subscriber_urls else "twitch"
+                combined_sources[name] = cdn_sources[name] = source
+            for key in id_map:
+                cdn_sources[key] = "other" if key in subscriber_ids else "twitch"
 
         # Twitch badges
         check_cancelled()
@@ -111,6 +117,7 @@ async def build_html_result(
         targets = set()
         targets_by_id = set()
         global_ids = set()
+        used_subscriber_ids = set()
 
         rows = chat_rows.iter_rows() if isinstance(chat_rows, ChatSpool) else iter(chat_rows)
         try:
@@ -138,6 +145,8 @@ async def build_html_result(
                         url = f"https://static-cdn.jtvnw.net/emoticons/v2/{emote_id}/default/dark/1.0"
                         if url in global_emote_urls:
                             global_ids.add(emote_id)
+                        elif emote_id in subscriber_ids:
+                            used_subscriber_ids.add(emote_id)
         finally:
             close = getattr(rows, "close", None)
             if close is not None:
@@ -149,7 +158,10 @@ async def build_html_result(
             cdn_sources[name] = combined_sources[name]
         for emote_id in targets_by_id:
             cdn_emotes[emote_id] = twitch_emote_id_map[emote_id]
-            cdn_sources[emote_id] = "global" if cdn_emotes[emote_id] in global_emote_urls else "twitch"
+            if cdn_emotes[emote_id] in global_emote_urls:
+                cdn_sources[emote_id] = "global"
+            else:
+                cdn_sources[emote_id] = "other" if emote_id in subscriber_ids else "twitch"
 
         check_cancelled()
         options = dict(
@@ -169,6 +181,7 @@ async def build_html_result(
             badge_titles=badge_titles,
             cdn_emote_sources=cdn_sources,
             global_twitch_emote_ids=sorted(global_ids),
+            subscriber_twitch_emote_ids=sorted(used_subscriber_ids),
             captured_during_live=getattr(meta, 'is_live', None) is True,
         )
 

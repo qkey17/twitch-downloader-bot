@@ -615,15 +615,24 @@ class TwitchApiReliabilityTestCase(unittest.IsolatedAsyncioTestCase):
             {"id": "2", "title": "", "image_url_2x": "new-event-badge"},
             {"id": "3", "title": "Event title", "image_url_2x": "another-event-badge"},
         ]}]}
+        channel_emotes = {"data": [
+            {"id": "26", "name": "same", "emote_type": "follower", "images": {"url_1x": "channel"}},
+            {"id": "27", "name": "Sub", "emote_type": "subscriptions", "images": {"url_1x": "sub"}},
+            {"id": "28", "name": "UnusedSub", "emote_type": "subscriptions"},
+        ]}
         session = SimpleNamespace(get=Mock(side_effect=[
+            _ResponseContext(_Response(data=channel_emotes)),
             _ResponseContext(_Response(data=global_data)), _ResponseContext(_Response(data=channel_data)),
         ]))
-        rows = [{"text": "same Seven Better Franker Kappa", "fragments": [{"text": "Kappa", "emoteID": "25"}]}]
+        rows = [{"text": "same Seven Better Franker Kappa Sub", "fragments": [
+            {"text": "Kappa", "emoteID": "25"}, {"text": "Sub", "emoteID": "27"},
+            {"text": "OtherChannel", "emoteID": "99"},
+        ]}]
         with patch.object(worker_html, "fetch_7tv_emote_map", AsyncMock(return_value={"same": "7tv", "Seven": "s"})), \
              patch.object(worker_html, "fetch_bttv_emote_map", AsyncMock(return_value={"same": "bttv", "Better": "b"})), \
              patch.object(worker_html, "fetch_ffz_emote_map", AsyncMock(return_value={"same": "ffz", "Franker": "f"})), \
              patch.object(worker_html, "fetch_twitch_global_emote_map", AsyncMock(return_value={"same": "global", "Kappa": global_url})), \
-             patch.object(worker_html, "fetch_twitch_channel_emote_maps", AsyncMock(return_value=({"same": "channel"}, {}))), \
+             patch.object(emotes, "get_api_headers", return_value={}), \
              patch.object(badges, "get_api_headers", return_value={}), \
              patch.object(worker_html, "render_viewer_html", render), \
              patch.object(worker_html, "HTML_PUBLISH_MODE", "public"), \
@@ -639,11 +648,14 @@ class TwitchApiReliabilityTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("channel-badge", render.call_args.kwargs["badge_images"]["shared/1"])
         self.assertEqual("new-event-badge", render.call_args.kwargs["badge_images"]["shared/2"])
         self.assertEqual({"shared/1": "Channel <title>", "shared/3": "Event title"}, render.call_args.kwargs["badge_titles"])
-        self.assertEqual({"same": "twitch", "Seven": "7tv", "Better": "bttv", "Franker": "ffz", "Kappa": "global"},
+        self.assertEqual({"same": "twitch", "26": "twitch", "Seven": "7tv", "Better": "bttv", "Franker": "ffz",
+                          "Kappa": "global", "Sub": "other", "27": "other", "UnusedSub": "other", "28": "other"},
                          render.call_args.kwargs["cdn_emote_sources"])
         self.assertEqual(["25"], render.call_args.kwargs["global_twitch_emote_ids"])
+        self.assertEqual(["27"], render.call_args.kwargs["subscriber_twitch_emote_ids"])
         self.assertEqual("login", render.call_args.kwargs["channel_login"])
-        self.assertEqual(2, session.get.call_count)
+        self.assertEqual(3, session.get.call_count)
+        self.assertEqual(1, sum("/helix/chat/emotes?" in call.args[0] for call in session.get.call_args_list))
 
 
 if __name__ == "__main__":
