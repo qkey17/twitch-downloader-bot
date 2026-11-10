@@ -8,6 +8,7 @@ const script=html.split('<script>')[1].split('</script>')[0];
 const legacyAccess="const COMPACT_DATA=false;"+script.slice(script.indexOf('function messageUser('),script.indexOf('const MODE ='));
 const metadataText=(element,symbol,value)=>{element.textContent=symbol+' '+value;};
 function part(start,end){return script.slice(script.indexOf(start),script.indexOf(end));}
+const linkSource=part('const MENTION_URL=', 'function renderMentions(');
 test('embedded JS is valid and payload is not eagerly decorated',()=>{
   new vm.Script(script);
   assert.ok(!script.includes('r._t =') && !script.includes('r._u ='));
@@ -83,13 +84,44 @@ test('clearing query reuses payload without a second full-length array',async()=
 });
 
 test('off-window copy projects the same text as rows without images',()=>{
-  const ctx=vm.createContext({SHOW_TIME:true,LOCAL_EMOTES:{Kappa:'local.png'},CDN_EMOTES:{},EMOTES:new Map()});
-  vm.runInContext(part('function catalogEmoteUrl(', 'function renderTextWithEmotes(')+part('function selectionText(', "document.addEventListener('copy'"),ctx);
+  const ctx=vm.createContext({URL,SHOW_TIME:true,LOCAL_EMOTES:{Kappa:'local.png'},CDN_EMOTES:{},EMOTES:new Map()});
+  vm.runInContext(linkSource+part('function catalogEmoteUrl(', 'function renderTextWithEmotes(')+part('function selectionText(', "document.addEventListener('copy'"),ctx);
   const r={t:'01 : 02 : 03',user:'User',text:'a Kappa b <script> & 🎮'};
   assert.equal(ctx.selectionText(r),'01:02:03User:a  b <script> & 🎮');
   r.fragments=[{text:'Kappa',emoteID:'25'},{text:' safe & text'}];
   assert.equal(ctx.selectionText(r),'01:02:03User: safe & text');
   ctx.SHOW_TIME=false;assert.equal(ctx.selectionText(r),'User: safe & text');
+  r.fragments=[{text:'(https://example.com/'},{text:'Kappa'},{text:') '},{text:'Kappa',emoteID:'25'}];
+  r.text=r.fragments.map(f=>f.text).join('');
+  assert.equal(ctx.selectionText(r),'User:(https://example.com/Kappa) ');
+});
+
+test('HTTP links preserve original text and support IDN, paths, ports and punctuation',()=>{
+  const ctx=vm.createContext({URL});
+  vm.runInContext(linkSource,ctx);
+  const text='«HTTP://Example.com:8080/a(b)?x=1&u=@名前#end» (www.twitch.tv/videos/12?t=3s). '+
+    '「例え.みんな/日本語」 clips.twitch.tv/ClipName twitch.tv/channel https://[::1]/a';
+  const actual=Array.from(ctx.chatLinks(text),link=>[text.slice(link.start,link.end),link.href]);
+  assert.deepEqual(actual,[
+    ['HTTP://Example.com:8080/a(b)?x=1&u=@名前#end','http://example.com:8080/a(b)?x=1&u=@%E5%90%8D%E5%89%8D#end'],
+    ['www.twitch.tv/videos/12?t=3s','https://www.twitch.tv/videos/12?t=3s'],
+    ['例え.みんな/日本語','https://xn--r8jz45g.xn--q9jyb4c/%E6%97%A5%E6%9C%AC%E8%AA%9E'],
+    ['clips.twitch.tv/ClipName','https://clips.twitch.tv/ClipName'],
+    ['twitch.tv/channel','https://twitch.tv/channel'],['https://[::1]/a','https://[::1]/a'],
+  ]);
+});
+test('incomplete domains, ambiguous files, email, unsafe schemes and deceptive authorities stay plain',()=>{
+  const ctx=vm.createContext({URL});
+  vm.runInContext(linkSource,ctx);
+  const examples=[
+    'mail@example.com','www.example','example.notatld','https://localhost','foo..com','foo-.com',
+    'v1.2.3','archive.zip','script.py','//example.com','ftp://example.com','file:///foo.com',
+    'javascript:https://example.com','data:text/html,https://example.com','https:///example.com',
+    'https://good.com@bad.com','https://@example.com','https://%65xample.com','https://example.com:99999',
+    'https://example.com\\@evil.com','https://example.com/%ZZ','https://example.com/a\u202Eb',
+    'https://example.com、続き','https://example.com:/path',
+  ];
+  for(const text of examples) assert.deepEqual(Array.from(ctx.chatLinks(text)),[],text);
 });
 
 test('notice projection preserves system, original author/comment and emotes without time duplication',()=>{

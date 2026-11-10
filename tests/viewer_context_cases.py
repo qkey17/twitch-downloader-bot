@@ -7,7 +7,9 @@ import json
 def prepare_context_rows(rows):
     mention_tail = ('mail@KanaUser https://example.org/@KanaUser @KanaUserSuffix @Unknown '
                     'Ж@KanaUser @KanaUser界 <b> (@情報本部), @ijuos @共有名')
-    rows[:8] = [
+    links = [dict(text=part) for part in ('(clips.twitch.', 'tv/', 'Kappa', '?to=@情報本部), @情報本部 ')]
+    links.append(dict(text='Kappa', emoteID='25'))
+    rows[:9] = [
         dict(t='00:00:00', user='日本語', login='KanaUser', color='#12abef', text='Cafe\u0301 Kappa', fragments=[
             dict(text='Ca'), dict(text='fe\u0301 '), dict(text='Kappa', emoteID='25')],
             badges=[dict(set_id='subscriber', version='1')]),
@@ -23,6 +25,7 @@ def prepare_context_rows(rows):
         dict(t='00:00:05', user='情報本部', login='ijuos', color='#317acb', text='test'),
         dict(t='00:00:06', user='共有名', login='first', text='first'),
         dict(t='00:00:07', user='共有名', login='second', text='second'),
+        dict(t='00:00:08', user='Links', login='links', text=''.join(f['text'] for f in links), fragments=links),
     ]
     rows[-1].update(user='Far Away', login='FarAway', color='#fb73a2')
 
@@ -65,6 +68,41 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
         if seconds:
             await asyncio.sleep(seconds)
         await touch('touchEnd')
+
+    async def check_link(touchscreen=False):
+        await evaluate('elQ.value="kappa?to=@情報";elU.value="";applyFilters()')
+        selector = '#list .msg .chat-link'
+        assert await evaluate('''(()=>{
+          const msg=elList.querySelector('.msg'),link=msg.querySelector('.chat-link');
+          const expected='(clips.twitch.tv/Kappa?to=@情報本部), @情報本部 ';
+          const selected=getSelection();selected.selectAllChildren(msg);
+          const ok=rowCount()===1 && msg.textContent===expected && selected.toString()===expected
+            && selectionText(rowAt(0)).endsWith(expected)
+            && link.textContent==='clips.twitch.tv/Kappa?to=@情報本部'
+            && link.href==='https://clips.twitch.tv/Kappa?to=@%E6%83%85%E5%A0%B1%E6%9C%AC%E9%83%A8'
+            && link.target==='_blank' && link.rel==='noopener noreferrer'
+            && link.querySelector('mark')?.textContent==='Kappa?to=@情報'
+            && msg.querySelectorAll('.chat-mention').length===1 && !link.querySelector('.chat-mention')
+            && msg.querySelectorAll('.emote').length===1;
+          selected.removeAllRanges();return ok;
+        })()''')
+        await evaluate('''window.linkClicks=[];document.addEventListener('click',e=>{
+          const link=e.target.closest('.chat-link');if(!link)return;
+          linkClicks.push([link.href,e.defaultPrevented]);e.preventDefault();
+        },{once:true})''')
+        if touchscreen:
+            await tap(selector)
+        else:
+            await click(selector)
+        assert await evaluate("linkClicks.length===1 && !linkClicks[0][1] && chatContext.hidden")
+        assert await evaluate('''elList.querySelector('.chat-link').dispatchEvent(
+          new MouseEvent('contextmenu',{bubbles:true,cancelable:true}))''')
+        if not touchscreen:
+            assert await evaluate('''(async()=>{
+              const data=[rowAt(0)], wrap=await buildSnapshotWrap(data,true,false);
+              return wrap.querySelector('.chat-link')?.textContent==='clips.twitch.tv/Kappa?to=@情報本部'
+                && (await createSnapshotDataUrl(data,true,false)).startsWith('data:image/png;base64,');
+            })()''')
 
     popup = "document.querySelector('#chatContext')"
     hidden = popup+'.hidden'
@@ -221,6 +259,7 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
     assert await evaluate('rowCount()===0')
     await evaluate('elU.value="日本";applyFilters()')
     assert await evaluate("rowCount()===1 && elList.querySelector('.user mark').textContent==='日本'")
+    await check_link()
     assert not errors, errors
 
     for width, mode in ((320, 'online'), (390, 'offline')):
@@ -273,7 +312,8 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
         await evaluate('scrollBy(0,160)')
         await wait(hidden)
         assert await evaluate("document.querySelectorAll('#chatContext').length===1 && document.querySelectorAll('#list .row').length<=2400")
+        await check_link(touchscreen=True)
         assert not errors, errors
     print(json.dumps(dict(control_heights={w: geometry[w,'new'] for w in (320,390,1440)},
                           search='PASS', mentions='PASS', copy='PASS', png='PASS',
-                          desktop='PASS', mobile='PASS'), ensure_ascii=False))
+                          desktop='PASS', mobile='PASS', links='PASS'), ensure_ascii=False))

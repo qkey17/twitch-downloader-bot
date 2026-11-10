@@ -88,9 +88,14 @@ def write_viewer_html(output, chat_rows, title, channel, vod_url, created_at=Non
         for chunk in chunks:
             write(chunk.replace("<", "\\u003c"))
 
+    def write_template(part):
+        chunk_size = 64 * 1024
+        for start in range(0, len(part), chunk_size):
+            write(part[start:start + chunk_size])
+
     iterator = iter(chat_rows)
     try:
-        write(prefix)
+        write_template(prefix)
         write('{"format":')
         write_json(FORMAT)
         write(',"meta":')
@@ -107,7 +112,7 @@ def write_viewer_html(output, chat_rows, title, channel, vod_url, created_at=Non
         write(',"badges":')
         write_json(compact.badges.values, streaming=True)
         write('}')
-        write(suffix)
+        write_template(suffix)
     finally:
         close = getattr(iterator, "close", None)
         if close is not None:
