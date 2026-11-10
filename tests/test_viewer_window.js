@@ -44,13 +44,27 @@ test('display names and logins match independently in both formats with Unicode'
 });
 test('mentions use full known ASCII logins and Unicode-aware boundaries',()=>{
   const ctx=vm.createContext({});
-  vm.runInContext(part('const MENTION_URL=', 'function renderMentions('),ctx);
+  vm.runInContext(part('function searchKey(', 'function matches(')+part('const MENTION_URL=', 'function renderMentions('),ctx);
   const users=new Map([['example',{}],['abc_123',{}],['www',{}],['mailto',{}]]);
   const text='(@ExAmPlE), -@abc_123! 🎮@example. @www. @mailto: @exampleSuffix @unknown '+
     'перед@example @exampleпосле @example\u0301 @example@example person+@example person@EXAMPLE.net '+
     'https://host/#@example https://host/?to=@example mailto:a@abc_123 www.host/@example host.tld/@example';
-  const found=Array.from(ctx.mentionRanges(text,users),m=>[text.slice(m.start,m.start+m.text.length),m.login]);
+  const found=Array.from(ctx.mentionRanges(text,users,new Map()),m=>[text.slice(m.start,m.start+m.text.length),m.login]);
   assert.deepEqual(found,[['@ExAmPlE','example'],['@abc_123','abc_123'],['@example','example'],['@www','www'],['@mailto','mailto']]);
+});
+test('mentions resolve Unicode display names by canonical spelling and reject ambiguous aliases',()=>{
+  const ctx=vm.createContext({});
+  vm.runInContext(part('function searchKey(', 'function matches(')+part('const MENTION_URL=', 'function renderMentions('),ctx);
+  const users=new Map(['ijuos','first','second','another','shared'].map(login=>[login,{}]));
+  const aliases=new Map();
+  for(const [display,login] of [['情報本部','ijuos'],['Café','another'],['CAFE\u0301','another'],
+                                ['共有名','first'],['共有名','second'],['Shared','first']]){
+    ctx.indexMentionAlias(aliases,display,login);
+  }
+  const text='「@情報本部」、(@IJUOS)! @CAFE\u0301. @共有名 @shared @unknown @情報本 @情報本部員 '+
+    '名@情報本部 @情報本部@example.com https://twitch.tv/@情報本部 twitch.tv/#@情報本部';
+  assert.deepEqual(Array.from(ctx.mentionRanges(text,users,aliases),m=>[m.text,m.login]),
+    [['@情報本部','ijuos'],['@IJUOS','ijuos'],['@CAFE\u0301','another']]);
 });
 test('new query cancels old full-chat scan before committing results',async()=>{
   let commits=0;
