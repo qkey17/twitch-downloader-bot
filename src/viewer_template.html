@@ -195,22 +195,6 @@ header{
   outline:2px solid rgba(145,70,255,0.65);
   outline-offset:2px;
 }
-.vod-card-media{
-  position:relative;
-  aspect-ratio:16/9;
-  background:linear-gradient(135deg,#22222b,#15151b 55%, #0f0f12);
-}
-.vod-card-media img{
-  width:100%;
-  height:100%;
-  display:block;
-  object-fit:cover;
-}
-.vod-card-shade{
-  position:absolute;
-  inset:0;
-  background:linear-gradient(180deg, rgba(0,0,0,.06) 35%, rgba(0,0,0,.7) 100%);
-}
 .pill{
   font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
   color:var(--muted);
@@ -448,20 +432,7 @@ button, .vod-card{
 }
 
 /* Only the VOD overlay: let the rendered image determine the action width. */
-.vod-preview-panel .snapshot-preview{
-  max-width:min(calc(100vw - 40px), 1200px);
-}
-.vod-preview-panel .snapshot-actions{
-  width:0;
-  min-width:100%;
-  max-width:none;
-}
 
-.vod-live-panel{align-items:center;}
-.vod-live-panel .snapshot-actions{width:auto;min-width:0;}
-.vod-live-panel > button{flex:none;min-height:44px;}
-.vod-live-panel button:focus-visible{outline:2px solid #9146ff;outline-offset:2px;}
-.vod-card[aria-disabled="true"]{cursor:default;}
 
 .snapshot-toggle{
   height: var(--control-h);
@@ -737,25 +708,25 @@ html{overflow-anchor:none;}
   header .panel-actions{order:4;}
 
 
-  header.is-expanded .panel-stats,header.has-storyboard .panel-stats{
+  header.is-expanded .panel-stats,header.has-vod-image .panel-stats{
     display:grid;
     grid-template-columns:minmax(0,1fr) minmax(0,1fr);
     gap:6px;
     align-items:start;
   }
-  header.is-expanded #mobileChannel,header.has-storyboard #mobileChannel{
+  header.is-expanded #mobileChannel,header.has-vod-image #mobileChannel{
     display:block;
     grid-column:1 / -1;
     white-space:normal;
     overflow:visible;
     overflow-wrap:anywhere;
   }
-  header.is-expanded .panel-stats > .pill:not(.panel-stats-channel),header.has-storyboard .panel-stats > .pill:not(.panel-stats-channel){
+  header.is-expanded .panel-stats > .pill:not(.panel-stats-channel),header.has-vod-image .panel-stats > .pill:not(.panel-stats-channel){
     white-space:normal;
     overflow:visible;
     overflow-wrap:anywhere;
   }
-  header.is-expanded #stat,header.has-storyboard #stat{max-width:100%;justify-self:end;text-align:right;}
+  header.is-expanded #stat,header.has-vod-image #stat{max-width:100%;justify-self:end;text-align:right;}
 
   #list{
     padding-top: 145px;
@@ -886,54 +857,62 @@ html{overflow-anchor:none;}
 
 /* Desktop wrappers are boxless, preserving the original sidebar geometry. */
 .panel-details,.panel-details-content{display:contents;}
-.panel-details-content[hidden],.storyboard-panel[hidden],.meta-buttons .storyboard-toggle{display:none;}
-.desktop-storyboard[hidden]{display:none;}
-@media (min-width:901px){
-  header.has-desktop-storyboard{
-    max-height:calc(100dvh - 48px);
-    overflow:auto;
-  }
-  .desktop-storyboard{
-    width:100%;
-    flex:none;
-    overflow:hidden;
-    border:1px solid var(--border);
-    border-radius:var(--control-radius);
-  }
-  .desktop-storyboard img{display:block;width:100%;height:100%;object-fit:contain;}
-  .desktop-storyboard img:not([src]){visibility:hidden;}
+.panel-details-content[hidden],.storyboard-panel[hidden],.vod-card[hidden],.vod-zoom[hidden],.vod-zoom-media[hidden],#vodLink[hidden]{display:none;}
+.panel-top:not(.has-vod-image){grid-template-columns:minmax(0,1fr);}
+.vod-card{padding:0;width:100%;}
+.vod-card[aria-expanded=true]{visibility:hidden;}
+.vod-card-media{display:block;aspect-ratio:var(--preview-ratio,16/9);background:none;}
+#vodPreviewImg{display:block;width:100%;height:100%;object-fit:contain;}
+#vodPreviewImg:not([src]){visibility:hidden;}
+.vod-zoom{
+  position:fixed;z-index:105;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:min(850px,calc(100vw - 48px),calc((100dvh - 96px) * var(--preview-ratio,1.778)));
 }
-
+.vod-zoom-media{aspect-ratio:var(--preview-ratio,16/9);border-radius:var(--control-radius);overflow:hidden;}
+.vod-zoom-close{
+  position:absolute;right:0;bottom:calc(100% + 6px);
+  width:36px;height:36px;display:grid;place-items:center;cursor:pointer;
+  color:var(--text);background:var(--panel);border:1px solid var(--border);border-radius:var(--control-radius);
+}
+.vod-zoom-close:focus-visible,#vodLink:focus-visible{outline:2px solid #b3adff;outline-offset:2px;}
+#vodPreviewImg.vod-preview-flight{position:fixed;z-index:106;pointer-events:none;transform-origin:top left;}
+@media (min-width:901px){
+  header{max-height:calc(100dvh - 48px);overflow:auto;}
+  .panel-top{display:flex;flex-direction:column;gap:var(--control-gap);}
+  .panel-top .meta{order:-1;height:auto;}
+  .vod-title{display:block;overflow:visible;-webkit-line-clamp:unset;overflow-wrap:anywhere;}
+  .vod-card{margin-bottom:0;}
+}
 .mobile-control-row{display:none;}
 @media(max-width:900px){
   header,header.is-compact{padding:8px 24px;gap:0;touch-action:auto;will-change:auto;box-shadow:none;transition:none;}
   .mobile-control-row{display:flex;gap:var(--control-gap);align-items:center;min-width:0;}
   .controls,.meta-buttons{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--control-gap);}
-  header.has-storyboard .meta-buttons{grid-template-columns:repeat(3,minmax(0,1fr));}
-  header.has-storyboard .meta-buttons button{padding-inline:4px;white-space:nowrap;}
-  .meta-buttons .storyboard-toggle:not([hidden]){display:flex;}
+  .meta-buttons:has(#vodLink:not([hidden])){grid-template-columns:repeat(3,minmax(0,1fr));}
+  .meta-buttons button{padding-inline:4px;white-space:nowrap;}
+
   .controls #q{grid-column:1;grid-row:auto;}
   .controls #u{grid-column:2;grid-row:auto;}
   .controls input,.meta-buttons button{height:var(--control-h);min-height:var(--control-h);width:100%;min-width:0;box-sizing:border-box;}
   .panel-details{display:block;order:0;height:0;opacity:0;overflow:hidden;}
   header.is-expanded:not(.is-panel-animating) .panel-details{overflow:visible;}
-  header.has-storyboard .panel-details{max-height:var(--storyboard-panel-limit,none);}
+  header.has-vod-image .panel-details{max-height:var(--storyboard-panel-limit,none);}
   header.storyboard-panel-limited.is-expanded:not(.is-panel-animating) .panel-details{overflow:auto;}
   header.is-storyboard.is-expanded:not(.is-panel-animating) .panel-details{overflow:hidden;margin-inline:-16px;}
   .storyboard-panel:not([hidden]){display:grid;place-items:center;height:100%;}
-  .storyboard-panel img{
+  .storyboard-panel .vod-zoom-media{
     display:block;object-fit:contain;
     background:var(--panel);border:1px solid var(--border);border-radius:var(--control-radius);
   }
-  .storyboard-panel img[hidden]{display:none;}
+
   .panel-details-content{display:flex;flex-direction:column;gap:var(--control-gap);padding-bottom:8px;}
   /* One measured destination per transition; no per-frame DOM/anchor scans. */
   header.is-panel-animating .panel-details{transition:height 270ms cubic-bezier(.2,0,.2,1),opacity 270ms ease-out;}
   #list.panel-shifting{transition:padding-top 270ms cubic-bezier(.2,0,.2,1);}
-  header.is-expanded .panel-stats,header.has-storyboard .panel-stats{display:flex;flex-wrap:wrap;justify-content:flex-start;gap:6px 16px;}
-  header.is-expanded #mobileChannel,header.has-storyboard #mobileChannel{display:inline-flex;flex-basis:100%;}
-  header.is-expanded .panel-stats > .pill:not(.panel-stats-channel),header.has-storyboard .panel-stats > .pill:not(.panel-stats-channel){white-space:nowrap;overflow:visible;overflow-wrap:normal;}
-  header.is-expanded #stat,header.has-storyboard #stat{max-width:100%;margin-left:auto;text-align:right;}
+  header.is-expanded .panel-stats,header.has-vod-image .panel-stats{display:flex;flex-wrap:wrap;justify-content:flex-start;gap:6px 16px;}
+  header.is-expanded #mobileChannel,header.has-vod-image #mobileChannel{display:inline-flex;flex-basis:100%;}
+  header.is-expanded .panel-stats > .pill:not(.panel-stats-channel),header.has-vod-image .panel-stats > .pill:not(.panel-stats-channel){white-space:nowrap;overflow:visible;overflow-wrap:normal;}
+  header.is-expanded #stat,header.has-vod-image #stat{max-width:100%;margin-left:auto;text-align:right;}
   .panel-stats .pill,#streamDate{display:inline-flex;align-items:center;gap:6px;}
   .panel-stats .meta-symbol{display:inline-flex;align-items:center;justify-content:center;flex:none;width:18px;}
   .panel-stats .meta-value{white-space:nowrap;}
@@ -963,8 +942,8 @@ html{overflow-anchor:none;}
   .fast-scrubber.is-held .scrub-thumb{border-color:#c3c6d5;}
   .panel-toggle{display:flex;align-items:center;justify-content:center;flex:0 0 var(--control-h);width:var(--control-h);height:var(--control-h);padding:0;margin:0;border:1px solid var(--border);border-radius:var(--control-radius);background:var(--panel);box-shadow:none;color:var(--text);touch-action:manipulation;cursor:pointer;transition:background-color .12s ease;}
   .panel-toggle[aria-expanded="true"] .panel-chevron{transform:rotate(180deg);}
-  .panel-toggle .panel-menu,header.is-storyboard .panel-toggle .panel-chevron{display:none;}
-  header.is-storyboard .panel-toggle .panel-menu{display:block;}
+  .panel-toggle .panel-exit,header.is-storyboard .panel-toggle .panel-chevron{display:none;}
+  header.is-storyboard .panel-toggle .panel-exit{display:block;}
   .panel-toggle:active{background:#30303b;border-color:#626575;}
   .panel-toggle:focus-visible{outline:2px solid #b3adff;outline-offset:0;border-color:transparent;}
   #list{
@@ -994,12 +973,9 @@ html{overflow-anchor:none;}
     <header>
       <div class="panel-details" id="panelDetails"><div class="panel-details-content">
       <div class="panel-top">
-        <div class="vod-card" id="vodCard" tabindex="0" role="button" aria-label="Открыть VOD">
-          <div class="vod-card-media">
-            <img id="vodPreviewImg" alt="" loading="eager" decoding="async" />
-            <div class="vod-card-shade"></div>
-          </div>
-        </div>
+        <button class="vod-card" id="vodCard" type="button" aria-label="Увеличить превью VOD" aria-expanded="false" hidden>
+          <span class="vod-card-media"><img id="vodPreviewImg" alt="" decoding="async" /></span>
+        </button>
 
         <div class="meta">
           <div class="vod-heading">
@@ -1029,13 +1005,13 @@ html{overflow-anchor:none;}
   <div class="meta-buttons">
     <button id="exportBtn" class="button-toggle is-active">📸 Снимок</button>
     <button id="toggleTime" class="toggle-button is-active" aria-pressed="true">⏱️ Время</button>
-    <button id="storyboardToggle" class="storyboard-toggle is-active" type="button" hidden>🎞️ Превью</button>
+    <button id="vodLink" class="is-active" type="button" aria-label="🔗 Ссылка на VOD" hidden>🔗 Ссылка</button>
   </div>
 </div>
       <div id="liveCaptureWarning" class="live-capture-warning" role="note" hidden></div>
       </div>
       <div class="storyboard-panel" id="storyboardPanel" hidden>
-        <img id="storyboardFrame" alt="" decoding="async" hidden />
+        <div class="vod-zoom-media" id="mobilePreviewMedia"></div>
       </div></div>
       <div class="mobile-control-row">
       <div id="fastScrubber" class="fast-scrubber" role="slider" tabindex="0" aria-label="Позиция в чате" aria-orientation="horizontal" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="Нет сообщений" aria-disabled="true">
@@ -1047,11 +1023,16 @@ html{overflow-anchor:none;}
       </div>
       <button class="panel-toggle" type="button" aria-label="Развернуть панель" aria-expanded="false" aria-controls="panelDetails">
         <svg class="panel-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6"/></svg>
-        <svg class="panel-menu" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        <svg class="panel-exit" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="M4 9h5V4m11 5h-5V4M4 15h5v5m11-5h-5v5"/></svg>
       </button>
       </div>
-      <div class="desktop-storyboard" id="desktopStoryboard" hidden><img alt="" decoding="async" /></div>
     </header>
+    <div class="vod-zoom" id="desktopPreview" role="region" aria-label="Увеличенное превью VOD" hidden>
+      <div class="vod-zoom-media"></div>
+      <button class="vod-zoom-close" type="button" aria-label="Свернуть превью">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 9h5V4m11 5h-5V4M4 15h5v5m11-5h-5v5"/></svg>
+      </button>
+    </div>
 
     <div id="list"></div>
 
@@ -1124,17 +1105,15 @@ const elExportBtn=document.getElementById("exportBtn");
 const MOBILE_MQ = window.matchMedia("(max-width: 900px)");
 const elHeader=document.querySelector("header");
 const storyboardFrames=Array.isArray(DATA.vod_preview?.frames) ? DATA.vod_preview.frames : [];
-const elStoryboardToggle=document.getElementById('storyboardToggle');
+const embeddedCover=embeddedJpeg(DATA.vod_preview?.cover);
+const hasVodImage=!!(storyboardFrames.length || embeddedCover);
 const elStoryboardPanel=document.getElementById('storyboardPanel');
-const elStoryboardFrame=document.getElementById('storyboardFrame');
+const elMobilePreviewMedia=document.getElementById('mobilePreviewMedia');
 let storyboardMode=false;
-if(storyboardFrames.length){
-  elHeader.classList.add('has-storyboard');
-  elStoryboardToggle.hidden=false;
-}
+if(hasVodImage) elHeader.classList.add('has-vod-image');
 const elScrubber=document.getElementById("fastScrubber");
 const elPanelHandle=document.querySelector(".panel-toggle");
-let onPanelLayout=()=>()=>{};
+let onPanelLayout=()=>()=>{}, refreshPreviewFrame=()=>{};
 const elPanelDetails=document.getElementById("panelDetails");
 const elPanelContent=elPanelDetails.firstElementChild;
 let panelAnimating=false,panelCleanup=()=>{};
@@ -1168,6 +1147,11 @@ function updateMainTimeButton(){
 
 function fitVodTitle(){
   if(!elTitle || elPanelContent.hidden) return;
+  if(!MOBILE_MQ.matches){
+    elTitle.style.removeProperty('font-size');
+    elTitle.classList.remove('is-truncated');
+    return;
+  }
   const maxLines = 3;
   const minFont = 12;
   const maxFont = 15;
@@ -1218,7 +1202,7 @@ function syncPanelState(expanded, animate=true){
   elPanelDetails.inert=mobile && !PANEL_EXPANDED;
   elPanelDetails.setAttribute('aria-hidden',String(mobile && !PANEL_EXPANDED));
   const insetBase=mobile ? viewportInset()-current : 0;
-  const limit=mobile && storyboardFrames.length ? setStoryboardPanelLimit(insetBase) : Infinity;
+  const limit=mobile && hasVodImage ? setStoryboardPanelLimit(insetBase) : Infinity;
   const natural=mobile && PANEL_EXPANDED ? elPanelContent.getBoundingClientRect().height : 0;
   const target=Math.min(natural,limit);
   elHeader.classList.toggle('storyboard-panel-limited',natural>limit);
@@ -1234,6 +1218,7 @@ function syncPanelState(expanded, animate=true){
     elList.classList.remove('panel-shifting');
     elHeader.classList.toggle('is-expanded',PANEL_EXPANDED);
     elHeader.classList.toggle('is-compact',!PANEL_EXPANDED);
+    refreshPreviewFrame();
     if(mobile) elPanelDetails.style.height=PANEL_EXPANDED ? 'auto' : '0px';
     updatePanelGeometry();
     if(scrolling) window.scrollTo(0,previousY+targetPadding-reserved);
@@ -1276,23 +1261,18 @@ new ResizeObserver(()=>{if(!panelAnimating) updatePanelGeometry();}).observe(elH
 function reconcilePanelMode(){
   const mobile=MOBILE_MQ.matches;
   const expanded=mobile!==panelMobile ? !mobile : PANEL_EXPANDED;
+  if(hasVodImage && mobile!==panelMobile) closeVodPreview(false,false);
   panelMobile=mobile;
-  if(storyboardMode){
-    if(mobile){resizeStoryboardPanel();return;}
-    leaveStoryboard();
-  }
+  if(storyboardMode){resizeStoryboardPanel();return;}
   syncPanelState(expanded,false);
 }
 MOBILE_MQ.addEventListener('change',reconcilePanelMode);
 window.addEventListener('resize',()=>{requestAnimationFrame(fitVodTitle);reconcilePanelMode();});
 elPanelHandle.addEventListener('click',e=>{
   e.stopPropagation();
-  if(storyboardMode){leaveStoryboard();elStoryboardToggle.focus({preventScroll:true});}
+  if(storyboardMode) closeVodPreview();
   else syncPanelState(!PANEL_EXPANDED,true);
 });
-let vodOverlay = null;
-let vodOverlayToken = 0;
-
 function safeVodUrl(value){
   if(typeof value !== "string" || value.length > 2048) return "";
   try{
@@ -1302,154 +1282,23 @@ function safeVodUrl(value){
     return url.href;
   }catch(e){ return ""; }
 }
-const livePreview = meta.captured_during_live === true;
-const vodLink = safeVodUrl(meta.vod_url);
-// Trusted build-time constants, never data URIs supplied by Twitch metadata.
-const fallbackPreview = livePreview ? "{{LIVE_FALLBACK_PNG}}" : "{{VOD_FALLBACK_PNG}}";
-function safeThumbnail(value){
-  if(typeof value!=="string" || value.length>1024) return "";
-  value=value.replace(/%?\{width\}/g,"720").replace(/%?\{height\}/g,"405");
-  try{
-    const u=new URL(value);
-    if(u.protocol!=="https:" || u.host!=="static-cdn.jtvnw.net" || u.username || u.password
-       || u.search || u.hash || !/^\/cf_vods\/[A-Za-z0-9_./-]+\.(?:jpe?g|png)$/.test(u.pathname)
-       || value.includes("..") || value.includes("\\")) return "";
-    return u.href;
-  }catch(e){return "";}
-}
 function embeddedJpeg(value){
   return typeof value==='string' && /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(value) ? value : '';
 }
-const embeddedCover=embeddedJpeg(DATA.vod_preview?.cover);
-const safePreview = embeddedCover || safeThumbnail(meta.thumbnail_preview_url);
-const safeFull = embeddedCover || safeThumbnail(meta.thumbnail_full_url);
-
-function openVodOverlay(){
-  if(livePreview && !vodLink) return;
-
-  const token = ++vodOverlayToken;
-  if(vodOverlay){
-    vodOverlay.remove();
-  }
-
-  const overlay = document.createElement("div");
-  overlay.className = "snapshot-overlay";
-  vodOverlay = overlay;
-
-  const panel = document.createElement("div");
-  panel.className = "snapshot-panel vod-preview-panel" + (livePreview ? " vod-live-panel" : "");
-  if(livePreview){
-    panel.setAttribute("role", "dialog");
-    panel.setAttribute("aria-modal", "true");
-    panel.setAttribute("aria-label", "Открыть VOD");
-  }
-
-  // ПРЕВЬЮ
-  const preview = livePreview ? null : document.createElement("img");
-  if(preview){ preview.className = "snapshot-preview"; preview.alt = ""; }
-  if(!livePreview) panel.appendChild(preview);
-
-  // ЛОАДЕР
-  const loader = document.createElement("div");
-  loader.className = "snapshot-loader";
-  if(!livePreview) panel.appendChild(loader);
-
-  // ACTIONS
-  const actions = document.createElement("div");
-  actions.className = "snapshot-actions";
-
-  const linkBtn = document.createElement("button");
-  linkBtn.className = "snapshot-toggle is-active";
-
-  linkBtn.textContent = "🔗 Ссылка на VOD";
-
-  linkBtn.addEventListener("click", (e)=>{
-    e.stopPropagation();
-    if(vodLink){
-      window.open(vodLink,"_blank", "noopener,noreferrer");
-    }
-  });
-
-  if(vodLink) actions.appendChild(linkBtn);
-  panel.appendChild(actions);
-  overlay.appendChild(panel);
-
-  function closeOverlay(){
-    overlay.remove();
-    if(vodOverlay === overlay){
-      vodOverlay = null;
-      vodOverlayToken++;
-    }
-    document.body.style.overflow = "";
-    if(livePreview) elVodCard.focus();
-  }
-  overlay.addEventListener("click", closeOverlay);
-  if(livePreview){
-    const closeBtn = document.createElement("button");
-    closeBtn.className = "snapshot-toggle";
-    closeBtn.textContent = "Закрыть";
-    closeBtn.addEventListener("click", closeOverlay);
-    panel.appendChild(closeBtn);
-    overlay.addEventListener("keydown", (e)=>{
-      if(e.key === "Escape"){ e.preventDefault(); closeOverlay(); }
-      if(e.key === "Tab"){
-        e.preventDefault();
-        (document.activeElement === linkBtn ? closeBtn : linkBtn).focus();
-      }
-    });
-  }
-
-  panel.addEventListener("click", (e)=>e.stopPropagation());
-
-  document.body.style.overflow = "hidden";
-  document.body.appendChild(overlay);
-
-  if(livePreview){
-    actions.classList.add("is-ready");
-    linkBtn.focus();
-    return;
-  }
-
-  // ЗАГРУЗКА КАРТИНКИ
-  const full = new Image();
-  full.onload = ()=>{
-    if(token !== vodOverlayToken || vodOverlay !== overlay || !overlay.isConnected) return;
-    preview.src = full.src;
-    loader.remove();
-    actions.classList.add("is-ready");
-  };
-  full.onerror = ()=>{
-    if(token !== vodOverlayToken || vodOverlay !== overlay || !overlay.isConnected) return;
-    preview.src = fallbackPreview;
-    loader.remove();
-    actions.classList.add("is-ready");
-  };
-  full.src = safeFull || safePreview || fallbackPreview;
+const vodLink=safeVodUrl(meta.vod_url);
+const elVodLink=document.getElementById('vodLink');
+if(vodLink){
+  elVodLink.hidden=false;
+  elVodLink.addEventListener('click',()=>window.open(vodLink,'_blank','noopener,noreferrer'));
 }
-
-elVodCard.addEventListener("click", openVodOverlay);
-elVodCard.addEventListener("keydown", (e)=>{
-  if(e.key === "Enter" || e.key === " "){ e.preventDefault(); openVodOverlay(); }
-});
-if(livePreview && !vodLink){
-  elVodCard.setAttribute("aria-disabled", "true");
-  elVodCard.tabIndex = -1;
+if(hasVodImage){
+  elVodCard.hidden=false;
+  elVodCard.closest('.panel-top').classList.add('has-vod-image');
+  if(embeddedCover) elVodPreviewImg.src=embeddedCover;
 }
-
-const previewUrl = safePreview || safeFull || fallbackPreview;
-elVodPreviewImg.style.display = "block";
-elVodPreviewImg.addEventListener("error", ()=>{
-  // One fallback assignment only, even if the browser cannot decode the resource.
-  elVodPreviewImg.src = fallbackPreview;
-}, {once:true});
-elVodPreviewImg.src = previewUrl;
 
 requestAnimationFrame(fitVodTitle);
-window.addEventListener("resize", ()=>requestAnimationFrame(fitVodTitle));
-if(elVodHeading && "ResizeObserver" in window){
-  const ro = new ResizeObserver(()=>requestAnimationFrame(fitVodTitle));
-  ro.observe(elVodHeading);
-}
+if(elVodHeading) new ResizeObserver(()=>requestAnimationFrame(fitVodTitle)).observe(elVodHeading);
 
 function fmtStreamStart(iso){
   if(typeof iso !== "string") return null;
@@ -2458,8 +2307,7 @@ let scrubIndex=0, scrubGesture=null, scrubPending=null, scrubRunning=false, scru
 let scrubRevision=0, scrubFrame=0, scrubSyncFrame=0;
 
 const STORYBOARD_REFRESH_MS=125;
-let storyboardTimer=0,storyboardIdle=0,storyboardTime,shownStoryFrame;
-let storyboardScrollTop=0,storyboardFrameFits=false;
+let storyboardScrollTop=0;
 function nearestStoryFrame(frames,seconds){
   let left=0,right=frames.length-1;
   while(left<right){
@@ -2488,18 +2336,16 @@ function sizeStoryboardFrame(){
   const right=Math.min(rect.right,(viewport?.offsetLeft ?? 0)+(viewport?.width ?? innerWidth)-margin);
   const top=Math.max(rect.top,(viewport?.offsetTop ?? 0)+margin);
   const bottom=Math.min(rect.bottom-6,(viewport?.offsetTop ?? 0)+(viewport?.height ?? innerHeight)-margin);
-  const [sourceWidth,sourceHeight]=DATA.vod_preview.aspect || [16,9];
-  const ratio=sourceWidth/sourceHeight;
+  const ratio=previewRatio;
   const width=Math.floor(Math.min(right-left,(bottom-top)*ratio));
-  storyboardFrameFits=Number.isFinite(width) && width>=96;
-  elStoryboardFrame.hidden=!storyboardFrameFits || !shownStoryFrame;
-  if(!storyboardFrameFits) return;
+  elMobilePreviewMedia.hidden=!(width>0);
+  if(!(width>0)) return;
   elStoryboardPanel.style.paddingInlineStart=(left-rect.left)+'px';
   elStoryboardPanel.style.paddingInlineEnd=(rect.right-right)+'px';
   elStoryboardPanel.style.paddingBlockStart=(top-rect.top)+'px';
   elStoryboardPanel.style.paddingBlockEnd=(rect.bottom-bottom)+'px';
-  elStoryboardFrame.style.width=width+'px';
-  elStoryboardFrame.style.height=Math.floor(width/ratio)+'px';
+  elMobilePreviewMedia.style.width=width+'px';
+  elMobilePreviewMedia.style.height=Math.floor(width/ratio)+'px';
 }
 function resizeStoryboardPanel(){
   const settle=onPanelLayout();
@@ -2512,62 +2358,19 @@ function resizeStoryboardPanel(){
   elPanelDetails.style.height=height+'px';
   setStoryboardLayout(true);
   sizeStoryboardFrame();
-  if(storyboardFrameFits && !storyboardTimer && !storyboardIdle) paintStoryboardFrame();
   updatePanelGeometry();
   settle();
 }
-function paintStoryboardFrame(){
-  if(!storyboardMode || !storyboardFrameFits) return;
-  const seconds=storyboardTime==='—' ? NaN : storyboardTime.split(':').reduce((total,part)=>60*total+Number(part),0);
-  if(!Number.isFinite(seconds) || seconds>meta.duration_seconds){
-    shownStoryFrame=undefined;
-    elStoryboardFrame.hidden=true;
-    return;
-  }
-  const frame=nearestStoryFrame(storyboardFrames,seconds);
-  if(frame!==shownStoryFrame){
-    const src=embeddedJpeg(frame?.[1]);
-    if(!src){shownStoryFrame=undefined;elStoryboardFrame.hidden=true;return;}
-    shownStoryFrame=frame;
-    if(elStoryboardFrame.getAttribute('src')!==src) elStoryboardFrame.src=src;
-  }
-  elStoryboardFrame.hidden=!storyboardFrameFits;
-}
-function queueStoryboardFrame(time){
-  if(time===storyboardTime) return;
-  storyboardTime=time;
-  if(storyboardTimer || storyboardIdle) return;
-  storyboardTimer=setTimeout(()=>{
-    storyboardTimer=0;
-    if(!storyboardMode) return;
-    if(window.requestIdleCallback){
-      storyboardIdle=window.requestIdleCallback(()=>{
-        storyboardIdle=0;
-        paintStoryboardFrame();
-      },{timeout:125});
-    }else paintStoryboardFrame();
-  },STORYBOARD_REFRESH_MS);
-}
 function enterStoryboard(){
-  if(!MOBILE_MQ.matches || !PANEL_EXPANDED || panelAnimating || !storyboardFrames.length) return;
   elPanelDetails.style.height=elPanelDetails.getBoundingClientRect().height+'px';
   storyboardScrollTop=elPanelDetails.scrollTop;
   storyboardMode=true;
   setStoryboardLayout(true);
   elPanelDetails.scrollTop=0;
   sizeStoryboardFrame();
-  storyboardTime=rowCount() ? scrubTime(rowAt(scrubIndex).t) : '00:00:00';
-  paintStoryboardFrame();
-  elPanelHandle.focus({preventScroll:true});
 }
 function leaveStoryboard(){
   storyboardMode=false;
-  clearTimeout(storyboardTimer);
-  if(storyboardIdle) window.cancelIdleCallback(storyboardIdle);
-  storyboardTimer=storyboardIdle=0;
-  storyboardTime=shownStoryFrame=undefined;
-  elStoryboardFrame.removeAttribute('src');
-  elStoryboardFrame.hidden=true;
   setStoryboardLayout(false);
   elPanelDetails.style.height='auto';
   elPanelDetails.scrollTop=storyboardScrollTop;
@@ -2605,7 +2408,6 @@ function setScrubIndex(index){
   const atEnd=!scrubGesture && !scrubRunning && !FILTERING && physicalChatEnd();
   const percent=atEnd ? 100 : scrubPercent(scrubIndex,count),duration=durationTime(meta.duration_seconds);
   let time=count ? scrubTime(rowAt(scrubIndex).t) : '—';
-  if(storyboardMode) queueStoryboardFrame(time);
   if(atEnd && duration!=='—') time=duration;
   const label=time+' / '+duration;
   elScrubber.style.setProperty('--scrub-progress',percent.toFixed(4)+'%');
@@ -2740,19 +2542,6 @@ for(const type of ['touchend','touchcancel']) elScrubber.addEventListener(type,e
   const moved=scrubGesture.moved;scrubGesture=null;elScrubber.classList.remove('is-held');if(moved) requestScrub(scrubIndex);scheduleScrubSync();
 });
 MOBILE_MQ.addEventListener('change',()=>{resetScrubber();scheduleScrubSync();});
-if(typeof storyboardFrames!=='undefined' && storyboardFrames.length){
-  elStoryboardToggle.addEventListener('click',enterStoryboard);
-  window.visualViewport?.addEventListener('resize',()=>{
-    if(MOBILE_MQ.matches) reconcilePanelMode();
-  });
-  window.visualViewport?.addEventListener('scroll',()=>{
-    if(!storyboardMode) return;
-    const wasVisible=storyboardFrameFits;
-    sizeStoryboardFrame();
-    if(!wasVisible && storyboardFrameFits && !storyboardTimer && !storyboardIdle) paintStoryboardFrame();
-  });
-}
-
 /* Selection endpoints belong to logical rows, not ephemeral DOM nodes. A native
    range is projected onto its visible intersection; PNG uses the full range. */
 function selectionPoint(node,offset){
@@ -3115,15 +2904,93 @@ elExportBtn.addEventListener("pointerup", async (e)=>{
   openSnapshotOverlay(rowsToClone);
 });
 
-function setupDesktopStoryboard(){
-  const desktopLayout=window.matchMedia('(min-width: 901px)');
-  const panel=document.getElementById('desktopStoryboard'),image=panel.firstElementChild;
-  const [width,height]=Array.isArray(DATA.vod_preview.aspect) ? DATA.vod_preview.aspect : [];
-  panel.style.aspectRatio=width>0 && height>0 ? width+' / '+height : '16 / 9';
+const elDesktopPreview=document.getElementById('desktopPreview');
+const elPreviewClose=elDesktopPreview.querySelector('button');
+const elPreviewHome=elVodPreviewImg.parentElement;
+const [frameWidth,frameHeight]=storyboardFrames.length && Array.isArray(DATA.vod_preview.aspect)
+  ? DATA.vod_preview.aspect : [];
+const previewRatio=frameWidth>0 && frameHeight>0 ? frameWidth/frameHeight : 16/9;
+const reducedPreviewMotion=window.matchMedia('(prefers-reduced-motion: reduce)');
+let previewOpened=false,finishPreviewFlight=null;
 
-  let listeners, timer=0, idle=0, lastUpdate=-Infinity, shownFrame;
+function movePreview(target,from){
+  target.appendChild(elVodPreviewImg);
+  if(!from || reducedPreviewMotion.matches || !elVodPreviewImg.animate) return;
+  const to=elVodPreviewImg.getBoundingClientRect();
+  if(!from.width || !from.height || !to.width || !to.height) return;
+  const image=elVodPreviewImg;
+  document.body.appendChild(image);
+  image.classList.add('vod-preview-flight');
+  for(const prop of ['left','top','width','height']) image.style[prop]=to[prop]+'px';
+  const start='translate('+(from.left-to.left)+'px,'+(from.top-to.top)+'px) scale('
+    +from.width/to.width+','+from.height/to.height+')';
+  const flight=image.animate([{transform:start,opacity:.92},{transform:'none',opacity:1}],
+    {duration:250,easing:'cubic-bezier(.2,.7,.2,1)'});
+  finishPreviewFlight=()=>{
+    finishPreviewFlight=null;
+    flight.cancel();
+    for(const prop of ['left','top','width','height']) image.style.removeProperty(prop);
+    image.classList.remove('vod-preview-flight');
+    target.appendChild(image);
+    refreshPreviewFrame();
+  };
+  flight.onfinish=finishPreviewFlight;
+}
+
+function closeVodPreview(animate=true,restoreFocus=true){
+  finishPreviewFlight?.();
+  if(!previewOpened) return;
+  const from=animate ? elVodPreviewImg.getBoundingClientRect() : null;
+  previewOpened=false;
+  if(storyboardMode) leaveStoryboard();
+  elDesktopPreview.hidden=true;
+  elVodCard.setAttribute('aria-expanded','false');
+  movePreview(elPreviewHome,from);
+  if(restoreFocus) elVodCard.focus({preventScroll:true});
+  refreshPreviewFrame();
+}
+
+if(hasVodImage){
+  for(const surface of [elHeader,elDesktopPreview]) surface.style.setProperty('--preview-ratio',previewRatio);
+  elVodCard.addEventListener('click',()=>{
+    if(previewOpened){closeVodPreview();return;}
+    const mobile=MOBILE_MQ.matches;
+    if(!elVodPreviewImg.getAttribute('src') || (mobile && (!PANEL_EXPANDED || panelAnimating))) return;
+    const from=elVodPreviewImg.getBoundingClientRect();
+    previewOpened=true;
+    elVodCard.setAttribute('aria-expanded','true');
+    if(mobile){
+      enterStoryboard();
+      movePreview(elMobilePreviewMedia,from);
+      elPanelHandle.focus({preventScroll:true});
+    }else{
+      elDesktopPreview.hidden=false;
+      movePreview(elDesktopPreview.firstElementChild,from);
+      elPreviewClose.focus({preventScroll:true});
+    }
+    refreshPreviewFrame();
+  });
+  elPreviewClose.addEventListener('click',()=>closeVodPreview());
+  document.addEventListener('keydown',e=>{
+    if(e.key==='Escape' && previewOpened && !contextAnchor && !document.querySelector('.snapshot-overlay')){
+      e.preventDefault();closeVodPreview();
+    }
+  });
+  window.visualViewport?.addEventListener('resize',()=>{
+    if(storyboardMode){finishPreviewFlight?.();resizeStoryboardPanel();}
+  },{passive:true});
+  window.visualViewport?.addEventListener('scroll',()=>{
+    if(storyboardMode){finishPreviewFlight?.();sizeStoryboardFrame();}
+  },{passive:true});
+  window.addEventListener('resize',()=>finishPreviewFlight?.());
+  reducedPreviewMotion.addEventListener('change',()=>finishPreviewFlight?.());
+}
+
+function setupPreviewFrames(){
+  let timer=0,idle=0,lastUpdate=-Infinity,shownFrame,listeners;
   const observer=new MutationObserver(queueFrame);
   function paintFrame(){
+    if(finishPreviewFlight || !listeners || (MOBILE_MQ.matches && !PANEL_EXPANDED)) return;
     lastUpdate=performance.now();
     const anchor=FILTERING ? null : visibleAnchor(0);
     const time=anchor ? scrubTime(rowAt(anchor.id).t) : '—';
@@ -3132,13 +2999,12 @@ function setupDesktopStoryboard(){
       ? nearestStoryFrame(storyboardFrames,seconds) : undefined;
     if(frame===shownFrame) return;
     shownFrame=frame;
-    const src=embeddedJpeg(frame?.[1]);
-    if(!src) image.removeAttribute('src');
-    else if(image.getAttribute('src')!==src) image.src=src;
+    const src=embeddedJpeg(frame?.[1]) || embeddedCover;
+    if(!src) elVodPreviewImg.removeAttribute('src');
+    else if(elVodPreviewImg.getAttribute('src')!==src) elVodPreviewImg.src=src;
   }
   function queueFrame(){
-    if(timer || idle || !listeners) return;
-    // Keep one request for the latest visible rows, outside the scroll handler.
+    if(timer || idle || !listeners || finishPreviewFlight || (MOBILE_MQ.matches && !PANEL_EXPANDED)) return;
     timer=setTimeout(()=>{
       timer=0;
       if(window.requestIdleCallback){
@@ -3147,16 +3013,11 @@ function setupDesktopStoryboard(){
     },Math.max(0,STORYBOARD_REFRESH_MS-(performance.now()-lastUpdate)));
   }
   function sync(){
-    const desktop=desktopLayout.matches;
-    panel.hidden=!desktop;
-    elHeader.classList.toggle('has-desktop-storyboard',desktop);
-    if(!desktop || document.hidden){
+    if(document.hidden){
       listeners?.abort();listeners=undefined;
-      observer.disconnect();
-      clearTimeout(timer);
+      observer.disconnect();clearTimeout(timer);
       if(idle) window.cancelIdleCallback(idle);
       timer=idle=0;
-      if(!desktop){image.removeAttribute('src');shownFrame=undefined;}
       return;
     }
     if(!listeners){
@@ -3168,12 +3029,11 @@ function setupDesktopStoryboard(){
     }
     queueFrame();
   }
-  desktopLayout.addEventListener('change',sync);
+  refreshPreviewFrame=queueFrame;
   document.addEventListener('visibilitychange',sync);
   sync();
 }
-
-if(storyboardFrames.length) setupDesktopStoryboard();
+if(storyboardFrames.length) setupPreviewFrames();
 applyFilters();
 </script>
 

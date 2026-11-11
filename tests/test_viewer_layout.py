@@ -115,13 +115,8 @@ class ViewerPreviewLayoutTests(unittest.TestCase):
             self.assertEqual(('nowrap', 'hidden', 'ellipsis'),
                              (pill['white-space'], pill['overflow'], pill['text-overflow']))
 
-    def test_vod_action_width_override_is_scoped_away_from_png_snapshots(self):
-        self.assertEqual('var(--controls-w)', self.properties('.snapshot-actions')['max-width'])
-        action = self.properties('.vod-preview-panel .snapshot-actions')
-        self.assertEqual(('0', '100%', 'none'), (action['width'], action['min-width'], action['max-width']))
-
     @unittest.skipUnless(shutil.which('node'), 'Node.js required for overlay behavior tests')
-    def test_vod_overlay_javascript(self):
+    def test_vod_link_and_embedded_image_javascript(self):
         result = subprocess.run([shutil.which('node'), '--test', str(Path(__file__).with_name('test_vod_preview.js'))],
                                 capture_output=True, text=True, encoding='utf-8', timeout=30)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
@@ -139,12 +134,12 @@ class ViewerPreviewLayoutTests(unittest.TestCase):
         self.assertIn('vod-card-media', parents[-1][1].get('class', '').split())
         self.assertIn('panel-top', self.page.parents['vodCard'][-1][1].get('class', '').split())
         self.assertEqual('hidden', self.properties('.vod-card').get('overflow'))
-        self.assertEqual('16/9', re.sub(r'\s+', '', self.properties('.vod-card-media')['aspect-ratio']))
-        image = self.properties('.vod-card-media img')
+        self.assertEqual('var(--preview-ratio,16/9)', re.sub(r'\s+', '', self.properties('.vod-card-media')['aspect-ratio']))
+        image = self.properties('#vodPreviewImg')
         self.assertEqual('block', image.get('display'))
         self.assertEqual('100%', image.get('width'))
         self.assertEqual('100%', image.get('height'))
-        self.assertEqual('cover', image.get('object-fit'))
+        self.assertEqual('contain', image.get('object-fit'))
 
     def test_mobile_compact_panel_uses_a_clipped_measured_section(self):
         self.assertEqual('hidden',self.properties('.panel-details')['overflow'])
