@@ -293,6 +293,10 @@ header{
 [data-chat-context]:focus-visible{outline:2px solid #b3adff;outline-offset:2px;}
 .chat-match{background:#ffdc82;color:#20212b;}
 .chat-link{color:#b3adff;text-decoration:underline;overflow-wrap:anywhere;}
+.scrub-preview{
+  position:fixed;z-index:100;pointer-events:none;object-fit:contain;
+  background:var(--panel);border:1px solid var(--border);border-radius:var(--control-radius);
+}
 img.chat-match{outline:2px solid #ffdc82;outline-offset:-2px;}
 .button-toggle.active{
   background:var(--panel);
@@ -1257,8 +1261,12 @@ function safeThumbnail(value){
     return u.href;
   }catch(e){return "";}
 }
-const safePreview = safeThumbnail(meta.thumbnail_preview_url);
-const safeFull = safeThumbnail(meta.thumbnail_full_url);
+function embeddedJpeg(value){
+  return typeof value==='string' && /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(value) ? value : '';
+}
+const embeddedCover=embeddedJpeg(DATA.vod_preview?.cover);
+const safePreview = embeddedCover || safeThumbnail(meta.thumbnail_preview_url);
+const safeFull = embeddedCover || safeThumbnail(meta.thumbnail_full_url);
 
 function openVodOverlay(){
   if(livePreview && !vodLink) return;
@@ -2392,6 +2400,62 @@ elToggleTime.addEventListener('click',async e=>{
 /* Logical-index mobile navigation. At most one builder and one pending target. */
 let scrubIndex=0, scrubGesture=null, scrubPending=null, scrubRunning=false, scrubSettled=null;
 let scrubRevision=0, scrubFrame=0, scrubSyncFrame=0;
+let scrubPreview=null,scrubPreviewFrame=0;
+function nearestStoryFrame(frames,seconds){
+  let left=0,right=frames.length-1;
+  while(left<right){
+    const middle=Math.floor((left+right)/2);
+    if(frames[middle][0]<seconds) left=middle+1;
+    else right=middle;
+  }
+  return left && seconds-frames[left-1][0]<=frames[left][0]-seconds ? frames[left-1] : frames[left];
+}
+function scheduleScrubPreview(){
+  if(typeof DATA==='undefined' || !DATA.vod_preview?.frames?.length) return;
+  if(!scrubGesture){
+    if(scrubPreview){scrubPreview.remove();scrubPreview=null;}
+    return;
+  }
+  if(scrubPreviewFrame) return;
+  scrubPreviewFrame=requestAnimationFrame(()=>{
+    scrubPreviewFrame=0;
+    if(!scrubGesture || !MOBILE_MQ.matches) return;
+    const time=scrubTime(rowAt(scrubIndex).t);
+    if(time==='—'){if(scrubPreview) scrubPreview.hidden=true;return;}
+    const seconds=time.split(':').reduce((total,part)=>60*total+Number(part),0);
+    const frames=DATA.vod_preview.frames;
+    if(!Number.isFinite(seconds) || seconds>meta.duration_seconds){
+      if(scrubPreview) scrubPreview.hidden=true;
+      return;
+    }
+    const frame=nearestStoryFrame(frames,seconds),asset=frame?.[1];
+    const current=scrubPreview?.getAttribute('src');
+    const src=asset===current ? current : embeddedJpeg(asset);
+    if(!src){if(scrubPreview) scrubPreview.hidden=true;return;}
+    const viewport=window.visualViewport,margin=8,gap=6;
+    const left=(viewport?.offsetLeft ?? 0)+margin,top=(viewport?.offsetTop ?? 0)+margin;
+    const right=left+(viewport?.width ?? innerWidth)-2*margin;
+    const bottom=top+(viewport?.height ?? innerHeight)-2*margin;
+    const bar=elScrubber.getBoundingClientRect();
+    const thumb=elScrubber.querySelector('.scrub-thumb').getBoundingClientRect();
+    const expanded=elHeader.classList.contains('is-expanded');
+    const space=expanded ? bar.top-top-gap : bottom-bar.bottom-gap;
+    const width=Math.floor(Math.min(144,right-left,space*16/9));
+    if(width<32){if(scrubPreview) scrubPreview.hidden=true;return;}
+    const height=Math.floor(width*9/16);
+    if(!scrubPreview){
+      scrubPreview=document.createElement('img');
+      scrubPreview.className='scrub-preview';scrubPreview.alt='';
+      scrubPreview.setAttribute('aria-hidden','true');
+      document.body.appendChild(scrubPreview);
+    }
+    const x=clampNumber((thumb.left+thumb.right-width)/2,left,right-width);
+    const y=expanded ? bar.top-gap-height : bar.bottom+gap;
+    Object.assign(scrubPreview.style,{left:x+'px',top:y+'px',width:width+'px',height:height+'px'});
+    if(current!==src) scrubPreview.src=src;
+    scrubPreview.hidden=false;
+  });
+}
 const scrubActive=()=>!!scrubGesture || scrubRunning || scrubPending!==null;
 const scrubPercent=(index,count)=>count>1 ? 100*index/(count-1) : 0;
 const scrubTarget=(fraction,count)=>count>1 ? Math.round(clampNumber(fraction,0,1)*(count-1)) : 0;
@@ -2434,6 +2498,7 @@ function setScrubIndex(index){
   elScrubber.setAttribute('aria-valuenow',String(count>1 ? Math.round(percent) : 0));
   elScrubber.setAttribute('aria-valuetext',label);
   elScrubber.setAttribute('aria-disabled',String(FILTERING || count<2));
+  if(scrubGesture) scheduleScrubPreview();
 }
 function scheduleScrubSync(){
   if(!MOBILE_MQ.matches || scrubSyncFrame) return;
@@ -2458,7 +2523,7 @@ function rememberScrubPosition(){
 }
 function resetScrubber(){
   scrubRevision++;scrubPending=null;scrubSettled=null;elScrubber.classList.remove('is-held');
-  const gesture=scrubGesture;scrubGesture=null;
+  const gesture=scrubGesture;scrubGesture=null;scheduleScrubPreview();
   if(gesture && elScrubber.hasPointerCapture?.(gesture.id)) elScrubber.releasePointerCapture(gesture.id);
   setScrubIndex(0);scheduleScrubSync();
 }
@@ -2517,13 +2582,14 @@ function pointerScrub(x){
 function finishScrub(event){
   if(!scrubGesture || event.pointerId!==scrubGesture.id) return;
   if(event.type==='pointerup') pointerScrub(event.clientX);
-  const gesture=scrubGesture;scrubGesture=null;elScrubber.classList.remove('is-held');
+  const gesture=scrubGesture;scrubGesture=null;elScrubber.classList.remove('is-held');scheduleScrubPreview();
   if(elScrubber.hasPointerCapture(gesture.id)) elScrubber.releasePointerCapture(gesture.id);
   if(gesture.moved) requestScrub(scrubIndex);scheduleScrubSync();
 }
 function beginScrub(x,id){
   scrubGesture={id,x,fraction:scrubPercent(scrubIndex,rowCount())/100};
   elScrubber.classList.add('is-held');
+  scheduleScrubPreview();
 }
 elScrubber.addEventListener('pointerdown',event=>{
   if(!MOBILE_MQ.matches || FILTERING || rowCount()<2 || event.button!==0 || event.isPrimary===false || scrubGesture) return;
@@ -2555,7 +2621,7 @@ elScrubber.addEventListener('touchmove',event=>{
 },{passive:false});
 for(const type of ['touchend','touchcancel']) elScrubber.addEventListener(type,event=>{
   event.stopPropagation();if(scrubGesture?.id!=='touch') return;
-  const moved=scrubGesture.moved;scrubGesture=null;elScrubber.classList.remove('is-held');if(moved) requestScrub(scrubIndex);scheduleScrubSync();
+  const moved=scrubGesture.moved;scrubGesture=null;elScrubber.classList.remove('is-held');scheduleScrubPreview();if(moved) requestScrub(scrubIndex);scheduleScrubSync();
 });
 MOBILE_MQ.addEventListener('change',()=>{resetScrubber();scheduleScrubSync();});
 

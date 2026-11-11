@@ -7,6 +7,7 @@ from src.config import HTML_PUBLISH_MODE
 from src.html_renderer import render_viewer_html, write_viewer_html
 from src.html_publisher import publish_html, publish_html_local, publish_html_stream
 from src.chat_spool import ChatSpool
+from src.twitch_api.storyboard import fetch_preview
 from .worker_io import run_blocking
 from src.resource_usage import stage, measure_stage
 from src.twitch_api import (
@@ -112,6 +113,9 @@ async def build_html_result(
             badge_images.update(await fetch_twitch_channel_badge_map(session, str(meta.channel_id), titles=badge_titles))
             check_cancelled()
 
+    preview_assets = await fetch_preview(session, meta, check_cancelled)
+    check_cancelled()
+
     @measure_stage('analysis_html_publication')
     def render_and_publish():
         targets = set()
@@ -182,6 +186,7 @@ async def build_html_result(
             cdn_emote_sources=cdn_sources,
             global_twitch_emote_ids=sorted(global_ids),
             subscriber_twitch_emote_ids=sorted(used_subscriber_ids),
+            preview_assets=preview_assets,
             captured_during_live=getattr(meta, 'is_live', None) is True,
         )
 

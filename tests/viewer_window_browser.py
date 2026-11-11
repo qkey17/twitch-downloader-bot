@@ -18,6 +18,7 @@ async def run(args):
     controls=getattr(args,'controls',False) or getattr(args,'marker',False)
     notices=getattr(args,'notices',False)
     context=getattr(args,'context',False)
+    storyboard=getattr(args,'storyboard',False)
     baseline=subprocess.check_output(['git','show',args.baseline+':src/viewer_template.html'],cwd=ROOT).decode('utf-8')
     if getattr(args,'marker',False):
         from src.ui.card_images import fallback_data
@@ -31,6 +32,10 @@ async def run(args):
         if context:
             from viewer_context_cases import prepare_context_rows
             prepare_context_rows(rows)
+        if storyboard and not context:
+            for index, row in enumerate(rows):
+                t = index * index // max(1, count - 1)
+                row['t'] = f'{t//3600:02}:{t//60%60:02}:{t%60:02}'
         for mode in ('online','offline'):
             badge_images={'subscriber/1':pixel,'subscriber/2':pixel}
             context_meta={}
@@ -38,7 +43,10 @@ async def run(args):
                 badge_images.update({key:pixel for key in ('event/1','lead_moderator/1','unknown/1')})
                 context_meta=dict(channel_login='FixtureStreamer',badge_titles={'event/1':'Event <Final>'},
                                   global_twitch_emote_ids=['25'], subscriber_twitch_emote_ids=['26'])
-            page=render_viewer_html(rows,'Synthetic title','Synthetic channel','https://www.twitch.tv/videos/123',created_at='2026-10-29T14:28:00Z',mode=mode,local_emotes={'Kappa':pixel},badge_images=badge_images,captured_during_live=True,**context_meta,**(dict(duration_seconds=435088) if args.scrubber or args.panel or controls else {}))
+            if storyboard:
+                from viewer_storyboard_cases import preview_fixture
+                context_meta.update(preview_fixture(count))
+            page=render_viewer_html(rows,'Synthetic title','Synthetic channel','https://www.twitch.tv/videos/123',created_at='2026-10-29T14:28:00Z',mode=mode,local_emotes={'Kappa':pixel},badge_images=badge_images,captured_during_live=not storyboard,**context_meta,**(dict(duration_seconds=435088) if args.scrubber or args.panel or controls else {}))
             new_data=re.search(r'<script id="chat-data" type="application/json">(.*?)</script>',page,re.S).group(1)
             old_data=new_data if args.scrubber or args.panel or controls or context else json.dumps(dict(meta=json.loads(new_data)['meta'],rows=rows),ensure_ascii=False).replace('<','\\u003c')
             for version,html in [('new',page),('base',baseline.replace('{{CHAT_DATA_JSON}}',old_data))]:
@@ -131,6 +139,10 @@ function sample(){
                 if context:
                     from viewer_context_cases import check_context
                     await check_context(call,evaluate,wait,out,args,errors,requests)
+                if storyboard:
+                    from viewer_storyboard_cases import check_storyboard
+                    await check_storyboard(call,evaluate,wait,out,args,errors,requests)
+                if context or storyboard:
                     return
                 if args.images:
                     from viewer_image_cases import check_images
@@ -286,4 +298,5 @@ if __name__=='__main__':
     parser.add_argument('--controls',action='store_true',help='Mobile control row, mode switches and endpoint gestures; no profiling')
     parser.add_argument('--images',action='store_true',help='Focused embedded preview checks only');parser.add_argument('--notices',action='store_true',help='Conservative notice rendering/search/copy/PNG in mixed virtual chat; no profiling')
     parser.add_argument('--context',action='store_true',help='Focused search and context overlay checks')
+    parser.add_argument('--storyboard',action='store_true',help='Offline mobile VOD preview geometry')
     asyncio.run(run(parser.parse_args()),loop_factory=asyncio.SelectorEventLoop)
