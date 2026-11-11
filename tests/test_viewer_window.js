@@ -160,7 +160,7 @@ test('PNG selection keeps only range/indices, decoding one requested row at a ti
 
 function sliderContext(count=10000){
   const events={},frames=[],attributes={},times=[{style:{}},{style:{}}],percents=[{},{}];let mounted=0,activeBuilders=0,maxBuilders=0;
-  const ctx=vm.createContext({count,filtered:null,meta:{duration_seconds:21088},FILTER_TOKEN:0,FILTERING:false,windowBusy:false,panelAnimating:false,CHUNK:800,averageHeight:40,stableAnchor:null,scrollIntent:0,resizeAnchor:null,
+  const ctx=vm.createContext({count,filtered:null,meta:{duration_seconds:21088},FILTER_TOKEN:0,FILTERING:false,windowBusy:false,panelAnimating:false,storyboardMode:false,CHUNK:800,averageHeight:40,stableAnchor:null,scrollIntent:0,resizeAnchor:null,
     MOBILE_MQ:{matches:true,addEventListener(){}},clampNumber:(n,a,b)=>Math.min(b,Math.max(a,n)),
     rowCount:()=>ctx.count,rowAt:i=>({t:ctx.time ?? '01 : 42 : 15'}),
     requestAnimationFrame:fn=>{frames.push(fn);return frames.length},yieldViewer:async()=>{},
@@ -279,7 +279,7 @@ test('endpoint reversal immediately consumes motion in both directions without h
   }
 });
 test('media-query crossings reset mobile compact, while mobile width changes preserve intent',()=>{
-  const ctx=vm.createContext({MOBILE_MQ:{matches:true},panelMobile:true,PANEL_EXPANDED:false,calls:[]});
+  const ctx=vm.createContext({MOBILE_MQ:{matches:true},panelMobile:true,PANEL_EXPANDED:false,storyboardMode:false,calls:[]});
   ctx.syncPanelState=(expanded,animate)=>{ctx.PANEL_EXPANDED=expanded;ctx.calls.push([expanded,animate]);};
   vm.runInContext(part('function reconcilePanelMode()',"MOBILE_MQ.addEventListener('change'"),ctx);
   ctx.reconcilePanelMode();assert.equal(ctx.PANEL_EXPANDED,false);

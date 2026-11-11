@@ -293,10 +293,6 @@ header{
 [data-chat-context]:focus-visible{outline:2px solid #b3adff;outline-offset:2px;}
 .chat-match{background:#ffdc82;color:#20212b;}
 .chat-link{color:#b3adff;text-decoration:underline;overflow-wrap:anywhere;}
-.scrub-preview{
-  position:fixed;z-index:100;pointer-events:none;object-fit:contain;
-  background:var(--panel);border:1px solid var(--border);border-radius:var(--control-radius);
-}
 img.chat-match{outline:2px solid #ffdc82;outline-offset:-2px;}
 .button-toggle.active{
   background:var(--panel);
@@ -890,16 +886,29 @@ html{overflow-anchor:none;}
 
 /* Desktop wrappers are boxless, preserving the original sidebar geometry. */
 .panel-details,.panel-details-content{display:contents;}
+.panel-details-content[hidden],.storyboard-panel[hidden],.meta-buttons .storyboard-toggle{display:none;}
 .mobile-control-row{display:none;}
 @media(max-width:900px){
   header,header.is-compact{padding:8px 24px;gap:0;touch-action:auto;will-change:auto;box-shadow:none;transition:none;}
   .mobile-control-row{display:flex;gap:var(--control-gap);align-items:center;min-width:0;}
   .controls,.meta-buttons{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--control-gap);}
+  header.has-storyboard .meta-buttons{grid-template-columns:repeat(3,minmax(0,1fr));}
+  header.has-storyboard .meta-buttons button{padding-inline:4px;white-space:nowrap;}
+  .meta-buttons .storyboard-toggle:not([hidden]){display:flex;}
   .controls #q{grid-column:1;grid-row:auto;}
   .controls #u{grid-column:2;grid-row:auto;}
   .controls input,.meta-buttons button{height:var(--control-h);min-height:var(--control-h);width:100%;min-width:0;box-sizing:border-box;}
   .panel-details{display:block;order:0;height:0;opacity:0;overflow:hidden;}
   header.is-expanded:not(.is-panel-animating) .panel-details{overflow:visible;}
+  header.has-storyboard .panel-details{max-height:var(--storyboard-panel-limit,none);}
+  header.storyboard-panel-limited.is-expanded:not(.is-panel-animating) .panel-details{overflow:auto;}
+  header.is-storyboard.is-expanded:not(.is-panel-animating) .panel-details{overflow:hidden;margin-inline:-16px;}
+  .storyboard-panel:not([hidden]){display:grid;place-items:center;height:100%;}
+  .storyboard-panel img{
+    display:block;object-fit:contain;
+    background:var(--panel);border:1px solid var(--border);border-radius:var(--control-radius);
+  }
+  .storyboard-panel img[hidden]{display:none;}
   .panel-details-content{display:flex;flex-direction:column;gap:var(--control-gap);padding-bottom:8px;}
   /* One measured destination per transition; no per-frame DOM/anchor scans. */
   header.is-panel-animating .panel-details{transition:height 270ms cubic-bezier(.2,0,.2,1),opacity 270ms ease-out;}
@@ -936,7 +945,9 @@ html{overflow-anchor:none;}
   .scrub-thumb{position:absolute;z-index:1;top:0;height:var(--control-h);left:var(--scrub-center);width:var(--scrub-thumb-width);transform:translateX(-50%);border-radius:9px;border:1px solid #747888;background:#a0a3b7;background-origin:border-box;background-clip:border-box;pointer-events:none;}
   .fast-scrubber.is-held .scrub-thumb{border-color:#c3c6d5;}
   .panel-toggle{display:flex;align-items:center;justify-content:center;flex:0 0 var(--control-h);width:var(--control-h);height:var(--control-h);padding:0;margin:0;border:1px solid var(--border);border-radius:var(--control-radius);background:var(--panel);box-shadow:none;color:var(--text);touch-action:manipulation;cursor:pointer;transition:background-color .12s ease;}
-  .panel-toggle[aria-expanded="true"] svg{transform:rotate(180deg);}
+  .panel-toggle[aria-expanded="true"] .panel-chevron{transform:rotate(180deg);}
+  .panel-toggle .panel-menu,header.is-storyboard .panel-toggle .panel-chevron{display:none;}
+  header.is-storyboard .panel-toggle .panel-menu{display:block;}
   .panel-toggle:active{background:#30303b;border-color:#626575;}
   .panel-toggle:focus-visible{outline:2px solid #b3adff;outline-offset:0;border-color:transparent;}
   #list{
@@ -1001,9 +1012,13 @@ html{overflow-anchor:none;}
   <div class="meta-buttons">
     <button id="exportBtn" class="button-toggle is-active">📸 Снимок</button>
     <button id="toggleTime" class="toggle-button is-active" aria-pressed="true">⏱️ Время</button>
+    <button id="storyboardToggle" class="storyboard-toggle is-active" type="button" hidden>🖼️ Превью</button>
   </div>
 </div>
       <div id="liveCaptureWarning" class="live-capture-warning" role="note" hidden></div>
+      </div>
+      <div class="storyboard-panel" id="storyboardPanel" hidden>
+        <img id="storyboardFrame" alt="" decoding="async" hidden />
       </div></div>
       <div class="mobile-control-row">
       <div id="fastScrubber" class="fast-scrubber" role="slider" tabindex="0" aria-label="Позиция в чате" aria-orientation="horizontal" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="Нет сообщений" aria-disabled="true">
@@ -1013,7 +1028,10 @@ html{overflow-anchor:none;}
         <div class="scrub-label" aria-hidden="true"><span class="scrub-times">— / —</span></div>
         <div class="scrub-thumb"></div>
       </div>
-      <button class="panel-toggle" type="button" aria-label="Развернуть панель" aria-expanded="false" aria-controls="panelDetails"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6"/></svg></button>
+      <button class="panel-toggle" type="button" aria-label="Развернуть панель" aria-expanded="false" aria-controls="panelDetails">
+        <svg class="panel-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6"/></svg>
+        <svg class="panel-menu" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
       </div>
     </header>
 
@@ -1088,8 +1106,14 @@ const elExportBtn=document.getElementById("exportBtn");
 const MOBILE_MQ = window.matchMedia("(max-width: 900px)");
 const elHeader=document.querySelector("header");
 const storyboardFrames=Array.isArray(DATA.vod_preview?.frames) ? DATA.vod_preview.frames : [];
-// Keep the clipped panel content measurable in its expanded layout.
-if(storyboardFrames.length) elHeader.classList.add('has-storyboard');
+const elStoryboardToggle=document.getElementById('storyboardToggle');
+const elStoryboardPanel=document.getElementById('storyboardPanel');
+const elStoryboardFrame=document.getElementById('storyboardFrame');
+let storyboardMode=false;
+if(storyboardFrames.length){
+  elHeader.classList.add('has-storyboard');
+  elStoryboardToggle.hidden=false;
+}
 const elScrubber=document.getElementById("fastScrubber");
 const elPanelHandle=document.querySelector(".panel-toggle");
 let onPanelLayout=()=>()=>{};
@@ -1125,7 +1149,7 @@ function updateMainTimeButton(){
 }
 
 function fitVodTitle(){
-  if(!elTitle) return;
+  if(!elTitle || elPanelContent.hidden) return;
   const maxLines = 3;
   const minFont = 12;
   const maxFont = 15;
@@ -1175,8 +1199,11 @@ function syncPanelState(expanded, animate=true){
   elPanelHandle.setAttribute('aria-label',PANEL_EXPANDED ? 'Свернуть панель' : 'Развернуть панель');
   elPanelDetails.inert=mobile && !PANEL_EXPANDED;
   elPanelDetails.setAttribute('aria-hidden',String(mobile && !PANEL_EXPANDED));
-  const target=mobile && PANEL_EXPANDED ? elPanelContent.getBoundingClientRect().height : 0;
   const insetBase=mobile ? viewportInset()-current : 0;
+  const limit=mobile && storyboardFrames.length ? setStoryboardPanelLimit(insetBase) : Infinity;
+  const natural=mobile && PANEL_EXPANDED ? elPanelContent.getBoundingClientRect().height : 0;
+  const target=Math.min(natural,limit);
+  elHeader.classList.toggle('storyboard-panel-limited',natural>limit);
   const targetPadding=insetBase+target+1;
   panelAnimating=motion && Math.abs(target-current)>.5;
   let follow=()=>{},reserved=currentPadding,scrolling=false;
@@ -1232,11 +1259,19 @@ function reconcilePanelMode(){
   const mobile=MOBILE_MQ.matches;
   const expanded=mobile!==panelMobile ? !mobile : PANEL_EXPANDED;
   panelMobile=mobile;
+  if(storyboardMode){
+    if(mobile){resizeStoryboardPanel();return;}
+    leaveStoryboard();
+  }
   syncPanelState(expanded,false);
 }
 MOBILE_MQ.addEventListener('change',reconcilePanelMode);
 window.addEventListener('resize',()=>{requestAnimationFrame(fitVodTitle);reconcilePanelMode();});
-elPanelHandle.addEventListener('click',e=>{e.stopPropagation();syncPanelState(!PANEL_EXPANDED,true);});
+elPanelHandle.addEventListener('click',e=>{
+  e.stopPropagation();
+  if(storyboardMode){leaveStoryboard();elStoryboardToggle.focus({preventScroll:true});}
+  else syncPanelState(!PANEL_EXPANDED,true);
+});
 let vodOverlay = null;
 let vodOverlayToken = 0;
 
@@ -2403,8 +2438,10 @@ elToggleTime.addEventListener('click',async e=>{
 /* Logical-index mobile navigation. At most one builder and one pending target. */
 let scrubIndex=0, scrubGesture=null, scrubPending=null, scrubRunning=false, scrubSettled=null;
 let scrubRevision=0, scrubFrame=0, scrubSyncFrame=0;
-let scrubPreview=null,scrubPreviewQueued=false,scrubPreviewGeometry;
-let scrubPreviewTime='—',shownStoryFrame=null;
+
+const STORYBOARD_REFRESH_MS=125;
+let storyboardTimer=0,storyboardIdle=0,storyboardTime,shownStoryFrame;
+let storyboardScrollTop=0,storyboardFrameFits=false;
 function nearestStoryFrame(frames,seconds){
   let left=0,right=frames.length-1;
   while(left<right){
@@ -2414,69 +2451,108 @@ function nearestStoryFrame(frames,seconds){
   }
   return left && seconds-frames[left-1][0]<=frames[left][0]-seconds ? frames[left-1] : frames[left];
 }
-function measureScrubPreview(){
-  const viewport=window.visualViewport,margin=8,gap=6;
-  const left=(viewport?.offsetLeft ?? 0)+margin,top=(viewport?.offsetTop ?? 0)+margin;
-  const availableWidth=(viewport?.width ?? innerWidth)-2*margin;
-  const bottom=top+(viewport?.height ?? innerHeight)-2*margin;
-  const bar=elScrubber.getBoundingClientRect();
-  const compactTop=bar.top-elPanelDetails.getBoundingClientRect().height;
-  const expandedTop=compactTop+elPanelContent.getBoundingClientRect().height;
-  const space=Math.min(expandedTop-top-gap,bottom-compactTop-bar.height-gap);
+function setStoryboardPanelLimit(insetBase){
+  const viewport=window.visualViewport;
+  const bottom=viewport ? viewport.offsetTop+viewport.height : innerHeight;
+  const limit=Math.max(0,bottom-insetBase);
+  elPanelDetails.style.setProperty('--storyboard-panel-limit',limit+'px');
+  return limit;
+}
+function setStoryboardLayout(active){
+  elPanelContent.hidden=active;
+  elStoryboardPanel.hidden=!active;
+  elHeader.classList.toggle('is-storyboard',active);
+  elPanelHandle.setAttribute('aria-label',active ? 'Вернуться к панели чата' : 'Свернуть панель');
+}
+function sizeStoryboardFrame(){
+  const rect=elStoryboardPanel.getBoundingClientRect(),viewport=window.visualViewport,margin=8;
+  const left=Math.max(rect.left,(viewport?.offsetLeft ?? 0)+margin);
+  const right=Math.min(rect.right,(viewport?.offsetLeft ?? 0)+(viewport?.width ?? innerWidth)-margin);
+  const top=Math.max(rect.top,(viewport?.offsetTop ?? 0)+margin);
+  const bottom=Math.min(rect.bottom-6,(viewport?.offsetTop ?? 0)+(viewport?.height ?? innerHeight)-margin);
   const [sourceWidth,sourceHeight]=DATA.vod_preview.aspect || [16,9];
   const ratio=sourceWidth/sourceHeight;
-  const width=Math.floor(Math.min(availableWidth,space*ratio));
-  if(!Number.isFinite(width) || width<96 || compactTop<top-margin || expandedTop+bar.height>bottom+margin) return null;
-  const height=Math.floor(width/ratio);
-  return {
-    left:left+(availableWidth-width)/2+'px',
-    top:(PANEL_EXPANDED ? bar.top-gap-height : bar.bottom+gap)+'px',
-    width:width+'px',
-    height:height+'px',
-  };
+  const width=Math.floor(Math.min(right-left,(bottom-top)*ratio));
+  storyboardFrameFits=Number.isFinite(width) && width>=96;
+  elStoryboardFrame.hidden=!storyboardFrameFits || !shownStoryFrame;
+  if(!storyboardFrameFits) return;
+  elStoryboardPanel.style.paddingInlineStart=(left-rect.left)+'px';
+  elStoryboardPanel.style.paddingInlineEnd=(rect.right-right)+'px';
+  elStoryboardPanel.style.paddingBlockStart=(top-rect.top)+'px';
+  elStoryboardPanel.style.paddingBlockEnd=(rect.bottom-bottom)+'px';
+  elStoryboardFrame.style.width=width+'px';
+  elStoryboardFrame.style.height=Math.floor(width/ratio)+'px';
 }
-function updateScrubPreview(){
-  scrubPreviewQueued=false;
-  if(!scrubGesture || !MOBILE_MQ.matches) return;
-  if(panelAnimating){if(scrubPreview) scrubPreview.hidden=true;return;}
-  const geometryChanged=scrubPreviewGeometry===undefined;
-  if(geometryChanged) scrubPreviewGeometry=measureScrubPreview();
-  if(!scrubPreviewGeometry || scrubPreviewTime==='—'){
-    if(scrubPreview) scrubPreview.hidden=true;
-    return;
-  }
-  const seconds=scrubPreviewTime.split(':').reduce((total,part)=>60*total+Number(part),0);
+function resizeStoryboardPanel(){
+  const settle=onPanelLayout();
+  setStoryboardLayout(false);
+  fitVodTitle();
+  const limit=setStoryboardPanelLimit(viewportInset()-elPanelDetails.getBoundingClientRect().height);
+  const natural=elPanelContent.getBoundingClientRect().height;
+  elHeader.classList.toggle('storyboard-panel-limited',natural>limit);
+  const height=Math.min(natural,limit);
+  elPanelDetails.style.height=height+'px';
+  setStoryboardLayout(true);
+  sizeStoryboardFrame();
+  if(storyboardFrameFits && !storyboardTimer && !storyboardIdle) paintStoryboardFrame();
+  updatePanelGeometry();
+  settle();
+}
+function paintStoryboardFrame(){
+  if(!storyboardMode || !storyboardFrameFits) return;
+  const seconds=storyboardTime==='—' ? NaN : storyboardTime.split(':').reduce((total,part)=>60*total+Number(part),0);
   if(!Number.isFinite(seconds) || seconds>meta.duration_seconds){
-    if(scrubPreview) scrubPreview.hidden=true;
+    shownStoryFrame=undefined;
+    elStoryboardFrame.hidden=true;
     return;
   }
   const frame=nearestStoryFrame(storyboardFrames,seconds);
-  if(frame===shownStoryFrame && !geometryChanged && !scrubPreview?.hidden) return;
-  if(!scrubPreview){
-    scrubPreview=document.createElement('img');
-    scrubPreview.className='scrub-preview';scrubPreview.alt='';scrubPreview.decoding='async';
-    scrubPreview.setAttribute('aria-hidden','true');
-    document.body.appendChild(scrubPreview);
-  }
-  if(geometryChanged || shownStoryFrame===null) Object.assign(scrubPreview.style,scrubPreviewGeometry);
   if(frame!==shownStoryFrame){
     const src=embeddedJpeg(frame?.[1]);
-    if(!src){scrubPreview.hidden=true;return;}
+    if(!src){shownStoryFrame=undefined;elStoryboardFrame.hidden=true;return;}
     shownStoryFrame=frame;
-    scrubPreview.src=src;
+    if(elStoryboardFrame.getAttribute('src')!==src) elStoryboardFrame.src=src;
   }
-  scrubPreview.hidden=false;
+  elStoryboardFrame.hidden=!storyboardFrameFits;
 }
-function scheduleScrubPreview(){
-  if(typeof storyboardFrames==='undefined' || !storyboardFrames.length) return;
-  if(!scrubGesture){
-    if(scrubPreview){scrubPreview.remove();scrubPreview=null;shownStoryFrame=null;}
-    scrubPreviewGeometry=undefined;
-    return;
-  }
-  if(scrubPreviewQueued) return;
-  scrubPreviewQueued=true;
-  requestAnimationFrame(updateScrubPreview);
+function queueStoryboardFrame(time){
+  if(time===storyboardTime) return;
+  storyboardTime=time;
+  if(storyboardTimer || storyboardIdle) return;
+  storyboardTimer=setTimeout(()=>{
+    storyboardTimer=0;
+    if(!storyboardMode) return;
+    if(window.requestIdleCallback){
+      storyboardIdle=window.requestIdleCallback(()=>{
+        storyboardIdle=0;
+        paintStoryboardFrame();
+      },{timeout:125});
+    }else paintStoryboardFrame();
+  },STORYBOARD_REFRESH_MS);
+}
+function enterStoryboard(){
+  if(!MOBILE_MQ.matches || !PANEL_EXPANDED || panelAnimating || !storyboardFrames.length) return;
+  elPanelDetails.style.height=elPanelDetails.getBoundingClientRect().height+'px';
+  storyboardScrollTop=elPanelDetails.scrollTop;
+  storyboardMode=true;
+  setStoryboardLayout(true);
+  elPanelDetails.scrollTop=0;
+  sizeStoryboardFrame();
+  storyboardTime=rowCount() ? scrubTime(rowAt(scrubIndex).t) : '00:00:00';
+  paintStoryboardFrame();
+  elPanelHandle.focus({preventScroll:true});
+}
+function leaveStoryboard(){
+  storyboardMode=false;
+  clearTimeout(storyboardTimer);
+  if(storyboardIdle) window.cancelIdleCallback(storyboardIdle);
+  storyboardTimer=storyboardIdle=0;
+  storyboardTime=shownStoryFrame=undefined;
+  elStoryboardFrame.removeAttribute('src');
+  elStoryboardFrame.hidden=true;
+  setStoryboardLayout(false);
+  elPanelDetails.style.height='auto';
+  elPanelDetails.scrollTop=storyboardScrollTop;
 }
 const scrubActive=()=>!!scrubGesture || scrubRunning || scrubPending!==null;
 const scrubPercent=(index,count)=>count>1 ? 100*index/(count-1) : 0;
@@ -2511,7 +2587,7 @@ function setScrubIndex(index){
   const atEnd=!scrubGesture && !scrubRunning && !FILTERING && physicalChatEnd();
   const percent=atEnd ? 100 : scrubPercent(scrubIndex,count),duration=durationTime(meta.duration_seconds);
   let time=count ? scrubTime(rowAt(scrubIndex).t) : '—';
-  scrubPreviewTime=time;
+  if(storyboardMode) queueStoryboardFrame(time);
   if(atEnd && duration!=='—') time=duration;
   const label=time+' / '+duration;
   elScrubber.style.setProperty('--scrub-progress',percent.toFixed(4)+'%');
@@ -2545,7 +2621,7 @@ function rememberScrubPosition(){
 }
 function resetScrubber(){
   scrubRevision++;scrubPending=null;scrubSettled=null;elScrubber.classList.remove('is-held');
-  const gesture=scrubGesture;scrubGesture=null;scheduleScrubPreview();
+  const gesture=scrubGesture;scrubGesture=null;
   if(gesture && elScrubber.hasPointerCapture?.(gesture.id)) elScrubber.releasePointerCapture(gesture.id);
   setScrubIndex(0);scheduleScrubSync();
 }
@@ -2556,8 +2632,6 @@ function requestScrub(index){
   if(!scrubFrame && !scrubRunning){
     scrubFrame=requestAnimationFrame(()=>{scrubFrame=0;runScrubber();});
   }
-  // Queue chat navigation first. The image updates independently of the builder.
-  if(scrubGesture) scheduleScrubPreview();
 }
 async function runScrubber(){
   if(scrubRunning) return;
@@ -2607,14 +2681,13 @@ function pointerScrub(x){
 function finishScrub(event){
   if(!scrubGesture || event.pointerId!==scrubGesture.id) return;
   if(event.type==='pointerup') pointerScrub(event.clientX);
-  const gesture=scrubGesture;scrubGesture=null;elScrubber.classList.remove('is-held');scheduleScrubPreview();
+  const gesture=scrubGesture;scrubGesture=null;elScrubber.classList.remove('is-held');
   if(elScrubber.hasPointerCapture(gesture.id)) elScrubber.releasePointerCapture(gesture.id);
   if(gesture.moved) requestScrub(scrubIndex);scheduleScrubSync();
 }
 function beginScrub(x,id){
   scrubGesture={id,x,fraction:scrubPercent(scrubIndex,rowCount())/100};
   elScrubber.classList.add('is-held');
-  scheduleScrubPreview();
 }
 elScrubber.addEventListener('pointerdown',event=>{
   if(!MOBILE_MQ.matches || FILTERING || rowCount()<2 || event.button!==0 || event.isPrimary===false || scrubGesture) return;
@@ -2646,17 +2719,20 @@ elScrubber.addEventListener('touchmove',event=>{
 },{passive:false});
 for(const type of ['touchend','touchcancel']) elScrubber.addEventListener(type,event=>{
   event.stopPropagation();if(scrubGesture?.id!=='touch') return;
-  const moved=scrubGesture.moved;scrubGesture=null;elScrubber.classList.remove('is-held');scheduleScrubPreview();if(moved) requestScrub(scrubIndex);scheduleScrubSync();
+  const moved=scrubGesture.moved;scrubGesture=null;elScrubber.classList.remove('is-held');if(moved) requestScrub(scrubIndex);scheduleScrubSync();
 });
 MOBILE_MQ.addEventListener('change',()=>{resetScrubber();scheduleScrubSync();});
 if(typeof storyboardFrames!=='undefined' && storyboardFrames.length){
-  const invalidate=()=>{scrubPreviewGeometry=undefined;scheduleScrubPreview();};
-  const observer=new ResizeObserver(invalidate);
-  observer.observe(elHeader);
-  observer.observe(elPanelContent);
-  window.addEventListener('resize',invalidate);
-  window.visualViewport?.addEventListener('resize',invalidate);
-  window.visualViewport?.addEventListener('scroll',invalidate);
+  elStoryboardToggle.addEventListener('click',enterStoryboard);
+  window.visualViewport?.addEventListener('resize',()=>{
+    if(MOBILE_MQ.matches) reconcilePanelMode();
+  });
+  window.visualViewport?.addEventListener('scroll',()=>{
+    if(!storyboardMode) return;
+    const wasVisible=storyboardFrameFits;
+    sizeStoryboardFrame();
+    if(!wasVisible && storyboardFrameFits && !storyboardTimer && !storyboardIdle) paintStoryboardFrame();
+  });
 }
 
 /* Selection endpoints belong to logical rows, not ephemeral DOM nodes. A native
