@@ -6,7 +6,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const template = fs.readFileSync(path.join(__dirname, '../src/viewer_template.html'), 'utf8').replaceAll('{{VOD_FALLBACK_PNG}}','data:image/png;base64,VOD').replaceAll('{{LIVE_FALLBACK_PNG}}','data:image/png;base64,LIVE');
 const code = template.slice(template.indexOf('let vodOverlay ='), template.indexOf('requestAnimationFrame(fitVodTitle);', template.indexOf('let vodOverlay =')));
-function setup(meta) {
+function setup(meta, vodPreview) {
   const created = [];
   const document = {};
   function element(tag) {
@@ -22,12 +22,19 @@ function setup(meta) {
   const body = element('body'), images = [], opened = [];
   const card = element('div'), thumbnail = element('img');
   Object.assign(document, {body, createElement: element});
-  const context = vm.createContext({meta, document, URL, elVodCard: card, elVodPreviewImg: thumbnail,
+  const context = vm.createContext({meta, DATA:{vod_preview:vodPreview}, document, URL, elVodCard: card, elVodPreviewImg: thumbnail,
     Image: function() { images.push(this); }, window: {open: (...args) => opened.push(args)}});
   vm.runInContext(code, context);
   return {context, body, images, opened, document, card, thumbnail, created};
 }
 const metadata = {thumbnail_full_url: 'https://static-cdn.jtvnw.net/cf_vods/test/full.jpg', vod_url: 'https://www.twitch.tv/videos/123456789'};
+test('embedded JPEG takes priority for both the card and modal', () => {
+  const cover = 'data:image/jpeg;base64,AAAA';
+  const {context, thumbnail, images} = setup(metadata, {cover});
+  assert.equal(thumbnail.src, cover);
+  context.openVodOverlay();
+  assert.equal(images[0].src, cover);
+});
 test('button has exact label without emote, opens existing URL and overlay closes', () => {
   const {context, body, images, opened} = setup(metadata);
   context.openVodOverlay();
