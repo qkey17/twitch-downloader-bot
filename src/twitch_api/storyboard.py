@@ -43,10 +43,10 @@ def manifest_url(value, vod_id, cover):
     return None
 
 
-def plan(spec, vod_id, duration):
+def plan(spec, vod_id, duration, qualities=('high', 'low')):
     if not isinstance(spec, list):
         return None
-    for quality in ('low', 'high'):
+    for quality in qualities:
         for item in spec:
             if not isinstance(item, dict) or item.get('quality') != quality:
                 continue
@@ -95,10 +95,11 @@ async def get_asset(session, url, limit, types):
         return await read_asset(response, limit, types)
 
 
-def jpeg(image, size, limit):
-    image.thumbnail(size)
+def jpeg(image, size, limit, quality=65):
+    if size is not None:
+        image.thumbnail(size)
     with io.BytesIO() as output:
-        image.convert('RGB').save(output, 'JPEG', quality=65)
+        image.convert('RGB').save(output, 'JPEG', quality=quality, subsampling=0 if quality >= 90 else -1)
         data = output.getvalue()
     if len(data) > limit:
         raise ValueError('Encoded preview exceeds limit')
@@ -123,7 +124,8 @@ def atlas_frames(data, layout, cells):
         for cell, timestamp in cells:
             x, y = (cell % cols) * width, (cell // cols) * height
             with image.crop((x, y, x + width, y + height)) as tile:
-                frames.append([timestamp, jpeg(tile, (144, 81), 16 * 1024)])
+                # Extracting a cell from a JPEG grid requires a new encoding.
+                frames.append([timestamp, jpeg(tile, None, 128 * 1024, quality=92)])
         return frames
 
 
@@ -166,18 +168,28 @@ async def fetch_preview(session, meta, cancel_check):
             url = manifest_url(video.get('seekPreviewsURL'), vod_id, cover)
             if not url:
                 return result
-            parsed = plan(json.loads(await get_asset(session, url, 128 * 1024, {
+            spec = json.loads(await get_asset(session, url, 128 * 1024, {
                 'application/json', 'binary/octet-stream', 'application/octet-stream',
-            })), vod_id, duration)
-            if not parsed:
-                return result
-            layout, atlases = parsed
-            frames = []
-            for name, cells in atlases:
-                cancel_check()
-                image = await get_asset(session, url.rsplit('/', 1)[0] + '/' + name, MAX_ATLAS_BYTES, IMAGE_TYPES)
-                frames.extend(await asyncio.to_thread(atlas_frames, image, layout, cells))
-            result['frames'] = frames
+            }))
+            remaining = MAX_ATLASES
+            for quality in ('high', 'low'):
+                parsed = plan(spec, vod_id, duration, (quality,))
+                if not parsed:
+                    continue
+                layout, atlases = parsed
+                if len(atlases) > remaining:
+                    continue
+                frames = []
+                try:
+                    for name, cells in atlases:
+                        cancel_check()
+                        remaining -= 1
+                        image = await get_asset(session, url.rsplit('/', 1)[0] + '/' + name, MAX_ATLAS_BYTES, IMAGE_TYPES)
+                        frames.extend(await asyncio.to_thread(atlas_frames, image, layout, cells))
+                except ASSET_ERRORS:
+                    continue
+                result.update(frames=frames, aspect=list(layout[:2]))
+                break
     except (*ASSET_ERRORS, ConfigurationError, RecursionError):
         pass
     return result

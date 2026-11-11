@@ -126,9 +126,11 @@ def write_viewer_html(output, chat_rows, title, channel, vod_url, created_at=Non
             budget = min(EMBED_LIMIT, MAX_CLOUD_HTML_BYTES - output_bytes - byte_count(suffix) - 1)
             assets = preview_assets.copy()
             frames = assets.pop('frames', [])
+            aspect = assets.pop('aspect', None)
+            storyboard = {**assets, 'aspect': aspect} if aspect else assets
             frame_sizes = [len(encoder.encode(frame)) for frame in frames]
             prefix_size = len(',"vod_preview":')
-            frame_overhead = prefix_size + len(encoder.encode({**assets, 'frames': []}))
+            frame_overhead = prefix_size + len(encoder.encode({**storyboard, 'frames': []}))
             for count in range(len(frames), -1, -1):
                 if count == 1 and len(frames) > 1:
                     continue
@@ -138,7 +140,7 @@ def write_viewer_html(output, chat_rows, title, channel, vod_url, created_at=Non
                 if not count and not assets:
                     break
                 if size <= budget:
-                    selected = {**assets, 'frames': [frames[i] for i in indexes]} if count else assets
+                    selected = {**storyboard, 'frames': [frames[i] for i in indexes]} if count else assets
                     encoded = ',"vod_preview":' + encoder.encode(selected).replace("<", "\\u003c")
                     write_template(encoded)
                     break

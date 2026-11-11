@@ -741,25 +741,25 @@ html{overflow-anchor:none;}
   header .panel-actions{order:4;}
 
 
-  header.is-expanded .panel-stats{
+  header.is-expanded .panel-stats,header.has-storyboard .panel-stats{
     display:grid;
     grid-template-columns:minmax(0,1fr) minmax(0,1fr);
     gap:6px;
     align-items:start;
   }
-  header.is-expanded #mobileChannel{
+  header.is-expanded #mobileChannel,header.has-storyboard #mobileChannel{
     display:block;
     grid-column:1 / -1;
     white-space:normal;
     overflow:visible;
     overflow-wrap:anywhere;
   }
-  header.is-expanded .panel-stats > .pill:not(.panel-stats-channel){
+  header.is-expanded .panel-stats > .pill:not(.panel-stats-channel),header.has-storyboard .panel-stats > .pill:not(.panel-stats-channel){
     white-space:normal;
     overflow:visible;
     overflow-wrap:anywhere;
   }
-  header.is-expanded #stat{max-width:100%;justify-self:end;text-align:right;}
+  header.is-expanded #stat,header.has-storyboard #stat{max-width:100%;justify-self:end;text-align:right;}
 
   #list{
     padding-top: 145px;
@@ -904,10 +904,10 @@ html{overflow-anchor:none;}
   /* One measured destination per transition; no per-frame DOM/anchor scans. */
   header.is-panel-animating .panel-details{transition:height 270ms cubic-bezier(.2,0,.2,1),opacity 270ms ease-out;}
   #list.panel-shifting{transition:padding-top 270ms cubic-bezier(.2,0,.2,1);}
-  header.is-expanded .panel-stats{display:flex;flex-wrap:wrap;justify-content:flex-start;gap:6px 16px;}
-  header.is-expanded #mobileChannel{display:inline-flex;flex-basis:100%;}
-  header.is-expanded .panel-stats > .pill:not(.panel-stats-channel){white-space:nowrap;overflow:visible;overflow-wrap:normal;}
-  header.is-expanded #stat{max-width:100%;margin-left:auto;text-align:right;}
+  header.is-expanded .panel-stats,header.has-storyboard .panel-stats{display:flex;flex-wrap:wrap;justify-content:flex-start;gap:6px 16px;}
+  header.is-expanded #mobileChannel,header.has-storyboard #mobileChannel{display:inline-flex;flex-basis:100%;}
+  header.is-expanded .panel-stats > .pill:not(.panel-stats-channel),header.has-storyboard .panel-stats > .pill:not(.panel-stats-channel){white-space:nowrap;overflow:visible;overflow-wrap:normal;}
+  header.is-expanded #stat,header.has-storyboard #stat{max-width:100%;margin-left:auto;text-align:right;}
   .panel-stats .pill,#streamDate{display:inline-flex;align-items:center;gap:6px;}
   .panel-stats .meta-symbol{display:inline-flex;align-items:center;justify-content:center;flex:none;width:18px;}
   .panel-stats .meta-value{white-space:nowrap;}
@@ -1087,6 +1087,9 @@ const elToggleTime=document.getElementById("toggleTime");
 const elExportBtn=document.getElementById("exportBtn");
 const MOBILE_MQ = window.matchMedia("(max-width: 900px)");
 const elHeader=document.querySelector("header");
+const storyboardFrames=Array.isArray(DATA.vod_preview?.frames) ? DATA.vod_preview.frames : [];
+// Keep the clipped panel content measurable in its expanded layout.
+if(storyboardFrames.length) elHeader.classList.add('has-storyboard');
 const elScrubber=document.getElementById("fastScrubber");
 const elPanelHandle=document.querySelector(".panel-toggle");
 let onPanelLayout=()=>()=>{};
@@ -2400,7 +2403,8 @@ elToggleTime.addEventListener('click',async e=>{
 /* Logical-index mobile navigation. At most one builder and one pending target. */
 let scrubIndex=0, scrubGesture=null, scrubPending=null, scrubRunning=false, scrubSettled=null;
 let scrubRevision=0, scrubFrame=0, scrubSyncFrame=0;
-let scrubPreview=null,scrubPreviewFrame=0;
+let scrubPreview=null,scrubPreviewQueued=false,scrubPreviewGeometry;
+let scrubPreviewTime='—',shownStoryFrame=null;
 function nearestStoryFrame(frames,seconds){
   let left=0,right=frames.length-1;
   while(left<right){
@@ -2410,51 +2414,69 @@ function nearestStoryFrame(frames,seconds){
   }
   return left && seconds-frames[left-1][0]<=frames[left][0]-seconds ? frames[left-1] : frames[left];
 }
-function scheduleScrubPreview(){
-  if(typeof DATA==='undefined' || !DATA.vod_preview?.frames?.length) return;
-  if(!scrubGesture){
-    if(scrubPreview){scrubPreview.remove();scrubPreview=null;}
+function measureScrubPreview(){
+  const viewport=window.visualViewport,margin=8,gap=6;
+  const left=(viewport?.offsetLeft ?? 0)+margin,top=(viewport?.offsetTop ?? 0)+margin;
+  const availableWidth=(viewport?.width ?? innerWidth)-2*margin;
+  const bottom=top+(viewport?.height ?? innerHeight)-2*margin;
+  const bar=elScrubber.getBoundingClientRect();
+  const compactTop=bar.top-elPanelDetails.getBoundingClientRect().height;
+  const expandedTop=compactTop+elPanelContent.getBoundingClientRect().height;
+  const space=Math.min(expandedTop-top-gap,bottom-compactTop-bar.height-gap);
+  const [sourceWidth,sourceHeight]=DATA.vod_preview.aspect || [16,9];
+  const ratio=sourceWidth/sourceHeight;
+  const width=Math.floor(Math.min(availableWidth,space*ratio));
+  if(!Number.isFinite(width) || width<96 || compactTop<top-margin || expandedTop+bar.height>bottom+margin) return null;
+  const height=Math.floor(width/ratio);
+  return {
+    left:left+(availableWidth-width)/2+'px',
+    top:(PANEL_EXPANDED ? bar.top-gap-height : bar.bottom+gap)+'px',
+    width:width+'px',
+    height:height+'px',
+  };
+}
+function updateScrubPreview(){
+  scrubPreviewQueued=false;
+  if(!scrubGesture || !MOBILE_MQ.matches) return;
+  if(panelAnimating){if(scrubPreview) scrubPreview.hidden=true;return;}
+  const geometryChanged=scrubPreviewGeometry===undefined;
+  if(geometryChanged) scrubPreviewGeometry=measureScrubPreview();
+  if(!scrubPreviewGeometry || scrubPreviewTime==='—'){
+    if(scrubPreview) scrubPreview.hidden=true;
     return;
   }
-  if(scrubPreviewFrame) return;
-  scrubPreviewFrame=requestAnimationFrame(()=>{
-    scrubPreviewFrame=0;
-    if(!scrubGesture || !MOBILE_MQ.matches) return;
-    const time=scrubTime(rowAt(scrubIndex).t);
-    if(time==='—'){if(scrubPreview) scrubPreview.hidden=true;return;}
-    const seconds=time.split(':').reduce((total,part)=>60*total+Number(part),0);
-    const frames=DATA.vod_preview.frames;
-    if(!Number.isFinite(seconds) || seconds>meta.duration_seconds){
-      if(scrubPreview) scrubPreview.hidden=true;
-      return;
-    }
-    const frame=nearestStoryFrame(frames,seconds),asset=frame?.[1];
-    const current=scrubPreview?.getAttribute('src');
-    const src=asset===current ? current : embeddedJpeg(asset);
-    if(!src){if(scrubPreview) scrubPreview.hidden=true;return;}
-    const viewport=window.visualViewport,margin=8,gap=6;
-    const left=(viewport?.offsetLeft ?? 0)+margin,top=(viewport?.offsetTop ?? 0)+margin;
-    const right=left+(viewport?.width ?? innerWidth)-2*margin;
-    const bottom=top+(viewport?.height ?? innerHeight)-2*margin;
-    const bar=elScrubber.getBoundingClientRect();
-    const thumb=elScrubber.querySelector('.scrub-thumb').getBoundingClientRect();
-    const expanded=elHeader.classList.contains('is-expanded');
-    const space=expanded ? bar.top-top-gap : bottom-bar.bottom-gap;
-    const width=Math.floor(Math.min(144,right-left,space*16/9));
-    if(width<32){if(scrubPreview) scrubPreview.hidden=true;return;}
-    const height=Math.floor(width*9/16);
-    if(!scrubPreview){
-      scrubPreview=document.createElement('img');
-      scrubPreview.className='scrub-preview';scrubPreview.alt='';
-      scrubPreview.setAttribute('aria-hidden','true');
-      document.body.appendChild(scrubPreview);
-    }
-    const x=clampNumber((thumb.left+thumb.right-width)/2,left,right-width);
-    const y=expanded ? bar.top-gap-height : bar.bottom+gap;
-    Object.assign(scrubPreview.style,{left:x+'px',top:y+'px',width:width+'px',height:height+'px'});
-    if(current!==src) scrubPreview.src=src;
-    scrubPreview.hidden=false;
-  });
+  const seconds=scrubPreviewTime.split(':').reduce((total,part)=>60*total+Number(part),0);
+  if(!Number.isFinite(seconds) || seconds>meta.duration_seconds){
+    if(scrubPreview) scrubPreview.hidden=true;
+    return;
+  }
+  const frame=nearestStoryFrame(storyboardFrames,seconds);
+  if(frame===shownStoryFrame && !geometryChanged && !scrubPreview?.hidden) return;
+  if(!scrubPreview){
+    scrubPreview=document.createElement('img');
+    scrubPreview.className='scrub-preview';scrubPreview.alt='';scrubPreview.decoding='async';
+    scrubPreview.setAttribute('aria-hidden','true');
+    document.body.appendChild(scrubPreview);
+  }
+  if(geometryChanged || shownStoryFrame===null) Object.assign(scrubPreview.style,scrubPreviewGeometry);
+  if(frame!==shownStoryFrame){
+    const src=embeddedJpeg(frame?.[1]);
+    if(!src){scrubPreview.hidden=true;return;}
+    shownStoryFrame=frame;
+    scrubPreview.src=src;
+  }
+  scrubPreview.hidden=false;
+}
+function scheduleScrubPreview(){
+  if(typeof storyboardFrames==='undefined' || !storyboardFrames.length) return;
+  if(!scrubGesture){
+    if(scrubPreview){scrubPreview.remove();scrubPreview=null;shownStoryFrame=null;}
+    scrubPreviewGeometry=undefined;
+    return;
+  }
+  if(scrubPreviewQueued) return;
+  scrubPreviewQueued=true;
+  requestAnimationFrame(updateScrubPreview);
 }
 const scrubActive=()=>!!scrubGesture || scrubRunning || scrubPending!==null;
 const scrubPercent=(index,count)=>count>1 ? 100*index/(count-1) : 0;
@@ -2489,6 +2511,7 @@ function setScrubIndex(index){
   const atEnd=!scrubGesture && !scrubRunning && !FILTERING && physicalChatEnd();
   const percent=atEnd ? 100 : scrubPercent(scrubIndex,count),duration=durationTime(meta.duration_seconds);
   let time=count ? scrubTime(rowAt(scrubIndex).t) : '—';
+  scrubPreviewTime=time;
   if(atEnd && duration!=='—') time=duration;
   const label=time+' / '+duration;
   elScrubber.style.setProperty('--scrub-progress',percent.toFixed(4)+'%');
@@ -2498,7 +2521,6 @@ function setScrubIndex(index){
   elScrubber.setAttribute('aria-valuenow',String(count>1 ? Math.round(percent) : 0));
   elScrubber.setAttribute('aria-valuetext',label);
   elScrubber.setAttribute('aria-disabled',String(FILTERING || count<2));
-  if(scrubGesture) scheduleScrubPreview();
 }
 function scheduleScrubSync(){
   if(!MOBILE_MQ.matches || scrubSyncFrame) return;
@@ -2531,8 +2553,11 @@ function requestScrub(index){
   if(!MOBILE_MQ.matches || FILTERING || rowCount()<2) return;
   const request={index:clampNumber(index,0,rowCount()-1),epoch:FILTER_TOKEN,revision:++scrubRevision};
   scrubPending=request;scrubSettled=null;setScrubIndex(request.index);
-  if(scrubFrame || scrubRunning) return;
-  scrubFrame=requestAnimationFrame(()=>{scrubFrame=0;runScrubber();});
+  if(!scrubFrame && !scrubRunning){
+    scrubFrame=requestAnimationFrame(()=>{scrubFrame=0;runScrubber();});
+  }
+  // Queue chat navigation first. The image updates independently of the builder.
+  if(scrubGesture) scheduleScrubPreview();
 }
 async function runScrubber(){
   if(scrubRunning) return;
@@ -2624,6 +2649,15 @@ for(const type of ['touchend','touchcancel']) elScrubber.addEventListener(type,e
   const moved=scrubGesture.moved;scrubGesture=null;elScrubber.classList.remove('is-held');scheduleScrubPreview();if(moved) requestScrub(scrubIndex);scheduleScrubSync();
 });
 MOBILE_MQ.addEventListener('change',()=>{resetScrubber();scheduleScrubSync();});
+if(typeof storyboardFrames!=='undefined' && storyboardFrames.length){
+  const invalidate=()=>{scrubPreviewGeometry=undefined;scheduleScrubPreview();};
+  const observer=new ResizeObserver(invalidate);
+  observer.observe(elHeader);
+  observer.observe(elPanelContent);
+  window.addEventListener('resize',invalidate);
+  window.visualViewport?.addEventListener('resize',invalidate);
+  window.visualViewport?.addEventListener('scroll',invalidate);
+}
 
 /* Selection endpoints belong to logical rows, not ephemeral DOM nodes. A native
    range is projected onto its visible intersection; PNG uses the full range. */
