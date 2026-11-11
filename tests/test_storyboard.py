@@ -67,6 +67,23 @@ class StoryboardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(times, sorted(set(times)))
         self.assertLessEqual(max(b-a for a, b in zip(times, times[1:])), 32800)
 
+    def test_accepts_rounded_intervals_from_twitch_within_vod_duration(self):
+        for duration, interval, last in ((21088, 106, 20988), (15856, 80, 15840), (26748, 134, 26666)):
+            with self.subTest(duration=duration):
+                low = {**spec(200, interval), 'width': 160, 'height': 90, 'rows': 40,
+                       'images': ['123-low-0.jpg']}
+                high = {**low, 'quality': 'high', 'width': 220, 'height': 124, 'rows': 10,
+                        'images': [f'123-high-{i}.jpg' for i in range(4)]}
+                layout, atlases = sb.plan([low, high], '123', duration)
+                self.assertEqual((220, 124, 5, 10), layout)
+                self.assertEqual(high['images'], [name for name, _ in atlases])
+                times = [t for _, cells in atlases for _, t in cells]
+                self.assertEqual((0, last), (times[0], times[-1]))
+                self.assertEqual(96, len(times))
+                self.assertLessEqual(last, duration)
+                self.assertLessEqual(max(b-a for a, b in zip(times, times[1:])), 3 * interval)
+                self.assertIsNone(sb.plan([{**high, 'interval': interval + 1}], '123', duration))
+
     def test_rejects_bad_paths_incomplete_specs_and_untrusted_hosts(self):
         asset = spec(21, 100)
         for change in ({'images': asset['images'][:1]}, {'interval': None}, {'width': 10000},
@@ -113,6 +130,23 @@ class StoryboardTests(unittest.IsolatedAsyncioTestCase):
         meta.is_live = True
         self.assertEqual({}, await sb.fetch_preview(session, meta, lambda: None))
 
+    async def test_reports_failure_stage_without_urls(self):
+        meta = SimpleNamespace(vod_id='123', length_seconds=2000, is_live=False)
+        manifest = f'https://{sb.OBSERVED_CDN}/vod-key/storyboards/123-info.json'
+        for url, responses, status in (
+            (None, [], 'seek_url_missing'),
+            (manifest, [Response(b'', status=403)], 'manifest_unavailable'),
+            (manifest, [Response(encoded({}))], 'manifest_unsupported'),
+            (manifest, [Response(encoded([spec(20, 100)])), Response(b'', status=404)], 'atlas_failed'),
+        ):
+            with self.subTest(status=status):
+                video = dict(id='123', lengthSeconds=2000, seekPreviewsURL=url)
+                session = SimpleNamespace(post=Mock(return_value=Response(encoded({'data': {'video': video}}))),
+                                          get=Mock(side_effect=responses))
+                with self.assertLogs(sb.__name__, 'INFO') as logs:
+                    self.assertEqual({}, await sb.fetch_preview(session, meta, lambda: None))
+                self.assertEqual([f'INFO:{sb.__name__}:HTML storyboard: {status}'], logs.output)
+
     async def test_streamed_body_is_bounded_without_content_length(self):
         response = Response(b'x' * 32)
         response.content_length = None
@@ -132,5 +166,7 @@ class StoryboardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cover, actual['cover'])
         self.assertEqual([220, 124], actual['aspect'])
         base_size = len(base.replace('\n', os.linesep).encode('utf-8'))
-        with patch('src.html_renderer.MAX_CLOUD_HTML_BYTES', base_size + 500):
+        with (patch('src.html_renderer.MAX_CLOUD_HTML_BYTES', base_size + 500),
+              self.assertLogs('src.html_renderer', 'INFO') as logs):
             self.assertEqual({'cover': cover}, payload(render_viewer_html(*args, preview_assets=assets))['vod_preview'])
+        self.assertEqual(['INFO:src.html_renderer:HTML storyboard: embed_budget_exceeded'], logs.output)
