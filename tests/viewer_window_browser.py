@@ -20,7 +20,7 @@ async def run(args):
     context=getattr(args,'context',False)
     storyboard=getattr(args,'storyboard',False)
     baseline=subprocess.check_output(['git','show',args.baseline+':src/viewer_template.html'],cwd=ROOT).decode('utf-8')
-    if getattr(args,'marker',False):
+    if storyboard or getattr(args,'marker',False):
         from src.ui.card_images import fallback_data
         baseline=baseline.replace('{{VOD_FALLBACK_PNG}}',fallback_data(False)).replace('{{LIVE_FALLBACK_PNG}}',fallback_data(True))
     pixel='data:image/svg+xml;base64,'+base64.b64encode(b'<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"><rect width="22" height="22" fill="purple"/></svg>').decode()
@@ -49,6 +49,11 @@ async def run(args):
             page=render_viewer_html(rows,'Synthetic title','Synthetic channel','https://www.twitch.tv/videos/123',created_at='2026-10-29T14:28:00Z',mode=mode,local_emotes={'Kappa':pixel},badge_images=badge_images,captured_during_live=not storyboard,**context_meta,**(dict(duration_seconds=435088) if args.scrubber or args.panel or controls else {}))
             new_data=re.search(r'<script id="chat-data" type="application/json">(.*?)</script>',page,re.S).group(1)
             old_data=new_data if args.scrubber or args.panel or controls or context or storyboard else json.dumps(dict(meta=json.loads(new_data)['meta'],rows=rows),ensure_ascii=False).replace('<','\\u003c')
+            if storyboard and mode=='offline':
+                without_frames=json.loads(new_data)
+                without_frames['vod_preview'].pop('frames')
+                no_frames=json.dumps(without_frames,ensure_ascii=False,separators=(',',':')).replace('<','\\u003c')
+                (out/f'no-storyboard-{count}-offline.html').write_text(page.replace(new_data,no_frames,1),encoding='utf-8')
             for version,html in [('new',page),('base',baseline.replace('{{CHAT_DATA_JSON}}',old_data))]:
                 # Test-only instrumentation: same decoder/renderer, no production metrics globals.
                 if not notices:
