@@ -887,6 +887,23 @@ html{overflow-anchor:none;}
 /* Desktop wrappers are boxless, preserving the original sidebar geometry. */
 .panel-details,.panel-details-content{display:contents;}
 .panel-details-content[hidden],.storyboard-panel[hidden],.meta-buttons .storyboard-toggle{display:none;}
+.desktop-storyboard[hidden]{display:none;}
+@media (min-width:901px){
+  header.has-desktop-storyboard{
+    max-height:calc(100dvh - 48px);
+    overflow:auto;
+  }
+  .desktop-storyboard{
+    width:100%;
+    flex:none;
+    overflow:hidden;
+    border:1px solid var(--border);
+    border-radius:var(--control-radius);
+  }
+  .desktop-storyboard img{display:block;width:100%;height:100%;object-fit:contain;}
+  .desktop-storyboard img:not([src]){visibility:hidden;}
+}
+
 .mobile-control-row{display:none;}
 @media(max-width:900px){
   header,header.is-compact{padding:8px 24px;gap:0;touch-action:auto;will-change:auto;box-shadow:none;transition:none;}
@@ -1033,6 +1050,7 @@ html{overflow-anchor:none;}
         <svg class="panel-menu" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
       </button>
       </div>
+      <div class="desktop-storyboard" id="desktopStoryboard" hidden><img alt="" decoding="async" /></div>
     </header>
 
     <div id="list"></div>
@@ -2159,14 +2177,14 @@ function updateSpaces(){
   bottomSpace.style.height=(heightBefore(blockCount())-heightBefore(windowEnd))+'px';
 }
 function viewportInset(){return MOBILE_MQ.matches ? Math.max(0,elHeader.getBoundingClientRect().bottom) : 0;}
-function visibleAnchor(){
+function visibleAnchor(minVisible=0.5){
   const inset=viewportInset();
   for(const node of blockNodes.values()){
     if(node.getBoundingClientRect().bottom<=inset) continue;
     for(const row of node.children){
       const rect=row.getBoundingClientRect();
       if(rect.top>=innerHeight) return null;
-      if(rect.bottom>inset+0.5) return {id:Number(row.dataset.id),top:rect.top,inset};
+      if(rect.bottom>inset+minVisible) return {id:Number(row.dataset.id),top:rect.top,inset};
     }
   }
   return null;
@@ -3097,6 +3115,65 @@ elExportBtn.addEventListener("pointerup", async (e)=>{
   openSnapshotOverlay(rowsToClone);
 });
 
+function setupDesktopStoryboard(){
+  const desktopLayout=window.matchMedia('(min-width: 901px)');
+  const panel=document.getElementById('desktopStoryboard'),image=panel.firstElementChild;
+  const [width,height]=Array.isArray(DATA.vod_preview.aspect) ? DATA.vod_preview.aspect : [];
+  panel.style.aspectRatio=width>0 && height>0 ? width+' / '+height : '16 / 9';
+
+  let listeners, timer=0, idle=0, lastUpdate=-Infinity, shownFrame;
+  const observer=new MutationObserver(queueFrame);
+  function paintFrame(){
+    lastUpdate=performance.now();
+    const anchor=FILTERING ? null : visibleAnchor(0);
+    const time=anchor ? scrubTime(rowAt(anchor.id).t) : '—';
+    const seconds=time==='—' ? NaN : time.split(':').reduce((total,part)=>60*total+Number(part),0);
+    const frame=Number.isFinite(seconds) && seconds<=meta.duration_seconds
+      ? nearestStoryFrame(storyboardFrames,seconds) : undefined;
+    if(frame===shownFrame) return;
+    shownFrame=frame;
+    const src=embeddedJpeg(frame?.[1]);
+    if(!src) image.removeAttribute('src');
+    else if(image.getAttribute('src')!==src) image.src=src;
+  }
+  function queueFrame(){
+    if(timer || idle || !listeners) return;
+    // Keep one request for the latest visible rows, outside the scroll handler.
+    timer=setTimeout(()=>{
+      timer=0;
+      if(window.requestIdleCallback){
+        idle=window.requestIdleCallback(()=>{idle=0;paintFrame();},{timeout:125});
+      }else paintFrame();
+    },Math.max(0,STORYBOARD_REFRESH_MS-(performance.now()-lastUpdate)));
+  }
+  function sync(){
+    const desktop=desktopLayout.matches;
+    panel.hidden=!desktop;
+    elHeader.classList.toggle('has-desktop-storyboard',desktop);
+    if(!desktop || document.hidden){
+      listeners?.abort();listeners=undefined;
+      observer.disconnect();
+      clearTimeout(timer);
+      if(idle) window.cancelIdleCallback(idle);
+      timer=idle=0;
+      if(!desktop){image.removeAttribute('src');shownFrame=undefined;}
+      return;
+    }
+    if(!listeners){
+      listeners=new AbortController();
+      const options={passive:true,signal:listeners.signal};
+      document.addEventListener('scroll',queueFrame,options);
+      window.addEventListener('resize',queueFrame,options);
+      observer.observe(elList,{childList:true});
+    }
+    queueFrame();
+  }
+  desktopLayout.addEventListener('change',sync);
+  document.addEventListener('visibilitychange',sync);
+  sync();
+}
+
+if(storyboardFrames.length) setupDesktopStoryboard();
 applyFilters();
 </script>
 

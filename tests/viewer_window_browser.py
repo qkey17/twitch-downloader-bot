@@ -18,7 +18,8 @@ async def run(args):
     controls=getattr(args,'controls',False) or getattr(args,'marker',False)
     notices=getattr(args,'notices',False)
     context=getattr(args,'context',False)
-    storyboard=getattr(args,'storyboard',False)
+    desktop_storyboard=getattr(args,'desktop_storyboard',False)
+    storyboard=getattr(args,'storyboard',False) or desktop_storyboard
     baseline=subprocess.check_output(['git','show',args.baseline+':src/viewer_template.html'],cwd=ROOT).decode('utf-8')
     if storyboard or getattr(args,'marker',False):
         from src.ui.card_images import fallback_data
@@ -144,6 +145,10 @@ function sample(){
                 if context:
                     from viewer_context_cases import check_context
                     await check_context(call,evaluate,wait,out,args,errors,requests)
+                if desktop_storyboard:
+                    from viewer_desktop_storyboard_cases import check_desktop_storyboard
+                    await check_desktop_storyboard(call,evaluate,wait,out,args,errors,requests)
+                    return
                 if storyboard:
                     from viewer_storyboard_cases import check_storyboard
                     await check_storyboard(call,evaluate,wait,out,args,errors,requests)
@@ -304,4 +309,5 @@ if __name__=='__main__':
     parser.add_argument('--images',action='store_true',help='Focused embedded preview checks only');parser.add_argument('--notices',action='store_true',help='Conservative notice rendering/search/copy/PNG in mixed virtual chat; no profiling')
     parser.add_argument('--context',action='store_true',help='Focused search and context overlay checks')
     parser.add_argument('--storyboard',action='store_true',help='Offline mobile VOD preview geometry')
+    parser.add_argument('--desktop-storyboard',action='store_true',help='Offline desktop VOD preview and scrolling comparison')
     asyncio.run(run(parser.parse_args()),loop_factory=asyncio.SelectorEventLoop)

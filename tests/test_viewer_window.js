@@ -302,7 +302,7 @@ test('sub-row movements accumulate a fractional position independently of rounde
 
 test('mobile inset follows the actual header boundary without the obsolete extra clearance',()=>{
   const ctx=vm.createContext({MOBILE_MQ:{matches:true},elHeader:{getBoundingClientRect:()=>({bottom:63.25})}});
-  vm.runInContext(part('function viewportInset()', 'function visibleAnchor()'),ctx);
+  vm.runInContext(part('function viewportInset()', 'function visibleAnchor('),ctx);
   assert.equal(ctx.viewportInset(),63.25);
   ctx.MOBILE_MQ.matches=false;assert.equal(ctx.viewportInset(),0);
 });
