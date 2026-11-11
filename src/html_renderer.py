@@ -1,5 +1,6 @@
 import io
 import json
+import logging
 import os
 from pathlib import Path
 from src.viewer_data import CompactRows, FORMAT
@@ -137,6 +138,8 @@ def write_viewer_html(output, chat_rows, title, channel, vod_url, created_at=Non
                 indexes = spread(len(frames), count)
                 size = (frame_overhead + sum(frame_sizes[i] for i in indexes) + count - 1
                         if count else prefix_size + len(encoder.encode(assets)))
+                if not count and frames:
+                    logging.getLogger(__name__).info('HTML storyboard: embed_budget_exceeded')
                 if not count and not assets:
                     break
                 if size <= budget:

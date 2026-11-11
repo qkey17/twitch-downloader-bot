@@ -3,6 +3,7 @@ import asyncio
 import base64
 import io
 import json
+import logging
 import re
 from urllib.parse import urlsplit
 
@@ -57,8 +58,15 @@ def plan(spec, vod_id, duration, qualities=('high', 'low')):
             count, interval, width, height, cols, rows = values
             capacity = cols * rows
             if (width * height * capacity > 4_000_000 or not 1 <= width <= 480 or not 1 <= height <= 270
-                    or not (count - 1) * interval <= duration <= (count + 1) * interval):
+                    or duration > (count + 1) * interval):
                 continue
+            # Twitch can round duration/count up to an integer interval. Keep
+            # the manifest's grid and sample only timestamps inside the VOD.
+            usable_count = count
+            if (count - 1) * interval > duration:
+                if interval != (duration + count - 1) // count:
+                    continue
+                usable_count = duration // interval + 1
             images = item.get('images')
             if not isinstance(images, list) or len(images) != (count + capacity - 1) // capacity:
                 continue
@@ -68,7 +76,7 @@ def plan(spec, vod_id, duration, qualities=('high', 'low')):
             # VOD instead of clustering multiple frames in each selected atlas.
             limit = MAX_FRAMES if len(images) <= MAX_ATLASES else MAX_ATLASES
             selected = {}
-            for index in spread(count, limit):
+            for index in spread(usable_count, limit):
                 atlas, cell = divmod(index, capacity)
                 selected.setdefault(images[atlas], []).append((cell, index * interval))
             return (width, height, cols, rows), list(selected.items())
@@ -133,6 +141,11 @@ ASSET_ERRORS = (aiohttp.ClientError, TimeoutError, ValueError, OSError, Image.De
 IMAGE_TYPES = {'image/jpeg', 'image/png', 'binary/octet-stream', 'application/octet-stream'}
 
 
+def _preview_result(result, status):
+    logging.getLogger(__name__).info('HTML storyboard: %s', status)
+    return result
+
+
 async def fetch_preview(session, meta, cancel_check):
     """One optional query for a confirmed archived VOD. No media playlists."""
     from src.handlers.handlers_vod_info import preview_url
@@ -152,7 +165,8 @@ async def fetch_preview(session, meta, cancel_check):
     vod_id, duration = getattr(meta, 'vod_id', None), getattr(meta, 'length_seconds', None)
     if (getattr(meta, 'is_live', None) is not False or not isinstance(vod_id, str)
             or not re.fullmatch(r'[0-9]{1,20}', vod_id) or type(duration) is not int or duration <= 0):
-        return result
+        return _preview_result(result, 'metadata_unconfirmed')
+    status = 'metadata_unavailable'
     try:
         async with asyncio.timeout(12):
             query = 'query($id: ID!) { video(id: $id) { id lengthSeconds seekPreviewsURL } }'
@@ -164,13 +178,19 @@ async def fetch_preview(session, meta, cancel_check):
             data = body.get('data') if isinstance(body, dict) and not body.get('errors') else None
             video = data.get('video') if isinstance(data, dict) else None
             if not isinstance(video, dict) or video.get('id') != vod_id or video.get('lengthSeconds') != duration:
-                return result
-            url = manifest_url(video.get('seekPreviewsURL'), vod_id, cover)
+                return _preview_result(result, 'metadata_mismatch')
+            seek_url = video.get('seekPreviewsURL')
+            if not seek_url:
+                return _preview_result(result, 'seek_url_missing')
+            url = manifest_url(seek_url, vod_id, cover)
             if not url:
-                return result
-            spec = json.loads(await get_asset(session, url, 128 * 1024, {
+                return _preview_result(result, 'manifest_url_rejected')
+            status = 'manifest_unavailable'
+            manifest = await get_asset(session, url, 128 * 1024, {
                 'application/json', 'binary/octet-stream', 'application/octet-stream',
-            }))
+            })
+            status = 'manifest_unsupported'
+            spec = json.loads(manifest)
             remaining = MAX_ATLASES
             for quality in ('high', 'low'):
                 parsed = plan(spec, vod_id, duration, (quality,))
@@ -178,7 +198,9 @@ async def fetch_preview(session, meta, cancel_check):
                     continue
                 layout, atlases = parsed
                 if len(atlases) > remaining:
+                    status = 'atlas_request_budget'
                     continue
+                status = 'atlas_failed'
                 frames = []
                 try:
                     for name, cells in atlases:
@@ -189,7 +211,7 @@ async def fetch_preview(session, meta, cancel_check):
                 except ASSET_ERRORS:
                     continue
                 result.update(frames=frames, aspect=list(layout[:2]))
-                break
+                return _preview_result(result, 'frames_acquired')
     except (*ASSET_ERRORS, ConfigurationError, RecursionError):
         pass
-    return result
+    return _preview_result(result, status)
