@@ -1,4 +1,5 @@
 import io
+import base64
 import json
 import os
 import unittest
@@ -43,6 +44,19 @@ def encoded(value):
 
 
 class StoryboardTests(unittest.IsolatedAsyncioTestCase):
+    def test_prefers_high_valid_variant_and_preserves_native_pixels(self):
+        low = spec(20, 100)
+        high = {**low, 'quality': 'high', 'width': 220, 'height': 124, 'images': ['123-high-0.jpg']}
+        layout, atlases = sb.plan([low, high], '123', 2000)
+        self.assertEqual((220, 124, 5, 4), layout)
+        self.assertEqual('123-high-0.jpg', atlases[0][0])
+        with io.BytesIO() as out:
+            Image.new('RGB', (1100, 496), 'blue').save(out, 'JPEG')
+            frames = sb.atlas_frames(out.getvalue(), layout, [(0, 0), (19, 1900)])
+        for _, uri in frames:
+            with Image.open(io.BytesIO(base64.b64decode(uri.split(',')[1]))) as frame:
+                self.assertEqual((220, 124), frame.size)
+        self.assertEqual((16, 9, 5, 4), sb.plan([low, {**high, 'images': []}], '123', 2000)[0])
     def test_sampling_covers_100_hours_and_bounds_requests(self):
         layout, atlases = sb.plan([spec(3600, 100)], '123', 360000)
         times = [t for _, cells in atlases for _, t in cells]
@@ -81,6 +95,14 @@ class StoryboardTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result['cover'].startswith(sb.JPEG_PREFIX))
         for call in [*session.get.call_args_list, *session.post.call_args_list]:
             self.assertFalse(call.kwargs['allow_redirects'])
+        high = {**spec(20, 100), 'quality': 'high', 'images': ['123-high-0.jpg']}
+        session.get = Mock(side_effect=[
+            Response(atlas, 'image/jpeg'), Response(encoded([spec(20, 100), high])),
+            Response(b'', status=404), Response(atlas, 'image/jpeg'),
+        ])
+        self.assertEqual(result, await sb.fetch_preview(session, meta, lambda: None))
+        self.assertTrue(session.get.call_args_list[-2].args[0].endswith('123-high-0.jpg'))
+        self.assertTrue(session.get.call_args_list[-1].args[0].endswith('123-low-0.jpg'))
         session.get = Mock(side_effect=[Response(atlas, 'image/jpeg'), Response(b'', status=302)])
         self.assertEqual({'cover': result['cover']}, await sb.fetch_preview(session, meta, lambda: None))
         session.get = Mock(side_effect=[
@@ -102,12 +124,13 @@ class StoryboardTests(unittest.IsolatedAsyncioTestCase):
         base = render_viewer_html(*args)
         frames = [[i, sb.JPEG_PREFIX + 'A' * 50_000] for i in range(96)]
         cover = sb.JPEG_PREFIX + 'AAAA'
-        assets = {'frames': frames, 'cover': cover}
+        assets = {'frames': frames, 'cover': cover, 'aspect': [220, 124]}
         page = render_viewer_html(*args, preview_assets=assets)
         self.assertLessEqual(len(page) - len(base), sb.EMBED_LIMIT)
         actual = payload(page)['vod_preview']
         self.assertEqual((0, 95), (actual['frames'][0][0], actual['frames'][-1][0]))
         self.assertEqual(cover, actual['cover'])
+        self.assertEqual([220, 124], actual['aspect'])
         base_size = len(base.replace('\n', os.linesep).encode('utf-8'))
         with patch('src.html_renderer.MAX_CLOUD_HTML_BYTES', base_size + 500):
             self.assertEqual({'cover': cover}, payload(render_viewer_html(*args, preview_assets=assets))['vod_preview'])
