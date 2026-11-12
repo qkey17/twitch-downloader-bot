@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import io
+import json
 import unittest
 from types import SimpleNamespace as NS
 from unittest.mock import Mock
@@ -63,12 +64,24 @@ class Compositions(unittest.TestCase):
         result=compose(picture());upload=telegram_image(result)
         self.assertEqual(result.data,upload.input_file_content);self.assertEqual('channel.png',upload.filename)
     def test_html_resources_are_internal_and_self_contained(self):
-        for live,p in ((False,DEFAULT),(True,LIVE)):
-            html=render_viewer_html([], '</script><img onerror=x>', 'channel','https://www.twitch.tv/videos/1',captured_during_live=live)
-            encoded=base64.b64encode(p.read_bytes()).decode()
-            self.assertIn('data:image/png;base64,'+encoded,html)
-            self.assertNotIn(str(p),html);self.assertNotIn('{{VOD_FALLBACK',html)
-            self.assertNotIn('</script><img onerror=x>',html)
+        title = '</script><img onerror=x>'
+        for live in (False, True):
+            with self.subTest(live=live):
+                html = render_viewer_html([], title, 'channel', 'https://www.twitch.tv/videos/1',
+                                          captured_during_live=live)
+                _, marker, rest = html.partition('<script id="chat-data" type="application/json">')
+                self.assertTrue(marker)
+                data = json.loads(rest.split('</script>', 1)[0])
+                self.assertEqual(title, data['meta']['title'])
+                self.assertNotIn('vod_preview', data)
+                self.assertRegex(html, r'<button\b[^>]*\bid="vodCard"[^>]*\shidden\s*>')
+                self.assertNotIn('data:image/png;base64,', html)
+                for resource in (DEFAULT, LIVE):
+                    self.assertNotIn(base64.b64encode(resource.read_bytes()).decode(), html)
+                    self.assertNotIn(str(resource), html)
+                self.assertNotIn('{{VOD_FALLBACK', html)
+                self.assertNotIn(title, html)
+
 
 class AvatarRequests(unittest.IsolatedAsyncioTestCase):
     def _setupAsyncioRunner(self):self._asyncioRunner=asyncio.Runner(loop_factory=asyncio.SelectorEventLoop)
