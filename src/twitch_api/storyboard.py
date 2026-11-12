@@ -114,11 +114,37 @@ def jpeg(image, size, limit, quality=65):
     return JPEG_PREFIX + base64.b64encode(data).decode('ascii')
 
 
-def cover_data(data):
+def cover_data(data, *, large=False):
     with Image.open(io.BytesIO(data), formats=['JPEG', 'PNG']) as image:
         if image.width * image.height > 2_000_000:
             raise ValueError('Cover exceeds pixel limit')
+        if large:
+            for size, quality in (((1280, 720), 84), ((1280, 720), 76), ((960, 540), 80)):
+                with image.copy() as candidate:
+                    try:
+                        return jpeg(candidate, size, 128 * 1024, quality=quality)
+                    except ValueError:
+                        continue
         return jpeg(image, (720, 405), 128 * 1024)
+
+
+async def _upgrade_cover(session, result, cover, full, cancel_check):
+    # Twitch serves size variants for this specific filename. Both URLs have
+    # already passed the same Twitch CDN validator.
+    candidate = re.sub(r'(/thumb[0-9]+-)[0-9]+x[0-9]+(\.jpe?g)$', r'\g<1>1280x720\2', cover or '')
+    for url in dict.fromkeys((candidate, full)):
+        if not url or url == cover:
+            continue
+        cancel_check()
+        try:
+            data = await get_asset(session, url, 512 * 1024, IMAGE_TYPES)
+            encoded = await asyncio.to_thread(cover_data, data, large=True)
+            if result.get('cover') and len(result['cover']) < len(encoded):
+                result['cover_fallback'] = result['cover']
+            result['cover'] = encoded
+            return
+        except ASSET_ERRORS:
+            continue
 
 
 def atlas_frames(data, layout, cells):
@@ -153,19 +179,28 @@ async def fetch_preview(session, meta, cancel_check):
     result = {}
     if getattr(meta, 'is_live', None) is True:
         return result
-    cover = (preview_url(getattr(meta, 'thumbnail_preview_url', None))
-             or preview_url(getattr(meta, 'thumbnail_full_url', None)))
+    full = preview_url(getattr(meta, 'thumbnail_full_url', None))
+    cover = preview_url(getattr(meta, 'thumbnail_preview_url', None)) or full
     if cover:
         try:
             data = await get_asset(session, cover, 512 * 1024, IMAGE_TYPES)
             result['cover'] = await asyncio.to_thread(cover_data, data)
         except ASSET_ERRORS:
             pass
+    async def cover_only(status):
+        await _upgrade_cover(session, result, cover, full, cancel_check)
+        return _preview_result(result, status)
+
     cancel_check()
     vod_id, duration = getattr(meta, 'vod_id', None), getattr(meta, 'length_seconds', None)
     if (getattr(meta, 'is_live', None) is not False or not isinstance(vod_id, str)
             or not re.fullmatch(r'[0-9]{1,20}', vod_id) or type(duration) is not int or duration <= 0):
-        return _preview_result(result, 'metadata_unconfirmed')
+        return await cover_only('metadata_unconfirmed')
+    status = await _fetch_frames(session, result, cover, vod_id, duration, cancel_check)
+    return _preview_result(result, status) if 'frames' in result else await cover_only(status)
+
+
+async def _fetch_frames(session, result, cover, vod_id, duration, cancel_check):
     status = 'metadata_unavailable'
     try:
         async with asyncio.timeout(12):
@@ -178,13 +213,13 @@ async def fetch_preview(session, meta, cancel_check):
             data = body.get('data') if isinstance(body, dict) and not body.get('errors') else None
             video = data.get('video') if isinstance(data, dict) else None
             if not isinstance(video, dict) or video.get('id') != vod_id or video.get('lengthSeconds') != duration:
-                return _preview_result(result, 'metadata_mismatch')
+                return 'metadata_mismatch'
             seek_url = video.get('seekPreviewsURL')
             if not seek_url:
-                return _preview_result(result, 'seek_url_missing')
+                return 'seek_url_missing'
             url = manifest_url(seek_url, vod_id, cover)
             if not url:
-                return _preview_result(result, 'manifest_url_rejected')
+                return 'manifest_url_rejected'
             status = 'manifest_unavailable'
             manifest = await get_asset(session, url, 128 * 1024, {
                 'application/json', 'binary/octet-stream', 'application/octet-stream',
@@ -211,7 +246,7 @@ async def fetch_preview(session, meta, cancel_check):
                 except ASSET_ERRORS:
                     continue
                 result.update(frames=frames, aspect=list(layout[:2]))
-                return _preview_result(result, 'frames_acquired')
+                return 'frames_acquired'
     except (*ASSET_ERRORS, ConfigurationError, RecursionError):
         pass
-    return _preview_result(result, status)
+    return status

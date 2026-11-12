@@ -53,8 +53,6 @@ def write_viewer_html(output, chat_rows, title, channel, vod_url, created_at=Non
                       subscriber_twitch_emote_ids=None, preview_assets=None):
     """Write the same template/payload incrementally, with one row in memory."""
     template = Path(__file__).with_name("viewer_template.html").read_text(encoding="utf-8")
-    from src.ui.card_images import fallback_data
-    template = template.replace("{{VOD_FALLBACK_PNG}}",fallback_data(False)).replace("{{LIVE_FALLBACK_PNG}}",fallback_data(True))
     prefix, marker, suffix = template.partition("{{CHAT_DATA_JSON}}")
     if not marker or marker in suffix:
         raise ValueError("Viewer template must contain exactly one data marker")
@@ -126,6 +124,7 @@ def write_viewer_html(output, chat_rows, title, channel, vod_url, created_at=Non
         if preview_assets:
             budget = min(EMBED_LIMIT, MAX_CLOUD_HTML_BYTES - output_bytes - byte_count(suffix) - 1)
             assets = preview_assets.copy()
+            cover_fallback = assets.pop('cover_fallback', None)
             frames = assets.pop('frames', [])
             aspect = assets.pop('aspect', None)
             storyboard = {**assets, 'aspect': aspect} if aspect else assets
@@ -140,6 +139,9 @@ def write_viewer_html(output, chat_rows, title, channel, vod_url, created_at=Non
                         if count else prefix_size + len(encoder.encode(assets)))
                 if not count and frames:
                     logging.getLogger(__name__).info('HTML storyboard: embed_budget_exceeded')
+                if not count and size > budget and cover_fallback:
+                    assets['cover'] = cover_fallback
+                    size = prefix_size + len(encoder.encode(assets))
                 if not count and not assets:
                     break
                 if size <= budget:

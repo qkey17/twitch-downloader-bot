@@ -147,6 +147,35 @@ class StoryboardTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual({}, await sb.fetch_preview(session, meta, lambda: None))
                 self.assertEqual([f'INFO:{sb.__name__}:HTML storyboard: {status}'], logs.output)
 
+    async def test_no_storyboard_upgrades_only_the_trusted_cover_and_retains_fallback(self):
+        def image_bytes(size):
+            with io.BytesIO() as out:
+                Image.new('RGB', size, 'blue').save(out, 'JPEG')
+                return out.getvalue()
+
+        small, large = image_bytes((720, 405)), image_bytes((1280, 720))
+        cover = 'https://static-cdn.jtvnw.net/cf_vods/test/thumb0-720x405.jpg'
+        meta = SimpleNamespace(vod_id='123', length_seconds=2000, is_live=False, thumbnail_preview_url=cover)
+        video = dict(id='123', lengthSeconds=2000, seekPreviewsURL=None)
+        session = SimpleNamespace(post=Mock(return_value=Response(encoded({'data': {'video': video}}))),
+                                  get=Mock(side_effect=[Response(small,'image/jpeg'), Response(large,'image/jpeg')]))
+        result = await sb.fetch_preview(session, meta, lambda: None)
+        self.assertEqual(cover.replace('720x405','1280x720'), session.get.call_args.args[0])
+        self.assertFalse(session.get.call_args.kwargs['allow_redirects'])
+        with Image.open(io.BytesIO(base64.b64decode(result['cover'].split(',')[1]))) as cover_img:
+            self.assertEqual((1280,720),cover_img.size)
+        with Image.open(io.BytesIO(base64.b64decode(sb.cover_data(small,large=True).split(',')[1]))) as cover_img:
+            self.assertEqual((720,405),cover_img.size)
+        args = ([], 'title', 'channel', 'vod')
+        embedded = payload(render_viewer_html(*args, preview_assets=result))['vod_preview']
+        self.assertEqual({'cover':result['cover']},embedded)
+        base_size = len(render_viewer_html(*args).replace('\n',os.linesep).encode())
+        with patch('src.html_renderer.MAX_CLOUD_HTML_BYTES',base_size+len(result['cover_fallback'])+100):
+            embedded = payload(render_viewer_html(*args, preview_assets=result))['vod_preview']
+        self.assertEqual({'cover':result['cover_fallback']},embedded)
+        session.get = Mock(side_effect=[Response(small,'image/jpeg'),Response(b'',status=302)])
+        self.assertEqual({'cover':result['cover_fallback']},await sb.fetch_preview(session,meta,lambda:None))
+
     async def test_streamed_body_is_bounded_without_content_length(self):
         response = Response(b'x' * 32)
         response.content_length = None

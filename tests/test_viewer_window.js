@@ -279,7 +279,7 @@ test('endpoint reversal immediately consumes motion in both directions without h
   }
 });
 test('media-query crossings reset mobile compact, while mobile width changes preserve intent',()=>{
-  const ctx=vm.createContext({MOBILE_MQ:{matches:true},panelMobile:true,PANEL_EXPANDED:false,storyboardMode:false,calls:[]});
+  const ctx=vm.createContext({MOBILE_MQ:{matches:true},panelMobile:true,PANEL_EXPANDED:false,storyboardMode:false,hasVodImage:false,calls:[]});
   ctx.syncPanelState=(expanded,animate)=>{ctx.PANEL_EXPANDED=expanded;ctx.calls.push([expanded,animate]);};
   vm.runInContext(part('function reconcilePanelMode()',"MOBILE_MQ.addEventListener('change'"),ctx);
   ctx.reconcilePanelMode();assert.equal(ctx.PANEL_EXPANDED,false);
