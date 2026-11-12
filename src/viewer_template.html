@@ -620,21 +620,21 @@ html{overflow-anchor:none;}
 }
 .export-meta{display:flex;justify-content:space-between;align-items:center;margin-top:18px;padding-top:14px;border-top:1px solid rgba(255,255,255,.08);font-size:14px;color:#b9b9c6}
 
+.sidebar{display:contents;}
+
 /* ===== Desktop layout ===== */
 @media (min-width: 901px){
   .page{padding:24px}
+  .chat{--controls-w:336px;}
   .chat{max-width: calc(var(--controls-w) + var(--chat-w) + var(--gap)); display:flex; gap:var(--gap); align-items:flex-start}
 
-  /* left column becomes fixed-ish via sticky */
+  .sidebar{
+    display:flex;align-items:end;position:sticky;top:24px;
+    height:calc(100dvh - 48px);flex:0 0 var(--controls-w);min-width:0;
+  }
   header{
-    width:var(--controls-w);
-    max-width:none;
-    flex:0 0 var(--controls-w);
-    position:sticky;
-    top:24px; /* offset from viewport top */
-    border-radius:14px;
-    padding:20px;
-    height:fit-content;
+    position:static;width:100%;min-width:0;max-height:100%;
+    border-radius:14px;padding:20px;
   }
 
   /* make controls vertical and full width of left column */
@@ -680,7 +680,8 @@ html{overflow-anchor:none;}
   #list{
     width:var(--chat-w);
     max-width:var(--chat-w);
-    flex:0 0 var(--chat-w);
+    flex:1 1 var(--chat-w);
+    min-width:0;
     border-radius:14px;
     min-height:calc(100vh - 48px);
     margin-top:0; /* header is in left column, not above messages */
@@ -855,33 +856,47 @@ html{overflow-anchor:none;}
 .live-capture-warning{margin:8px 0;padding:8px 10px;border:1px solid #a74444;border-radius:8px;background:rgba(180,45,45,.12);font-size:13px;line-height:1.4;overflow-wrap:anywhere;}
 .live-capture-warning[hidden]{display:none;}
 
-/* Desktop wrappers are boxless, preserving the original sidebar geometry. */
+/* The detail wrappers take their layout from the active breakpoint. */
 .panel-details,.panel-details-content{display:contents;}
-.panel-details-content[hidden],.storyboard-panel[hidden],.vod-card[hidden],.vod-zoom[hidden],.vod-zoom-media[hidden],#vodLink[hidden]{display:none;}
+.panel-details-content[hidden],.storyboard-panel[hidden],.vod-card[hidden],.desktop-preview[hidden],.desktop-preview button[hidden],.vod-zoom-media[hidden],#vodLink[hidden]{display:none;}
 .panel-top:not(.has-vod-image){grid-template-columns:minmax(0,1fr);}
 .vod-card{padding:0;width:100%;}
 .vod-card[aria-expanded=true]{visibility:hidden;}
 .vod-card-media{display:block;aspect-ratio:var(--preview-ratio,16/9);background:none;}
 #vodPreviewImg{display:block;width:100%;height:100%;object-fit:contain;}
 #vodPreviewImg:not([src]){visibility:hidden;}
-.vod-zoom{
-  position:fixed;z-index:105;left:50%;top:50%;transform:translate(-50%,-50%);
-  width:min(850px,calc(100vw - 48px),calc((100dvh - 96px) * var(--preview-ratio,1.778)));
-}
+.desktop-preview{display:none;}
 .vod-zoom-media{aspect-ratio:var(--preview-ratio,16/9);border-radius:var(--control-radius);overflow:hidden;}
-.vod-zoom-close{
-  position:absolute;right:0;bottom:calc(100% + 6px);
-  width:36px;height:36px;display:grid;place-items:center;cursor:pointer;
-  color:var(--text);background:var(--panel);border:1px solid var(--border);border-radius:var(--control-radius);
-}
-.vod-zoom-close:focus-visible,#vodLink:focus-visible{outline:2px solid #b3adff;outline-offset:2px;}
+#vodLink:focus-visible,#desktopPreviewToggle:focus-visible{outline:2px solid #b3adff;outline-offset:2px;}
 #vodPreviewImg.vod-preview-flight{position:fixed;z-index:106;pointer-events:none;transform-origin:top left;}
 @media (min-width:901px){
-  header{max-height:calc(100dvh - 48px);overflow:auto;}
+  .panel-details,.panel-details-content{display:flex;flex-direction:column;gap:var(--control-gap);}
+  .panel-details{min-height:0;overflow:auto;scrollbar-width:thin;}
+  .panel-details-content{flex:none;}
+  .desktop-preview{
+    display:block;flex:none;min-width:0;overflow:hidden;
+    border-top:1px solid var(--border);padding-top:var(--control-gap);
+  }
+  .desktop-preview .vod-card:not([hidden]){
+    display:block;margin-inline:auto;max-width:max(70px,calc((100dvh - 180px) * 16 / 9));
+    transition:border-color .18s ease;
+  }
+  .desktop-preview .vod-card:hover,.desktop-preview .vod-card:active{transform:none;box-shadow:none;}
+  .desktop-preview .vod-card-media{aspect-ratio:16/9;}
+  #desktopPreviewToggle{width:100%;white-space:nowrap;}
+  .meta-buttons button{min-width:0;padding-inline:2px;white-space:nowrap;}
+  #list .row.is-preview-anchor{background:#29292f;}
+  #list .row.is-chat-pinned{background:#35323d;}
+
   .panel-top{display:flex;flex-direction:column;gap:var(--control-gap);}
   .panel-top .meta{order:-1;height:auto;}
   .vod-title{display:block;overflow:visible;-webkit-line-clamp:unset;overflow-wrap:anywhere;}
   .vod-card{margin-bottom:0;}
+}
+@media (min-width:901px) and (hover:hover) and (pointer:fine){
+  #list .row:hover{background:#29292f;}
+  #list .row.is-chat-pinned:hover{background:#35323d;}
+  #list .row .user:hover{background:#3c3c44;border-radius:3px;}
 }
 .mobile-control-row{display:none;}
 @media(max-width:900px){
@@ -896,9 +911,9 @@ html{overflow-anchor:none;}
   .controls input,.meta-buttons button{height:var(--control-h);min-height:var(--control-h);width:100%;min-width:0;box-sizing:border-box;}
   .panel-details{display:block;order:0;height:0;opacity:0;overflow:hidden;}
   header.is-expanded:not(.is-panel-animating) .panel-details{overflow:visible;}
-  header.has-vod-image .panel-details{max-height:var(--storyboard-panel-limit,none);}
+  header.has-vod-image .panel-details{max-height:max(0px,calc(100svh - var(--panel-chrome,0px)));}
   header.storyboard-panel-limited.is-expanded:not(.is-panel-animating) .panel-details{overflow:auto;}
-  header.is-storyboard.is-expanded:not(.is-panel-animating) .panel-details{overflow:hidden;margin-inline:-16px;}
+  header.is-storyboard.is-expanded:not(.is-panel-animating) .panel-details{overflow:clip;margin-inline:-16px;}
   .storyboard-panel:not([hidden]){display:grid;place-items:center;height:100%;}
   .storyboard-panel .vod-zoom-media{
     display:block;object-fit:contain;
@@ -970,7 +985,7 @@ html{overflow-anchor:none;}
 <div class="page">
   <div class="chat">
 
-    <header>
+    <div class="sidebar"><header>
       <div class="panel-details" id="panelDetails"><div class="panel-details-content">
       <div class="panel-top">
         <button class="vod-card" id="vodCard" type="button" aria-label="Увеличить превью VOD" aria-expanded="false" hidden>
@@ -1026,13 +1041,10 @@ html{overflow-anchor:none;}
         <svg class="panel-exit" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="M4 9h5V4m11 5h-5V4M4 15h5v5m11-5h-5v5"/></svg>
       </button>
       </div>
-    </header>
-    <div class="vod-zoom" id="desktopPreview" role="region" aria-label="Увеличенное превью VOD" hidden>
-      <div class="vod-zoom-media"></div>
-      <button class="vod-zoom-close" type="button" aria-label="Свернуть превью">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 9h5V4m11 5h-5V4M4 15h5v5m11-5h-5v5"/></svg>
-      </button>
-    </div>
+      <div id="desktopPreview" class="desktop-preview" hidden>
+        <div class="meta-buttons"><button id="desktopPreviewToggle" type="button" aria-expanded="false" hidden>🎞️ Превью</button></div>
+      </div>
+    </header></div>
 
     <div id="list"></div>
 
@@ -1113,7 +1125,7 @@ let storyboardMode=false;
 if(hasVodImage) elHeader.classList.add('has-vod-image');
 const elScrubber=document.getElementById("fastScrubber");
 const elPanelHandle=document.querySelector(".panel-toggle");
-let onPanelLayout=()=>()=>{}, refreshPreviewFrame=()=>{};
+let onPanelLayout=()=>()=>{}, refreshPreviewFrame=()=>{}, queueDesktopFocus=()=>{};
 const elPanelDetails=document.getElementById("panelDetails");
 const elPanelContent=elPanelDetails.firstElementChild;
 let panelAnimating=false,panelCleanup=()=>{};
@@ -1261,7 +1273,10 @@ new ResizeObserver(()=>{if(!panelAnimating) updatePanelGeometry();}).observe(elH
 function reconcilePanelMode(){
   const mobile=MOBILE_MQ.matches;
   const expanded=mobile!==panelMobile ? !mobile : PANEL_EXPANDED;
-  if(hasVodImage && mobile!==panelMobile) closeVodPreview(false,false);
+  if(hasVodImage && mobile!==panelMobile){
+    closeVodPreview(false,false);
+    placePreviewControl(mobile);
+  }
   panelMobile=mobile;
   if(storyboardMode){resizeStoryboardPanel();return;}
   syncPanelState(expanded,false);
@@ -2038,6 +2053,62 @@ function visibleAnchor(minVisible=0.5){
   }
   return null;
 }
+function chatViewport(){
+  const rect=elList.getBoundingClientRect(),viewport=window.visualViewport;
+  const offset=viewport?.offsetTop ?? 0;
+  return {top:Math.max(rect.top,viewportInset(),offset),
+    bottom:Math.min(rect.bottom,offset+(viewport?.height ?? innerHeight))};
+}
+function rowIntersects(row,bounds){
+  if(!row) return false;
+  const rect=row.getBoundingClientRect();
+  return rect.bottom>bounds.top && rect.top<bounds.bottom;
+}
+function bottomRow(bounds){
+  if(bounds.bottom<=bounds.top) return null;
+  let partial=null;
+  // Three mounted blocks at most. Binary search skips rows below the viewport.
+  for(const node of [...blockNodes.values()].reverse()){
+    const box=node.getBoundingClientRect(),children=node.children;
+    if(box.top>=bounds.bottom || box.bottom<=bounds.top || !children.length) continue;
+    let left=0,right=children.length;
+    while(left<right){
+      const middle=(left+right)>>>1;
+      if(children[middle].getBoundingClientRect().bottom<=bounds.bottom+.5) left=middle+1;
+      else right=middle;
+    }
+    const candidate=children[left-1];
+    if(candidate && candidate.getBoundingClientRect().top>=bounds.top-.5) return candidate;
+    if(!partial){
+      // The first row crossing the bottom edge can also be the only visible row.
+      const crossing=children[left];
+      if(rowIntersects(crossing,bounds)) partial=crossing;
+      else if(rowIntersects(candidate,bounds)) partial=candidate;
+    }
+  }
+  return partial;
+}
+function initialMobileBottom(bottom){
+  const first=blockNodes.get(0)?.children;
+  if(!first?.length) return null;
+  let left=0,right=first.length;
+  while(left<right){
+    const middle=(left+right)>>>1;
+    if(first[middle].getBoundingClientRect().bottom+window.scrollY<=bottom+.5) left=middle+1;
+    else right=middle;
+  }
+  return left ? left-1 : null;
+}
+function catchUpIndex(last,initial){
+  return initial===null ? last : Math.min(last,2*Math.max(0,last-initial));
+}
+function mobileVisibleIndex(){
+  if(!window.scrollY) return 0;
+  const bounds=chatViewport(),row=bottomRow(bounds);
+  if(!row) return null;
+  return catchUpIndex(+row.dataset.id,initialMobileBottom(bounds.bottom));
+}
+
 function restoreAnchor(anchor){
   if(!anchor) return;
   const node=elList.querySelector(`.row[data-id="${anchor.id}"]`);
@@ -2060,7 +2131,7 @@ function measureBlocks(anchor=resizeAnchor || stableAnchor || visibleAnchor()){
   if(count) averageHeight=total/count;
   updateSpaces();restoreAnchor(anchor);stableAnchor=visibleAnchor();
   if(keepScrub) rememberScrubPosition();
-  scheduleScrubSync();
+  scheduleScrubSync();queueDesktopFocus();
 }
 const blockObserver=new ResizeObserver(()=>{
   if(!panelAnimating && !windowBusy) {measureBlocks();scheduleWindow();}
@@ -2275,6 +2346,9 @@ const listObserver=new ResizeObserver(()=>{
 });
 listObserver.observe(elList,{box:'border-box'});
 window.addEventListener('resize',()=>{
+  // An enlarged panel handles actual layout changes in reconcilePanelMode.
+  // Toolbar-only height changes must not restore a document scroll anchor.
+  if(storyboardMode){scheduleScrubSync();return;}
   // Width, wrapping and the mobile header settle in different observer turns.
   // Keep one logical anchor through the entire resize, not temporary positions.
   if(!resizeAnchor && window.scrollY>0) resizeAnchor=stableAnchor;
@@ -2318,11 +2392,8 @@ function nearestStoryFrame(frames,seconds){
   return left && seconds-frames[left-1][0]<=frames[left][0]-seconds ? frames[left-1] : frames[left];
 }
 function setStoryboardPanelLimit(insetBase){
-  const viewport=window.visualViewport;
-  const bottom=viewport ? viewport.offsetTop+viewport.height : innerHeight;
-  const limit=Math.max(0,bottom-insetBase);
-  elPanelDetails.style.setProperty('--storyboard-panel-limit',limit+'px');
-  return limit;
+  elPanelDetails.style.setProperty('--panel-chrome',Math.max(0,insetBase)+'px');
+  return parseFloat(getComputedStyle(elPanelDetails).maxHeight) || 0;
 }
 function setStoryboardLayout(active){
   elPanelContent.hidden=active;
@@ -2331,23 +2402,21 @@ function setStoryboardLayout(active){
   elPanelHandle.setAttribute('aria-label',active ? 'Вернуться к панели чата' : 'Свернуть панель');
 }
 function sizeStoryboardFrame(){
-  const rect=elStoryboardPanel.getBoundingClientRect(),viewport=window.visualViewport,margin=8;
-  const left=Math.max(rect.left,(viewport?.offsetLeft ?? 0)+margin);
-  const right=Math.min(rect.right,(viewport?.offsetLeft ?? 0)+(viewport?.width ?? innerWidth)-margin);
-  const top=Math.max(rect.top,(viewport?.offsetTop ?? 0)+margin);
-  const bottom=Math.min(rect.bottom-6,(viewport?.offsetTop ?? 0)+(viewport?.height ?? innerHeight)-margin);
-  const ratio=previewRatio;
-  const width=Math.floor(Math.min(right-left,(bottom-top)*ratio));
-  elMobilePreviewMedia.hidden=!(width>0);
-  if(!(width>0)) return;
-  elStoryboardPanel.style.paddingInlineStart=(left-rect.left)+'px';
-  elStoryboardPanel.style.paddingInlineEnd=(rect.right-right)+'px';
-  elStoryboardPanel.style.paddingBlockStart=(top-rect.top)+'px';
-  elStoryboardPanel.style.paddingBlockEnd=(rect.bottom-bottom)+'px';
+  const width=Math.max(0,Math.floor(Math.min(elStoryboardPanel.clientWidth-16,
+    (elStoryboardPanel.clientHeight-6)*previewRatio)));
+  elMobilePreviewMedia.hidden=!width;
   elMobilePreviewMedia.style.width=width+'px';
-  elMobilePreviewMedia.style.height=Math.floor(width/ratio)+'px';
+  elMobilePreviewMedia.style.height=Math.floor(width/previewRatio)+'px';
+}
+let storyboardLayoutWidth,storyboardLayoutLimit;
+function rememberStoryboardLayout(){
+  storyboardLayoutWidth=elHeader.clientWidth;
+  storyboardLayoutLimit=getComputedStyle(elPanelDetails).maxHeight;
 }
 function resizeStoryboardPanel(){
+  if(storyboardLayoutWidth===elHeader.clientWidth &&
+     storyboardLayoutLimit===getComputedStyle(elPanelDetails).maxHeight) return;
+  finishPreviewFlight?.();
   const settle=onPanelLayout();
   setStoryboardLayout(false);
   fitVodTitle();
@@ -2358,6 +2427,7 @@ function resizeStoryboardPanel(){
   elPanelDetails.style.height=height+'px';
   setStoryboardLayout(true);
   sizeStoryboardFrame();
+  rememberStoryboardLayout();
   updatePanelGeometry();
   settle();
 }
@@ -2368,6 +2438,7 @@ function enterStoryboard(){
   setStoryboardLayout(true);
   elPanelDetails.scrollTop=0;
   sizeStoryboardFrame();
+  rememberStoryboardLayout();
 }
 function leaveStoryboard(){
   storyboardMode=false;
@@ -2387,11 +2458,11 @@ function durationTime(seconds){
   if(!Number.isSafeInteger(seconds) || seconds<=0) return '—';
   return String(Math.floor(seconds/3600)).padStart(2,'0')+':'+String(Math.floor(seconds/60)%60).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0');
 }
-let scrubAtEnd=false,scrubLabelSignature='';
+let scrubAtEnd=false,scrubLabelSignature='',scrubSelectedTime='—';
 function physicalChatEnd(){
   const gap=document.documentElement.scrollHeight-innerHeight-window.scrollY;
   scrubAtEnd=gap<=(scrubAtEnd ? 3 : 1);
-  return scrubAtEnd && filtered===null && rowCount()>0;
+  return scrubAtEnd && window.scrollY>0 && filtered===null && rowCount()>0;
 }
 function fitScrubLabel(){
   const span=elScrubber.querySelector('.scrub-times');
@@ -2405,10 +2476,11 @@ function fitScrubLabel(){
 }
 function setScrubIndex(index){
   const count=rowCount();scrubIndex=clampNumber(index,0,Math.max(0,count-1));
-  const atEnd=!scrubGesture && !scrubRunning && !FILTERING && physicalChatEnd();
+  const atEnd=scrubIndex===count-1 && !scrubGesture && !scrubRunning && !FILTERING && physicalChatEnd();
   const percent=atEnd ? 100 : scrubPercent(scrubIndex,count),duration=durationTime(meta.duration_seconds);
   let time=count ? scrubTime(rowAt(scrubIndex).t) : '—';
   if(atEnd && duration!=='—') time=duration;
+  if(time!==scrubSelectedTime){scrubSelectedTime=time;refreshPreviewFrame();}
   const label=time+' / '+duration;
   elScrubber.style.setProperty('--scrub-progress',percent.toFixed(4)+'%');
   elScrubber.style.setProperty('--scrub-ratio',String(percent/100));
@@ -2430,9 +2502,10 @@ function scheduleScrubSync(){
       if(rect && rect.bottom>viewportInset() && rect.top<innerHeight){setScrubIndex(scrubSettled.index);return;}
     }
     scrubSettled=null;
-    const count=rowCount(),anchor=visibleAnchor();
+    const count=rowCount(),index=mobileVisibleIndex();
     const atEnd=window.scrollY>0 && window.scrollY+innerHeight>=document.documentElement.scrollHeight-2;
-    setScrubIndex(atEnd && count ? count-1 : anchor?.id || 0);
+    if(atEnd && count && filtered===null) setScrubIndex(count-1);
+    else if(index!==null) setScrubIndex(index);
   });
 }
 function rememberScrubPosition(){
@@ -2905,13 +2978,15 @@ elExportBtn.addEventListener("pointerup", async (e)=>{
 });
 
 const elDesktopPreview=document.getElementById('desktopPreview');
-const elPreviewClose=elDesktopPreview.querySelector('button');
+const elDesktopPreviewToggle=document.getElementById('desktopPreviewToggle');
+const elMobilePreviewHome=elVodCard.parentElement;
 const elPreviewHome=elVodPreviewImg.parentElement;
 const [frameWidth,frameHeight]=storyboardFrames.length && Array.isArray(DATA.vod_preview.aspect)
   ? DATA.vod_preview.aspect : [];
 const previewRatio=frameWidth>0 && frameHeight>0 ? frameWidth/frameHeight : 16/9;
 const reducedPreviewMotion=window.matchMedia('(prefers-reduced-motion: reduce)');
 let previewOpened=false,finishPreviewFlight=null;
+let desktopPreviewCollapsed=false,desktopPreviewAnimation,desktopFrameIndex=null;
 
 function movePreview(target,from){
   target.appendChild(elVodPreviewImg);
@@ -2943,57 +3018,153 @@ function closeVodPreview(animate=true,restoreFocus=true){
   const from=animate ? elVodPreviewImg.getBoundingClientRect() : null;
   previewOpened=false;
   if(storyboardMode) leaveStoryboard();
-  elDesktopPreview.hidden=true;
   elVodCard.setAttribute('aria-expanded','false');
   movePreview(elPreviewHome,from);
   if(restoreFocus) elVodCard.focus({preventScroll:true});
   refreshPreviewFrame();
 }
 
+function placePreviewControl(mobile){
+  desktopPreviewAnimation?.cancel();
+  elDesktopPreview.hidden=mobile;
+  if(mobile) elMobilePreviewHome.prepend(elVodCard);
+  else elDesktopPreview.prepend(elVodCard);
+  elVodCard.hidden=!mobile && desktopPreviewCollapsed;
+  elVodCard.setAttribute('aria-label',mobile ? 'Увеличить превью VOD' : 'Свернуть превью VOD');
+  elDesktopPreviewToggle.hidden=mobile || !desktopPreviewCollapsed;
+  queueDesktopFocus();
+}
+function setDesktopPreviewCollapsed(collapsed){
+  const from=elDesktopPreview.getBoundingClientRect().height;
+  desktopPreviewAnimation?.cancel();
+  desktopPreviewCollapsed=collapsed;
+  elVodCard.hidden=collapsed;
+  elDesktopPreviewToggle.hidden=!collapsed;
+  (collapsed ? elDesktopPreviewToggle : elVodCard).focus({preventScroll:true});
+  const to=elDesktopPreview.getBoundingClientRect().height;
+  if(!reducedPreviewMotion.matches && from!==to){
+    desktopPreviewAnimation=elDesktopPreview.animate(
+      [{height:from+'px'},{height:to+'px'}],{duration:250,easing:'ease'});
+  }
+  queueDesktopFocus();
+}
 if(hasVodImage){
-  for(const surface of [elHeader,elDesktopPreview]) surface.style.setProperty('--preview-ratio',previewRatio);
+  elHeader.style.setProperty('--preview-ratio',previewRatio);
+  placePreviewControl(MOBILE_MQ.matches);
   elVodCard.addEventListener('click',()=>{
+    if(!MOBILE_MQ.matches){setDesktopPreviewCollapsed(true);return;}
     if(previewOpened){closeVodPreview();return;}
-    const mobile=MOBILE_MQ.matches;
-    if(!elVodPreviewImg.getAttribute('src') || (mobile && (!PANEL_EXPANDED || panelAnimating))) return;
+    if(!elVodPreviewImg.getAttribute('src') || !PANEL_EXPANDED || panelAnimating) return;
     const from=elVodPreviewImg.getBoundingClientRect();
     previewOpened=true;
     elVodCard.setAttribute('aria-expanded','true');
-    if(mobile){
-      enterStoryboard();
-      movePreview(elMobilePreviewMedia,from);
-      elPanelHandle.focus({preventScroll:true});
-    }else{
-      elDesktopPreview.hidden=false;
-      movePreview(elDesktopPreview.firstElementChild,from);
-      elPreviewClose.focus({preventScroll:true});
-    }
+    enterStoryboard();
+    movePreview(elMobilePreviewMedia,from);
+    elPanelHandle.focus({preventScroll:true});
     refreshPreviewFrame();
   });
-  elPreviewClose.addEventListener('click',()=>closeVodPreview());
+  elDesktopPreviewToggle.addEventListener('click',()=>setDesktopPreviewCollapsed(false));
   document.addEventListener('keydown',e=>{
     if(e.key==='Escape' && previewOpened && !contextAnchor && !document.querySelector('.snapshot-overlay')){
       e.preventDefault();closeVodPreview();
     }
   });
-  window.visualViewport?.addEventListener('resize',()=>{
-    if(storyboardMode){finishPreviewFlight?.();resizeStoryboardPanel();}
-  },{passive:true});
-  window.visualViewport?.addEventListener('scroll',()=>{
-    if(storyboardMode){finishPreviewFlight?.();sizeStoryboardFrame();}
-  },{passive:true});
-  window.addEventListener('resize',()=>finishPreviewFlight?.());
-  reducedPreviewMotion.addEventListener('change',()=>finishPreviewFlight?.());
+  window.addEventListener('resize',()=>{if(!storyboardMode) finishPreviewFlight?.();});
+  reducedPreviewMotion.addEventListener('change',()=>{
+    finishPreviewFlight?.();desktopPreviewAnimation?.cancel();
+  });
 }
+window.visualViewport?.addEventListener('resize',scheduleScrubSync,{passive:true});
+window.visualViewport?.addEventListener('scroll',scheduleScrubSync,{passive:true});
+
+function setupDesktopFocus(){
+  const desktop=matchMedia('(min-width:901px) and (hover:hover) and (pointer:fine)');
+  let pin=null,pointer=null,highlighted=null,pinnedRow=null,pending=0;
+  const identity=index=>filtered===null ? index : filtered[index];
+  function mounted(identityValue){
+    if(identityValue===null) return null;
+    let index=identityValue;
+    if(filtered!==null){
+      let lo=0,hi=filtered.length;
+      while(lo<hi){
+        const mid=(lo+hi)>>>1;
+        if(filtered[mid]<identityValue) lo=mid+1;
+        else hi=mid;
+      }
+      if(filtered[lo]!==identityValue) return null;
+      index=lo;
+    }
+    return blockNodes.get(Math.floor(index/CHUNK))?.children[index%CHUNK] ?? null;
+  }
+  function render(){
+    pending=0;
+    const mobile=MOBILE_MQ.matches;
+    const bounds=mobile ? null : chatViewport(),attached=mobile ? null : mounted(pin);
+    const pinned=desktop.matches && rowIntersects(attached,bounds) ? attached : null;
+    if(!pinned && (attached || !windowBusy && !FILTERING)) pin=null;
+    if(pinned!==pinnedRow){
+      pinnedRow?.classList.remove('is-chat-pinned');
+      pinned?.classList.add('is-chat-pinned');
+      pinnedRow=pinned;
+    }
+    const hovered=desktop.matches && pointer
+      ? document.elementFromPoint(pointer[0],pointer[1])?.closest('#list .row') : null;
+    const active=!mobile && hasVodImage && !desktopPreviewCollapsed;
+    const hover=rowIntersects(hovered,bounds) ? hovered : null;
+    const automatic=active && !pinned && !hover ? bottomRow(bounds) : null;
+    if(automatic!==highlighted){
+      highlighted?.classList.remove('is-preview-anchor');
+      automatic?.classList.add('is-preview-anchor');
+      highlighted=automatic;
+    }
+    const selected=active ? pinned || hover || automatic : null;
+    const next=selected ? +selected.dataset.id : null;
+    // The same displayed index can identify a different row after filtering.
+    desktopFrameIndex=next;
+    refreshPreviewFrame();
+  }
+  queueDesktopFocus=()=>{
+    if(MOBILE_MQ.matches && !highlighted && !pinnedRow && desktopFrameIndex===null) return;
+    if(!pending) pending=requestAnimationFrame(render);
+  };
+  const clear=()=>{pin=null;queueDesktopFocus();};
+  const mouse=event=>desktop.matches && event.pointerType==='mouse';
+  elList.addEventListener('pointermove',event=>{
+    if(mouse(event)) pointer=[event.clientX,event.clientY];
+  },{passive:true});
+  for(const type of ['pointerover','pointerout']) elList.addEventListener(type,event=>{
+    if(!mouse(event)) return;
+    const before=event.target.closest?.('.row'),after=event.relatedTarget?.closest?.('.row');
+    pointer=[event.clientX,event.clientY];
+    if(before!==after) queueDesktopFocus();
+  },{passive:true});
+  elList.addEventListener('pointerleave',()=>{pointer=null;queueDesktopFocus();});
+  document.addEventListener('click',event=>{
+    if(!desktop.matches || event.button!==0 || event.detail===0 ||
+       event.pointerType==='touch' || event.sourceCapabilities?.firesTouchEvents) return;
+    if(!elList.contains(event.target)){clear();return;}
+    const row=event.target.closest?.('.row');
+    if(!row || event.target.closest('a,button,input,.user,[data-chat-context]') ||
+       window.getSelection()?.toString()) return;
+    pin=identity(+row.dataset.id);
+    queueDesktopFocus();
+  },{capture:true});
+  document.addEventListener('scroll',()=>{if(!MOBILE_MQ.matches) queueDesktopFocus();},{passive:true});
+  window.addEventListener('resize',clear,{passive:true});
+  window.visualViewport?.addEventListener('resize',clear,{passive:true});
+  window.addEventListener('blur',()=>{pointer=null;clear();});
+  desktop.addEventListener('change',()=>{pointer=null;clear();});
+}
+setupDesktopFocus();
 
 function setupPreviewFrames(){
   let timer=0,idle=0,lastUpdate=-Infinity,shownFrame,listeners;
   const observer=new MutationObserver(queueFrame);
   function paintFrame(){
-    if(finishPreviewFlight || !listeners || (MOBILE_MQ.matches && !PANEL_EXPANDED)) return;
+    if(finishPreviewFlight || !listeners || (MOBILE_MQ.matches ? !PANEL_EXPANDED : desktopPreviewCollapsed)) return;
     lastUpdate=performance.now();
-    const anchor=FILTERING ? null : visibleAnchor(0);
-    const time=anchor ? scrubTime(rowAt(anchor.id).t) : '—';
+    const time=FILTERING ? '—' : MOBILE_MQ.matches ? scrubSelectedTime
+      : desktopFrameIndex!==null && desktopFrameIndex<rowCount() ? scrubTime(rowAt(desktopFrameIndex).t) : '—';
     const seconds=time==='—' ? NaN : time.split(':').reduce((total,part)=>60*total+Number(part),0);
     const frame=Number.isFinite(seconds) && seconds<=meta.duration_seconds
       ? nearestStoryFrame(storyboardFrames,seconds) : undefined;
@@ -3004,7 +3175,7 @@ function setupPreviewFrames(){
     else if(elVodPreviewImg.getAttribute('src')!==src) elVodPreviewImg.src=src;
   }
   function queueFrame(){
-    if(timer || idle || !listeners || finishPreviewFlight || (MOBILE_MQ.matches && !PANEL_EXPANDED)) return;
+    if(timer || idle || !listeners || finishPreviewFlight || (MOBILE_MQ.matches ? !PANEL_EXPANDED : desktopPreviewCollapsed)) return;
     timer=setTimeout(()=>{
       timer=0;
       if(window.requestIdleCallback){
@@ -3023,7 +3194,6 @@ function setupPreviewFrames(){
     if(!listeners){
       listeners=new AbortController();
       const options={passive:true,signal:listeners.signal};
-      document.addEventListener('scroll',queueFrame,options);
       window.addEventListener('resize',queueFrame,options);
       observer.observe(elList,{childList:true});
     }
