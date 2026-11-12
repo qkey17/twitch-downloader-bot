@@ -200,11 +200,10 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
     await wait(hidden)
     assert await evaluate('''(()=>{
       const matches=[...document.querySelectorAll('.row[data-id="4"] .chat-mention')];
-      const streamer=document.createElement('span');streamer.style.color=authorColor(meta.channel);
       const author=document.querySelector('.row[data-id="5"] .user');
       return matches.map(n=>n.textContent).join(',')==='@KANAuser,@FixtureStreamer,@FarAway,@情報本部,@ijuos'
         && matches[0].style.color===document.querySelector('.row[data-id="0"] .user').style.color
-        && matches[1].style.color===streamer.style.color
+        && matches[1].style.color==='rgb(255, 255, 255)'
         && matches[2].style.color==='rgb(251, 115, 162)'
         && matches.slice(3).every(n=>n.style.color===author.style.color && n.dataset.chatContext==='ijuos')
         && !document.querySelector(`.row[data-id="${rows.length-1}"]`)

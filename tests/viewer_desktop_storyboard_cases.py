@@ -1,6 +1,10 @@
 """Offline Chromium coverage for message navigation and the preview panels."""
+import base64
+import io
 import json
 from statistics import median
+
+from PIL import Image
 
 
 async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
@@ -42,15 +46,18 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
               && document.querySelectorAll('#vodPreviewImg').length===1""")
             if width>=901:
                 assert await evaluate("""(()=>{
-                  const h=elHeader.getBoundingClientRect(),l=elList.getBoundingClientRect();
-                  return h.width===336 && Math.abs(innerHeight-h.bottom-24)<1
+                  const h=elPanelDetails.getBoundingClientRect(),l=elList.getBoundingClientRect();
+                  return h.width===336 && Math.abs(h.top-24)<1
                     && Math.abs(h.left-(document.documentElement.clientWidth-l.right))<2
                     && h.right<l.left;
                 })()""")
                 assert await evaluate(f'elDesktopPreview.hidden==={str(not pixels).lower()}')
                 if pixels:
                     assert await evaluate("""elVodCard.parentElement===elDesktopPreview &&
-                      elPanelDetails.getBoundingClientRect().bottom<=elDesktopPreview.getBoundingClientRect().top &&
+                      elPanelDetails.getBoundingClientRect().bottom+12<=elDesktopPreview.getBoundingClientRect().top &&
+                      Math.abs(elDesktopPreview.getBoundingClientRect().bottom-innerHeight+24)<1 &&
+                      !elHeader.classList.contains('cards-joined') &&
+                      getComputedStyle(elPanelDetails).backgroundColor===getComputedStyle(elDesktopPreview).backgroundColor &&
                       Math.abs(elPreviewHome.clientWidth/elPreviewHome.clientHeight-16/9)<.025""")
                     await evaluate('elVodCard.focus();elVodCard.click();true')
                     assert await evaluate("""desktopPreviewCollapsed && elVodCard.hidden
@@ -63,16 +70,39 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
                 assert await evaluate("elVodCard.parentElement===elMobilePreviewHome && !elPanelDetails.inert")
                 await evaluate('elVodCard.click();true')
                 await wait('storyboardMode && !finishPreviewFlight')
+                assert await evaluate('elPanelHandle.querySelector(".panel-exit path").getAttribute("d")==="m6 15 6-6 6 6"')
                 assert await evaluate('elVodPreviewImg.parentElement===elMobilePreviewMedia && elScrubber.clientWidth>0')
                 await evaluate('elPanelHandle.click();true')
                 await wait('!storyboardMode && !finishPreviewFlight')
             else:
                 assert await evaluate('elVodCard.hidden && elTitle.clientWidth>=elHeader.clientWidth-50')
 
+    await load('new',1024)
+    split_limit=await evaluate('Math.floor(elPanelDetails.offsetHeight+elDesktopPreview.offsetHeight+48+12-24)')
+    await resize(1024,split_limit)
+    await wait('elHeader.classList.contains("cards-joined")')
+    assert await evaluate("""Math.abs(elPanelDetails.getBoundingClientRect().bottom-elDesktopPreview.getBoundingClientRect().top)<1
+      && getComputedStyle(elPanelDetails).borderBottomColor==='rgba(0, 0, 0, 0)'
+      && getComputedStyle(elDesktopPreview).borderTopLeftRadius==='0px'""")
+    await evaluate('elVodCard.click();true')
+    await evaluate('new Promise(resolve=>setTimeout(()=>resolve(true),90))')
+    assert await evaluate('Math.abs(elDesktopPreview.getBoundingClientRect().bottom-innerHeight+24)<1')
+    await wait('desktopPreviewCollapsed && !elDesktopPreview.getAnimations().length && !elHeader.classList.contains("cards-joined")')
+    await evaluate('elDesktopPreviewToggle.click();true')
+    await wait('!desktopPreviewCollapsed && !elDesktopPreview.getAnimations().length && elHeader.classList.contains("cards-joined")')
+    await resize(1024)
+    await wait('!elHeader.classList.contains("cards-joined")')
+
+    await load('new',1024,190)
+    await wait('elHeader.classList.contains("cards-joined")')
+    assert await evaluate("""elPanelDetails.clientHeight>=46 &&
+      elDesktopPreview.getBoundingClientRect().bottom<=innerHeight-23""")
+
     await load('new',1024,320)
     await resize(1024,320,1.25)
     await wait('devicePixelRatio===1.25')
     await evaluate("elTitle.textContent='Long title '.repeat(100);true")
+    await wait('elHeader.classList.contains("cards-joined")')
     assert await evaluate("""elPanelDetails.scrollHeight>elPanelDetails.clientHeight &&
       elHeader.getBoundingClientRect().bottom<=innerHeight-23""")
     before=await evaluate('elDesktopPreview.getBoundingClientRect().toJSON()')
@@ -114,9 +144,12 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
     await wait(f'desktopFrameIndex==={first[0]} && !elList.querySelector(".is-preview-anchor")')
     await mouse('mousePressed',first[1:])
     await mouse('mouseReleased',first[1:])
-    await wait(f'elList.querySelector(".is-chat-pinned")?.dataset.id=={first[0]}')
+    await wait(f'desktopFrameIndex==={first[0]}')
     await mouse('mouseMoved',second[1:])
-    assert await evaluate(f'desktopFrameIndex==={first[0]} && elList.querySelector(".row:hover")?.dataset.id=={second[0]}')
+    assert await evaluate(f'''desktopFrameIndex==={first[0]} && elList.querySelector(".row:hover")?.dataset.id=={second[0]}
+      && !elList.querySelector(".is-preview-anchor,.is-chat-pinned")
+      && getComputedStyle(elList.querySelector('.row[data-id="{first[0]}"]')).backgroundColor==='rgba(0, 0, 0, 0)'
+      && getComputedStyle(elList.querySelector(".row:hover")).backgroundColor==='rgb(56, 56, 61)' ''')
     # Real username hover and click preserve the existing context panel.
     nick=await evaluate(f"""(()=>{{
       const r=elList.querySelector('.row[data-id="{third[0]}"] .user').getBoundingClientRect();
@@ -126,7 +159,7 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
     assert await evaluate('elList.querySelector(".user:hover")!==null')
     await mouse('mousePressed',nick)
     await mouse('mouseReleased',nick)
-    assert await evaluate(f'!chatContext.hidden && elList.querySelector(".is-chat-pinned")?.dataset.id=={first[0]}')
+    assert await evaluate(f'!chatContext.hidden && desktopFrameIndex==={first[0]}')
     await mouse('mouseMoved',[10,10])
     await mouse('mousePressed',[10,10])
     await mouse('mouseReleased',[10,10])
@@ -136,33 +169,85 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
     await mouse('mouseMoved',first[1:])
     await mouse('mousePressed',first[1:])
     await mouse('mouseReleased',first[1:])
-    await wait('!!elList.querySelector(".is-chat-pinned") && desktopFrameIndex===null')
-    await evaluate("window.dispatchEvent(new Event('blur'));true")
-    await wait('!elList.querySelector(".is-chat-pinned")')
+    await wait('desktopFrameIndex===null')
     await mouse('mouseMoved',[10,10])
     await evaluate('elDesktopPreviewToggle.click();true')
+    await wait(f'desktopFrameIndex==={first[0]} && !elList.querySelector(".is-preview-anchor")')
+    await evaluate("window.dispatchEvent(new Event('blur'));true")
     await wait(selection_matches)
     await mouse('mouseMoved',first[1:])
     await mouse('mousePressed',first[1:])
     await mouse('mouseReleased',first[1:])
-    await wait('!!elList.querySelector(".is-chat-pinned")')
+    await wait(f'desktopFrameIndex==={first[0]}')
     await evaluate("scrollTo(0,elList.offsetTop+heightBefore(Math.floor(blockCount()*.7)));true")
     await mouse('mouseMoved',[10,10])
     await wait('!windowBusy && desktopFrameIndex>rows.length/2 && !elList.querySelector(".is-chat-pinned")')
     await wait(frame_matches)
     assert await evaluate("elList.querySelectorAll('.row').length<=2400")
-    point=await evaluate(f'({visible}).slice(1,2).map(([id,r])=>[r.right-8,r.top+8])[0]')
+    pin_id,*point=await evaluate(f'({visible}).slice(1,2).map(([id,r])=>[id,r.right-8,r.top+8])[0]')
     await mouse('mousePressed',point)
     await mouse('mouseReleased',point)
-    await wait('!!elList.querySelector(".is-chat-pinned")')
+    await wait(f'desktopFrameIndex==={pin_id}')
     await resize(1024)
-    await wait('innerWidth===1024 && !elList.querySelector(".is-chat-pinned")')
+    await wait('innerWidth===1024')
     await mouse('mouseMoved',[10,10])
+    await wait(selection_matches)
     await evaluate("elQ.value='unlikely-preview-search-miss';elQ.dispatchEvent(new Event('input'));true")
     await wait('!FILTERING && !windowBusy && rowCount()===0 && elVodPreviewImg.src===DATA.vod_preview.cover')
     await evaluate("elQ.value='';elU.value=decodeMessage(rows[rows.length-1]).user;elU.dispatchEvent(new Event('input'));true")
     await wait('!FILTERING && !windowBusy && rowCount()>0 && rowCount()<rows.length')
     await wait(selection_matches)
+
+    await load('new',1440)
+    assert await evaluate("""getComputedStyle(document.body).backgroundColor==='rgb(14, 14, 16)'
+      && getComputedStyle(elList).backgroundColor==='rgb(24, 24, 27)'
+      && getComputedStyle(elList.querySelector('.is-preview-anchor')).backgroundColor==='rgb(56, 56, 61)'""")
+    palette=await evaluate("""[document.body,elList,elQ,elExportBtn,elList.querySelector('.is-preview-anchor')].map(n=>{
+      const s=getComputedStyle(n);return [s.color,s.backgroundColor,s.borderColor];
+    })""")
+    def luminance(color):
+        values=[int(value.strip())/255 for value in color[4:-1].split(',')]
+        return sum(weight*(value/12.92 if value<=.04045 else ((value+.055)/1.055)**2.4)
+                   for weight,value in zip((.2126,.7152,.0722),values))
+    def contrast(first,second):
+        dark,light=sorted((luminance(first),luminance(second)))
+        return (light+.05)/(dark+.05)
+    assert all(contrast(text,background)>=4.5 for text,background,_ in palette)
+    assert contrast(palette[2][1],palette[2][2])>=3
+    ink_gaps=[]
+    for font,scale in (('Arial',1),('Georgia',1.25)):
+        await resize(1440,900,scale)
+        await wait(f'devicePixelRatio==={scale}')
+        heights=[]
+        for word in ('xxx','HHH','gyp'):
+            await mouse('mouseMoved',[10,10])
+            box=await evaluate(f"""(()=>{{
+              const n=elList.querySelector('.row[data-id="1"] .user');
+              n.textContent='{word}';n.style.fontFamily='{font}';n.style.color='#ffffff';
+              const r=n.getBoundingClientRect();
+              return [r.left,r.top,r.width,r.height,n.closest('.row').offsetHeight];
+            }})()""")
+            await mouse('mouseMoved',[box[0]+box[2]/2,box[1]+box[3]/2])
+            await wait('!!elList.querySelector(".user.has-ink-highlight:hover")')
+            top,height=await evaluate("""(()=>{
+              const n=elList.querySelector('.user:hover'),p=getComputedStyle(n,'::before');
+              return [parseFloat(p.top),parseFloat(p.height)];
+            })()""")
+            assert await evaluate('elList.querySelector(".user:hover").closest(".row").offsetHeight')==box[4]
+            heights.append(height)
+            shot=await call('Page.captureScreenshot',dict(format='png',clip=dict(
+                x=int(box[0])-3,y=int(box[1]+top)-3,width=int(box[2])+9,height=int(height)+8,scale=1)))
+            with Image.open(io.BytesIO(base64.b64decode(shot['data']))) as image:
+                rgb=image.convert('RGB')
+                # Read the centre strip so rounded corners cannot bias the bounds.
+                band=range(3,rgb.width-3)
+                background=[y for y in range(rgb.height) if any(rgb.getpixel((x,y))==(83,83,95) for x in band)]
+                glyph=[y for y in range(rgb.height) if any(min(rgb.getpixel((x,y)))>=205 for x in band)]
+            assert background and glyph,(font,word,top,height)
+            gaps=(min(glyph)-min(background),max(background)-max(glyph))
+            assert min(gaps)>=0 and abs(gaps[0]-gaps[1])<=3*scale,(font,word,gaps)
+            ink_gaps.append(dict(font=font,scale=scale,word=word,gaps=gaps))
+        assert heights[1]>heights[0],(font,heights)
 
     # A single huge row spanning the viewport must still control the frame.
     await load('new',1440)
@@ -237,4 +322,4 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
                                    max_ms=round(max(result['times']),1),frame_lookups=result['lookups']))
     assert not errors,errors
     assert not any('/storyboards/' in url or '/cf_vods/test/' in url for url in requests),requests
-    print(json.dumps(dict(navigation='PASS',rows=count,offline=True,comparison=comparison)),flush=True)
+    print(json.dumps(dict(navigation='PASS',rows=count,offline=True,ink_gaps=ink_gaps,comparison=comparison)),flush=True)
