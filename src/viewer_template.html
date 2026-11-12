@@ -889,12 +889,12 @@ html{overflow-anchor:none;}
   .cards-joined .desktop-preview{border-radius:0 0 14px 14px;}
   .controls input{background:#0e0e10;border-color:#67676f;}
   .controls input::placeholder{color:var(--muted);}
-  header .meta-buttons button,header .meta-buttons button.is-active{
+  header .meta-buttons button,header .meta-buttons :is(button.is-active,.button-toggle.is-active),.chat-context-profile{
     background:#2f2f35;border-color:#494950;color:var(--text);
   }
   header .meta-buttons button.is-inactive{background:var(--panel);opacity:1;}
-  header .meta-buttons button:hover{background:#404047;border-color:#67676f;box-shadow:none;}
-  header .meta-buttons button:active{background:#50505a;}
+  header .meta-buttons :is(button,.button-toggle.is-active):hover,.chat-context-profile:hover{background:#404047;border-color:#67676f;}
+  header .meta-buttons :is(button,.button-toggle.is-active):active,.chat-context-profile:active{background:#50505a;border-color:#bf94ff;}
   header .meta-buttons button:focus-visible,.controls input:focus-visible{
     outline:2px solid #bf94ff;outline-offset:-2px;
   }
@@ -968,7 +968,7 @@ html{overflow-anchor:none;}
     transform:none;box-shadow:none;border-color:var(--border);
   }
   header .vod-card,header .meta-buttons button,header .controls input,.chat-context-profile{transition:background-color .12s ease,border-color .12s ease;}
-  header .vod-card:active,header .meta-buttons button:active,.chat-context-profile:active{background-color:#30303b;border-color:#626575;}
+  header .vod-card:active,header .meta-buttons :is(button,.button-toggle.is-active):active,.chat-context-profile:active{background-color:#30303b;border-color:#626575;}
   header .controls input:focus{outline:none;box-shadow:none;}
   header .vod-card:focus-visible,header .controls input:focus-visible,header .meta-buttons button:focus-visible,
   .chat-context-profile:has(>a:focus-visible){
