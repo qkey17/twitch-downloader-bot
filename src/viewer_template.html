@@ -15,11 +15,12 @@ button{
   -webkit-tap-highlight-color: transparent;
 }
 :root{
-  --bg:#0f0f12;
-  --panel:#15151b;
-  --text:#e7e7ea;
-  --muted:#a6a6b0;
-  --border:#2a2a35;
+  --bg:#0e0e10;
+  --panel:#18181b;
+  --text:#efeff1;
+  --muted:#adadb8;
+  --border:#303036;
+  --row-highlight:#38383d;
   --control-h: 46px;
   --control-radius: 10px;
   --control-gap: 8px;
@@ -44,7 +45,7 @@ html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-famil
 header{
   width:100%;
   max-width:none;
-  background:#18181b;
+  background:var(--panel);
   border-bottom:1px solid var(--border);
   padding:12px;
   box-sizing:border-box;
@@ -276,6 +277,7 @@ header{
 [data-chat-context]{cursor:pointer;}
 [data-chat-context]:focus-visible{outline:2px solid #b3adff;outline-offset:2px;}
 .chat-match{background:#ffdc82;color:#20212b;}
+.chat-mention{font-weight:700;}
 .chat-link{color:#b3adff;text-decoration:underline;overflow-wrap:anywhere;}
 img.chat-match{outline:2px solid #ffdc82;outline-offset:-2px;}
 .button-toggle.active{
@@ -871,10 +873,6 @@ html{overflow-anchor:none;}
 #vodLink:focus-visible,#desktopPreviewToggle:focus-visible{outline:2px solid #b3adff;outline-offset:2px;}
 #vodPreviewImg.vod-preview-flight{position:fixed;z-index:106;pointer-events:none;transform-origin:top left;}
 @media (min-width:901px){
-  :root{
-    --bg:#0e0e10;--panel:#18181b;--text:#efeff1;--muted:#adadb8;--border:#303036;
-    --row-highlight:#38383d;
-  }
   #list{background:var(--panel);}
   .panel-details,.panel-details-content{display:flex;flex-direction:column;gap:var(--control-gap);}
   .panel-details,.desktop-preview{
@@ -887,14 +885,6 @@ html{overflow-anchor:none;}
   header.cards-joined{gap:0;}
   .cards-joined .panel-details{flex:1 1 auto;border-radius:14px 14px 0 0;border-bottom-color:transparent;}
   .cards-joined .desktop-preview{border-radius:0 0 14px 14px;}
-  .controls input{background:#0e0e10;border-color:#67676f;}
-  .controls input::placeholder{color:var(--muted);}
-  header .meta-buttons button,header .meta-buttons :is(button.is-active,.button-toggle.is-active),.chat-context-profile{
-    background:#2f2f35;border-color:#494950;color:var(--text);
-  }
-  header .meta-buttons button.is-inactive{background:var(--panel);opacity:1;}
-  header .meta-buttons :is(button,.button-toggle.is-active):hover,.chat-context-profile:hover{background:#404047;border-color:#67676f;}
-  header .meta-buttons :is(button,.button-toggle.is-active):active,.chat-context-profile:active{background:#50505a;border-color:#bf94ff;}
   header .meta-buttons button:focus-visible,.controls input:focus-visible{
     outline:2px solid #bf94ff;outline-offset:-2px;
   }
@@ -906,22 +896,27 @@ html{overflow-anchor:none;}
   .desktop-preview .vod-card-media{aspect-ratio:16/9;}
   #desktopPreviewToggle{width:100%;white-space:nowrap;}
   .meta-buttons button{min-width:0;padding-inline:2px;white-space:nowrap;}
-  #list .row.is-preview-anchor{background:var(--row-highlight);}
 
   .panel-top{display:flex;flex-direction:column;gap:var(--control-gap);}
   .panel-top .meta{order:-1;height:auto;}
   .vod-title{display:block;overflow:visible;-webkit-line-clamp:unset;overflow-wrap:anywhere;}
   .vod-card{margin-bottom:0;}
 }
-@media (min-width:901px) and (hover:hover) and (pointer:fine){
-  #list .row:hover{background:var(--row-highlight);}
-  #list .row .user:hover{background:#53535f;border-radius:3px;box-decoration-break:clone;}
-  #list .row .user.has-ink-highlight:hover{position:relative;isolation:isolate;background:none;}
-  #list .row .user.has-ink-highlight:hover::before{
+.controls input{background:var(--bg);border-color:#67676f;}
+.controls input::placeholder{color:var(--muted);}
+header .meta-buttons button,header .meta-buttons :is(button.is-active,.button-toggle.is-active),.chat-context-profile{
+  background:#2f2f35;border-color:#494950;color:var(--text);
+}
+header .meta-buttons button.is-inactive{background:var(--panel);opacity:1;}
+header .meta-buttons :is(button,.button-toggle.is-active):hover,.chat-context-profile:hover{background:#404047;border-color:#67676f;}
+header .meta-buttons :is(button,.button-toggle.is-active):active,.chat-context-profile:active{background:#50505a;border-color:#bf94ff;}
+#list .row:is(.is-message-pinned,.is-message-hovered,.is-preview-anchor){background:var(--row-highlight);}
+#list .row .user.is-nickname-highlighted{background:#53535f;border-radius:3px;box-decoration-break:clone;}
+#list .row .user.has-ink-highlight{position:relative;isolation:isolate;background:none;}
+#list .row .user.has-ink-highlight::before{
     content:"";position:absolute;z-index:-1;pointer-events:none;
     inset-inline:-2px;top:var(--ink-top);height:var(--ink-height);
     background:#53535f;border-radius:3px;
-  }
 }
 @media (min-width:901px) and (max-height:230px){
   .panel-details,.desktop-preview{padding-block:8px;}
@@ -965,10 +960,10 @@ html{overflow-anchor:none;}
   header .vod-card,header .vod-card:hover,header .vod-card:active,
   header .meta-buttons button,header .meta-buttons button:hover,header .meta-buttons button:active,
   .chat-context-profile,.chat-context-profile:hover,.chat-context-profile:active{
-    transform:none;box-shadow:none;border-color:var(--border);
+    transform:none;box-shadow:none;
   }
   header .vod-card,header .meta-buttons button,header .controls input,.chat-context-profile{transition:background-color .12s ease,border-color .12s ease;}
-  header .vod-card:active,header .meta-buttons :is(button,.button-toggle.is-active):active,.chat-context-profile:active{background-color:#30303b;border-color:#626575;}
+  header .vod-card:active,.panel-toggle:active{background-color:#50505a;border-color:#bf94ff;}
   header .controls input:focus{outline:none;box-shadow:none;}
   header .vod-card:focus-visible,header .controls input:focus-visible,header .meta-buttons button:focus-visible,
   .chat-context-profile:has(>a:focus-visible){
@@ -988,7 +983,6 @@ html{overflow-anchor:none;}
   .panel-toggle[aria-expanded="true"] .panel-chevron{transform:rotate(180deg);}
   .panel-toggle .panel-exit,header.is-storyboard .panel-toggle .panel-chevron{display:none;}
   header.is-storyboard .panel-toggle .panel-exit{display:block;}
-  .panel-toggle:active{background:#30303b;border-color:#626575;}
   .panel-toggle:focus-visible{outline:2px solid #b3adff;outline-offset:0;border-color:transparent;}
   #list{
     padding-top:64px;
@@ -996,16 +990,16 @@ html{overflow-anchor:none;}
        Extend through the existing 40px bottom padding (content-box clipping
        alone would also remove that previously painted bottom area). */
     background-color:transparent;
-    background-image:linear-gradient(#1f1f23,#1f1f23);
+    background-image:linear-gradient(var(--panel),var(--panel));
     background-origin:content-box;
     background-repeat:no-repeat;
     background-size:100% calc(100% + 40px);
   }
 }
-@media(max-width:900px) and (hover:hover){
-  header .vod-card:hover:not(:active):not(:focus-visible),header .meta-buttons button:hover:not(:active):not(:focus-visible),
-  .chat-context-profile:hover:not(:active):not(:has(>a:focus-visible)){border-color:#626575;background-color:#23232d;}
-  .panel-toggle:hover:not(:active):not(:focus-visible){background-color:#23232d;border-color:#626575;}
+@media(max-width:900px) and (any-hover:hover){
+  header .vod-card:hover:not(:active):not(:focus-visible),.panel-toggle:hover:not(:active):not(:focus-visible){
+    background-color:#404047;border-color:#67676f;
+  }
 }
 </style>
 
@@ -1154,7 +1148,8 @@ let storyboardMode=false;
 if(hasVodImage) elHeader.classList.add('has-vod-image');
 const elScrubber=document.getElementById("fastScrubber");
 const elPanelHandle=document.querySelector(".panel-toggle");
-let onPanelLayout=()=>()=>{}, refreshPreviewFrame=()=>{}, queueDesktopFocus=()=>{};
+let onPanelLayout=()=>()=>{}, refreshPreviewFrame=()=>{}, queueMessageSelection=()=>{};
+let pinMessage=()=>{}, clearMessagePin=()=>{}, clearContextPin=()=>{}, touchContextPinned=()=>false, clearMessageHover=()=>{};
 const elPanelDetails=document.getElementById("panelDetails");
 const elPanelContent=elPanelDetails.firstElementChild;
 let panelAnimating=false,panelCleanup=()=>{};
@@ -1897,16 +1892,19 @@ function createRowElement(r, includeTime, rowIndex, ownerDocument=document, sear
 }
 
 const chatContext=document.getElementById('chatContext');
-let contextAnchor=null, contextPinned=false, contextTouch=null, contextTouchTarget=null;
+let contextAnchor=null, contextPinned=false, chatPointer=null, contextTouchTarget=null;
+const messageRow=node=>node?.closest?.('#list .row') || null;
 const contextTarget=node=>{
   const target=node?.closest?.('[data-chat-context]');
   return target && elList.contains(target) ? target : null;
 };
 function closeContext(){
   if(!contextAnchor) return;
-  contextAnchor.setAttribute('aria-expanded','false');
+  const anchor=contextAnchor;
+  anchor.setAttribute('aria-expanded','false');
   contextAnchor=null;contextPinned=false;
   chatContext.hidden=true;chatContext.replaceChildren();
+  clearContextPin(anchor);
 }
 function showContext(target,pinned=false,keyboard=false){
   if(!target) return;
@@ -1934,14 +1932,20 @@ function showContext(target,pinned=false,keyboard=false){
   }else{
     chatContext.textContent=value;
   }
+  if(!positionContext(target)){
+    chatContext.replaceChildren();return;
+  }
+  contextAnchor=target;contextPinned=pinned;
+  target.setAttribute('aria-expanded','true');
+  if(keyboard) chatContext.querySelector('a')?.focus({preventScroll:true});
+}
+function positionContext(target){
   const viewport=window.visualViewport, rect=target.getBoundingClientRect(), margin=8, gap=6;
   const left=(viewport?.offsetLeft || 0)+margin;
   const right=(viewport?.offsetLeft || 0)+(viewport?.width ?? document.documentElement.clientWidth)-margin;
   const top=Math.max(viewport?.offsetTop || 0,viewportInset())+margin;
   const bottom=(viewport?.offsetTop || 0)+(viewport?.height ?? innerHeight)-margin;
-  if(right<=left || bottom-top<46 || rect.bottom<=top-margin || rect.top>=bottom+margin){
-    chatContext.replaceChildren();return;
-  }
+  if(right<=left || bottom-top<46 || rect.bottom<=top-margin || rect.top>=bottom+margin) return false;
   chatContext.style.maxWidth=(right-left)+'px';
   chatContext.style.maxHeight=(bottom-top)+'px';
   chatContext.hidden=false;
@@ -1951,9 +1955,7 @@ function showContext(target,pinned=false,keyboard=false){
   const y=above>=top ? above : below;
   chatContext.style.left=clampNumber(rect.left+(rect.width-width)/2,left,right-width)+'px';
   chatContext.style.top=clampNumber(y,top,bottom-height)+'px';
-  contextAnchor=target;contextPinned=pinned;
-  target.setAttribute('aria-expanded','true');
-  if(keyboard) chatContext.querySelector('a')?.focus({preventScroll:true});
+  return true;
 }
 elList.addEventListener('pointerover',event=>{
   if(event.pointerType!=='mouse' || contextPinned) return;
@@ -1967,33 +1969,41 @@ elList.addEventListener('pointerout',event=>{
 document.addEventListener('pointerdown',event=>{
   const target=contextTarget(event.target);
   if(!chatContext.contains(event.target) && target!==contextAnchor) closeContext();
-  if(event.pointerType==='mouse'){
-    contextTouchTarget=null;return;
+  if(event.isPrimary===false || event.button!==0){
+    chatPointer=null;return;
   }
-  if(event.isPrimary===false){
-    contextTouch=null;closeContext();return;
-  }
-  contextTouchTarget=target;
-  contextTouch={id:event.pointerId,target,x:event.clientX,y:event.clientY,at:performance.now(),moved:false};
+  const touch=event.pointerType==='touch' || event.pointerType==='pen';
+  const row=messageRow(event.target);
+  contextTouchTarget=touch ? target : null;
+  chatPointer={id:event.pointerId,touch,target,row,x:event.clientX,y:event.clientY,at:performance.now(),moved:false};
+  if(touch) clearMessageHover();
 },{capture:true,passive:true});
 document.addEventListener('pointermove',event=>{
-  if(contextTouch?.id!==event.pointerId) return;
-  if(Math.hypot(event.clientX-contextTouch.x,event.clientY-contextTouch.y)>8){
-    contextTouch.moved=true;closeContext();
+  if(chatPointer?.id!==event.pointerId || chatPointer.moved) return;
+  if(Math.hypot(event.clientX-chatPointer.x,event.clientY-chatPointer.y)>(chatPointer.touch ? 8 : 4)){
+    chatPointer.moved=true;
+    if(chatPointer.touch) closeContext();
   }
 },{passive:true});
 document.addEventListener('pointerup',event=>{
-  if(contextTouch?.id!==event.pointerId) return;
-  const gesture=contextTouch;contextTouch=null;
-  if(gesture.target && !gesture.moved && performance.now()-gesture.at<450
-     && Math.hypot(event.clientX-gesture.x,event.clientY-gesture.y)<=8
-     && !window.getSelection()?.toString()
-     && contextTarget(document.elementFromPoint(event.clientX,event.clientY))===gesture.target){
-    showContext(gesture.target,true);
+  if(chatPointer?.id!==event.pointerId) return;
+  const gesture=chatPointer;chatPointer=null;
+  if(gesture.moved || Math.hypot(event.clientX-gesture.x,event.clientY-gesture.y)>(gesture.touch ? 8 : 4)
+     || (gesture.touch && performance.now()-gesture.at>=450)) return;
+  const target=document.elementFromPoint(event.clientX,event.clientY),row=messageRow(target);
+  if(!row){
+    if(!chatContext.contains(target) || !gesture.touch) clearMessagePin();
+    return;
   }
-},{passive:true});
-document.addEventListener('pointercancel',()=>{contextTouch=null;closeContext();},{passive:true});
-document.addEventListener('contextmenu',()=>{contextTouch=null;closeContext();});
+  if(row!==gesture.row || selectionGesture?.active || window.getSelection()?.toString()) return;
+  const context=contextTarget(target);
+  if(context!==gesture.target || target.closest('a,button,input')) return;
+  const nickname=context?.classList.contains('user') ? context : null;
+  if(gesture.touch && context) showContext(context,true);
+  if(!context || nickname) pinMessage(row,gesture.touch,gesture.touch && contextAnchor===nickname ? nickname : null);
+},{capture:true,passive:true});
+document.addEventListener('pointercancel',()=>{chatPointer=null;closeContext();},{passive:true});
+document.addEventListener('contextmenu',()=>{chatPointer=null;closeContext();});
 document.addEventListener('click',event=>{
   if(chatContext.contains(event.target)) return;
   const target=contextTarget(event.target);
@@ -2016,13 +2026,21 @@ document.addEventListener('keydown',event=>{
   }
 });
 function dismissContext(){
-  contextTouch=null;closeContext();
+  chatPointer=null;closeContext();
 }
 window.addEventListener('scroll',event=>{
+  if(touchContextPinned() && (event.target===document || event.target===window)) return;
   if(!(event.target instanceof Node) || !chatContext.contains(event.target)) dismissContext();
 },{capture:true,passive:true});
-for(const type of ['wheel','resize','blur']) window.addEventListener(type,dismissContext,{passive:true});
-for(const type of ['scroll','resize']) window.visualViewport?.addEventListener(type,dismissContext,{passive:true});
+const dismissUnpinnedContext=()=>{if(!touchContextPinned()) dismissContext();};
+function viewportContextChanged(){
+  if(touchContextPinned()) positionContext(contextAnchor);
+  else dismissContext();
+}
+window.addEventListener('blur',dismissContext,{passive:true});
+window.addEventListener('wheel',dismissUnpinnedContext,{passive:true});
+window.addEventListener('resize',viewportContextChanged,{passive:true});
+for(const type of ['scroll','resize']) window.visualViewport?.addEventListener(type,viewportContextChanged,{passive:true});
 
 
 /* Only indices are filtered; the original payload is never copied or decorated.
@@ -2049,7 +2067,8 @@ for(const type of ['wheel','touchmove','pointerdown','keydown']){
 let selectionRange = null, projectedSelection = null, selectionGesture = null;
 const yieldViewer = () => globalThis.scheduler?.yield ? scheduler.yield() : new Promise(resolve=>setTimeout(resolve,0));
 const rowCount = () => filtered === null ? rows.length : filtered.length;
-const rowAt = i => decodeMessage(rows[filtered === null ? i : filtered[i]]);
+const rowIdentity = i => filtered === null ? i : filtered[i];
+const rowAt = i => decodeMessage(rows[rowIdentity(i)]);
 const blockCount = () => Math.ceil(rowCount()/CHUNK);
 const blockLength = b => Math.min(CHUNK,rowCount()-b*CHUNK);
 const topSpace = document.createElement('div');
@@ -2089,13 +2108,13 @@ function chatViewport(){
     bottom:Math.min(rect.bottom,offset+(viewport?.height ?? innerHeight))};
 }
 function rowIntersects(row,bounds){
-  if(!row) return false;
+  if(!row || bounds.bottom<=bounds.top) return false;
   const rect=row.getBoundingClientRect();
   return rect.bottom>bounds.top && rect.top<bounds.bottom;
 }
-function bottomRow(bounds){
+function automaticMessageRow(bounds){
   if(bounds.bottom<=bounds.top) return null;
-  let partial=null;
+  let full=null,partial=null;
   // Three mounted blocks at most. Binary search skips rows below the viewport.
   for(const node of [...blockNodes.values()].reverse()){
     const box=node.getBoundingClientRect(),children=node.children;
@@ -2107,7 +2126,12 @@ function bottomRow(bounds){
       else right=middle;
     }
     const candidate=children[left-1];
-    if(candidate && candidate.getBoundingClientRect().top>=bounds.top-.5) return candidate;
+    for(let i=left-1;i>=Math.max(0,left-2);i--){
+      const row=children[i];
+      if(row.getBoundingClientRect().top<bounds.top-.5) break;
+      if(full) return row;
+      full=row;
+    }
     if(!partial){
       // The first row crossing the bottom edge can also be the only visible row.
       const crossing=children[left];
@@ -2115,9 +2139,9 @@ function bottomRow(bounds){
       else if(rowIntersects(candidate,bounds)) partial=candidate;
     }
   }
-  return partial;
+  return full || partial;
 }
-function initialMobileBottom(bottom){
+function initialMobileTarget(bottom){
   const first=blockNodes.get(0)?.children;
   if(!first?.length) return null;
   let left=0,right=first.length;
@@ -2126,16 +2150,10 @@ function initialMobileBottom(bottom){
     if(first[middle].getBoundingClientRect().bottom+window.scrollY<=bottom+.5) left=middle+1;
     else right=middle;
   }
-  return left ? left-1 : null;
+  return left ? Math.max(0,left-2) : null;
 }
-function catchUpIndex(last,initial){
-  return initial===null ? last : Math.min(last,2*Math.max(0,last-initial));
-}
-function mobileVisibleIndex(){
-  if(!window.scrollY) return 0;
-  const bounds=chatViewport(),row=bottomRow(bounds);
-  if(!row) return null;
-  return catchUpIndex(+row.dataset.id,initialMobileBottom(bounds.bottom));
+function catchUpIndex(target,initial){
+  return initial===null ? target : Math.min(target,2*Math.max(0,target-initial));
 }
 
 function restoreAnchor(anchor){
@@ -2160,7 +2178,7 @@ function measureBlocks(anchor=resizeAnchor || stableAnchor || visibleAnchor()){
   if(count) averageHeight=total/count;
   updateSpaces();restoreAnchor(anchor);stableAnchor=visibleAnchor();
   if(keepScrub) rememberScrubPosition();
-  scheduleScrubSync();queueDesktopFocus();
+  queueMessageSelection();
 }
 const blockObserver=new ResizeObserver(()=>{
   if(!panelAnimating && !windowBusy) {measureBlocks();scheduleWindow();}
@@ -2179,12 +2197,13 @@ async function showWindow(block, force=false){
   if(!force && start===windowStart && end===windowEnd) return;
   const token=++windowToken;
   windowBusy=true;
-  closeContext();
+  if(!touchContextPinned()) closeContext();
   rememberSelection();
   const anchor=visibleAnchor(),intent=scrollIntent;
   for(const [b,node] of blockNodes){
     if(force || b<start || b>=end){blockObserver.unobserve(node);node.remove();blockNodes.delete(b);}
   }
+  if(contextAnchor && !contextAnchor.isConnected) closeContext();
   windowStart=start;windowEnd=end;updateSpaces();
   // Reserve space before yielding. The browser must never clamp scrollY while
   // a replacement block is being built (especially near the end of the chat).
@@ -2361,7 +2380,7 @@ async function applyFilters(){
   buildMentionIndex();
   ensureEmotesLoaded();
 }
-document.addEventListener('scroll',()=>{if(!panelAnimating && !windowBusy && !resizeAnchor) stableAnchor=visibleAnchor();scheduleWindow();scheduleScrubSync();},{passive:true});
+document.addEventListener('scroll',()=>{if(!panelAnimating && !windowBusy && !resizeAnchor) stableAnchor=visibleAnchor();scheduleWindow();queueMessageSelection();},{passive:true});
 let listWidth=elList.clientWidth;
 let listPadding=getComputedStyle(elList).paddingTop;
 const listObserver=new ResizeObserver(()=>{
@@ -2377,15 +2396,15 @@ listObserver.observe(elList,{box:'border-box'});
 window.addEventListener('resize',()=>{
   // An enlarged panel handles actual layout changes in reconcilePanelMode.
   // Toolbar-only height changes must not restore a document scroll anchor.
-  if(storyboardMode){scheduleScrubSync();return;}
+  if(storyboardMode){queueMessageSelection();return;}
   // Width, wrapping and the mobile header settle in different observer turns.
-  // Keep one logical anchor through the entire resize, not temporary positions.
+    // Keep one logical anchor through the entire resize.
   if(!resizeAnchor && window.scrollY>0) resizeAnchor=stableAnchor;
   clearTimeout(resizeTimer);
   if(!windowBusy) measureBlocks(resizeAnchor || visibleAnchor());
   resizeTimer=setTimeout(()=>{
     if(!windowBusy) measureBlocks(resizeAnchor || visibleAnchor());
-    if(!panelAnimating) resizeAnchor=null;scheduleWindow();scheduleScrubSync();
+    if(!panelAnimating) resizeAnchor=null;scheduleWindow();queueMessageSelection();
   },120);
 });
 onPanelLayout=()=>{
@@ -2394,7 +2413,7 @@ onPanelLayout=()=>{
   clearTimeout(resizeTimer);
   return ()=>{
     if(!windowBusy) measureBlocks(resizeAnchor || visibleAnchor());
-    resizeAnchor=null;scheduleWindow();scheduleScrubSync();
+    resizeAnchor=null;scheduleWindow();queueMessageSelection();
   };
 };
 elQ.addEventListener('input',applyFilters);
@@ -2407,7 +2426,7 @@ elToggleTime.addEventListener('click',async e=>{
 
 /* Logical-index mobile navigation. At most one builder and one pending target. */
 let scrubIndex=0, scrubGesture=null, scrubPending=null, scrubRunning=false, scrubSettled=null;
-let scrubRevision=0, scrubFrame=0, scrubSyncFrame=0;
+let scrubRevision=0, scrubFrame=0;
 
 const STORYBOARD_REFRESH_MS=125;
 let storyboardScrollTop=0;
@@ -2487,12 +2506,7 @@ function durationTime(seconds){
   if(!Number.isSafeInteger(seconds) || seconds<=0) return '—';
   return String(Math.floor(seconds/3600)).padStart(2,'0')+':'+String(Math.floor(seconds/60)%60).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0');
 }
-let scrubAtEnd=false,scrubLabelSignature='',scrubSelectedTime='—';
-function physicalChatEnd(){
-  const gap=document.documentElement.scrollHeight-innerHeight-window.scrollY;
-  scrubAtEnd=gap<=(scrubAtEnd ? 3 : 1);
-  return scrubAtEnd && window.scrollY>0 && filtered===null && rowCount()>0;
-}
+let scrubLabelSignature='',scrubSelectedTime='—';
 function fitScrubLabel(){
   const span=elScrubber.querySelector('.scrub-times');
   if(!MOBILE_MQ.matches || !span) return;
@@ -2505,10 +2519,8 @@ function fitScrubLabel(){
 }
 function setScrubIndex(index){
   const count=rowCount();scrubIndex=clampNumber(index,0,Math.max(0,count-1));
-  const atEnd=scrubIndex===count-1 && !scrubGesture && !scrubRunning && !FILTERING && physicalChatEnd();
-  const percent=atEnd ? 100 : scrubPercent(scrubIndex,count),duration=durationTime(meta.duration_seconds);
-  let time=count ? scrubTime(rowAt(scrubIndex).t) : '—';
-  if(atEnd && duration!=='—') time=duration;
+  const percent=scrubPercent(scrubIndex,count),duration=durationTime(meta.duration_seconds);
+  const time=count ? scrubTime(rowAt(scrubIndex).t) : '—';
   if(time!==scrubSelectedTime){scrubSelectedTime=time;refreshPreviewFrame();}
   const label=time+' / '+duration;
   elScrubber.style.setProperty('--scrub-progress',percent.toFixed(4)+'%');
@@ -2519,23 +2531,13 @@ function setScrubIndex(index){
   elScrubber.setAttribute('aria-valuetext',label);
   elScrubber.setAttribute('aria-disabled',String(FILTERING || count<2));
 }
-function scheduleScrubSync(){
-  if(!MOBILE_MQ.matches || scrubSyncFrame) return;
-  scrubSyncFrame=requestAnimationFrame(()=>{
-    scrubSyncFrame=0;
-    if(!MOBILE_MQ.matches || panelAnimating || scrubActive() || FILTERING || windowBusy || resizeAnchor) return;
-    // Near the end (or in a short list) the viewport cannot top-align every row.
-    // Keep the chosen visible row until actual scrolling/input changes the view.
-    if(scrubSettled && scrubSettled.epoch===FILTER_TOKEN && Math.abs(window.scrollY-scrubSettled.y)<1){
-      const rect=elList.querySelector(`.row[data-id="${scrubSettled.index}"]`)?.getBoundingClientRect();
-      if(rect && rect.bottom>viewportInset() && rect.top<innerHeight){setScrubIndex(scrubSettled.index);return;}
-    }
-    scrubSettled=null;
-    const count=rowCount(),index=mobileVisibleIndex();
-    const atEnd=window.scrollY>0 && window.scrollY+innerHeight>=document.documentElement.scrollHeight-2;
-    if(atEnd && count && filtered===null) setScrubIndex(count-1);
-    else if(index!==null) setScrubIndex(index);
-  });
+function settledScrubIndex(bounds){
+  // A clamped jump cannot always top-align its target. Keep it until scrolling
+  // or another explicit selection, as long as it is still visible.
+  if(scrubSettled?.epoch===FILTER_TOKEN && Math.abs(window.scrollY-scrubSettled.y)<1
+     && rowIntersects(elList.querySelector(`.row[data-id="${scrubSettled.index}"]`),bounds)) return scrubSettled.index;
+  scrubSettled=null;
+  return null;
 }
 function rememberScrubPosition(){
   const rect=elList.querySelector(`.row[data-id="${scrubIndex}"]`)?.getBoundingClientRect();
@@ -2545,11 +2547,13 @@ function resetScrubber(){
   scrubRevision++;scrubPending=null;scrubSettled=null;elScrubber.classList.remove('is-held');
   const gesture=scrubGesture;scrubGesture=null;
   if(gesture && elScrubber.hasPointerCapture?.(gesture.id)) elScrubber.releasePointerCapture(gesture.id);
-  setScrubIndex(0);scheduleScrubSync();
+  if(MOBILE_MQ.matches) setScrubIndex(0);
+  queueMessageSelection();
 }
 function requestScrub(index){
   if(!MOBILE_MQ.matches || FILTERING || rowCount()<2) return;
   const request={index:clampNumber(index,0,rowCount()-1),epoch:FILTER_TOKEN,revision:++scrubRevision};
+  clearMessagePin();clearMessageHover();
   scrubPending=request;scrubSettled=null;setScrubIndex(request.index);
   if(!scrubFrame && !scrubRunning){
     scrubFrame=requestAnimationFrame(()=>{scrubFrame=0;runScrubber();});
@@ -2586,7 +2590,7 @@ async function runScrubber(){
     }
   }finally{
     scrubRunning=false;elScrubber.setAttribute('aria-busy','false');
-    scheduleScrubSync();scheduleWindow();
+    queueMessageSelection();scheduleWindow();
   }
 }
 function pointerScrub(x){
@@ -2605,7 +2609,7 @@ function finishScrub(event){
   if(event.type==='pointerup') pointerScrub(event.clientX);
   const gesture=scrubGesture;scrubGesture=null;elScrubber.classList.remove('is-held');
   if(elScrubber.hasPointerCapture(gesture.id)) elScrubber.releasePointerCapture(gesture.id);
-  if(gesture.moved) requestScrub(scrubIndex);scheduleScrubSync();
+  if(gesture.moved) requestScrub(scrubIndex);queueMessageSelection();
 }
 function beginScrub(x,id){
   scrubGesture={id,x,fraction:scrubPercent(scrubIndex,rowCount())/100};
@@ -2641,9 +2645,9 @@ elScrubber.addEventListener('touchmove',event=>{
 },{passive:false});
 for(const type of ['touchend','touchcancel']) elScrubber.addEventListener(type,event=>{
   event.stopPropagation();if(scrubGesture?.id!=='touch') return;
-  const moved=scrubGesture.moved;scrubGesture=null;elScrubber.classList.remove('is-held');if(moved) requestScrub(scrubIndex);scheduleScrubSync();
+  const moved=scrubGesture.moved;scrubGesture=null;elScrubber.classList.remove('is-held');if(moved) requestScrub(scrubIndex);queueMessageSelection();
 });
-MOBILE_MQ.addEventListener('change',()=>{resetScrubber();scheduleScrubSync();});
+MOBILE_MQ.addEventListener('change',resetScrubber);
 /* Selection endpoints belong to logical rows, not ephemeral DOM nodes. A native
    range is projected onto its visible intersection; PNG uses the full range. */
 function selectionPoint(node,offset){
@@ -3099,7 +3103,7 @@ function placePreviewControl(mobile){
   elVodCard.hidden=!mobile && desktopPreviewCollapsed;
   elVodCard.setAttribute('aria-label',mobile ? 'Увеличить превью VOD' : 'Свернуть превью VOD');
   elDesktopPreviewToggle.hidden=mobile || !desktopPreviewCollapsed;
-  queueDesktopFocus();
+  queueMessageSelection();
 }
 function setDesktopPreviewCollapsed(collapsed){
   const from=elDesktopPreview.getBoundingClientRect().height;
@@ -3115,7 +3119,7 @@ function setDesktopPreviewCollapsed(collapsed){
       [{height:from+'px'},{height:to+'px'}],{duration:250,easing:'ease'});
     desktopPreviewAnimation.onfinish=syncDesktopCards;
   }else syncDesktopCards();
-  queueDesktopFocus();
+  queueMessageSelection();
 }
 if(hasVodImage){
   elHeader.style.setProperty('--preview-ratio',previewRatio);
@@ -3144,15 +3148,10 @@ if(hasVodImage){
     finishPreviewFlight?.();desktopPreviewAnimation?.cancel();syncDesktopCards();
   });
 }
-window.visualViewport?.addEventListener('resize',scheduleScrubSync,{passive:true});
-window.visualViewport?.addEventListener('scroll',scheduleScrubSync,{passive:true});
-
 function setupNicknameHighlight(){
-  const desktop=matchMedia('(min-width:901px) and (hover:hover) and (pointer:fine)');
-  const cache=new Map();
-  let canvas,nickname=null;
-  function update(){
-    if(!nickname?.isConnected || !desktop.matches) return;
+  const cache=new Map(), active=new Set();
+  let canvas;
+  function update(nickname){
     nickname.classList.remove('has-ink-highlight');
     // A wrapped nickname uses one normal inline highlight per fragment.
     const rects=nickname.getClientRects();
@@ -3178,102 +3177,125 @@ function setupNicknameHighlight(){
     nickname.style.setProperty('--ink-height',(ink.ascent+ink.descent+4)+'px');
     nickname.classList.add('has-ink-highlight');
   }
-  function choose(next){
-    if(next===nickname) return;
-    if(nickname){
-      nickname.classList.remove('has-ink-highlight');
+  const refresh=()=>active.forEach(update);
+  window.addEventListener('resize',refresh,{passive:true});
+  document.fonts?.addEventListener('loadingdone',()=>{cache.clear();refresh();});
+  return (hover,pinned)=>{
+    for(const nickname of active){
+      if(nickname===hover || nickname===pinned) continue;
+      nickname.classList.remove('is-nickname-highlighted','has-ink-highlight');
       nickname.style.removeProperty('--ink-top');
       nickname.style.removeProperty('--ink-height');
+      active.delete(nickname);
     }
-    nickname=next;
-    update();
-  }
-  elList.addEventListener('pointerover',event=>{
-    if(desktop.matches && event.pointerType==='mouse') choose(event.target.closest?.('.user') || null);
-  });
-  elList.addEventListener('pointerout',event=>{
-    if(event.pointerType==='mouse' && nickname && !nickname.contains(event.relatedTarget)) choose(null);
-  });
-  desktop.addEventListener('change',()=>choose(null));
-  window.addEventListener('resize',update,{passive:true});
-  document.fonts?.addEventListener('loadingdone',()=>{cache.clear();update();});
+    for(const nickname of [hover,pinned]){
+      if(!nickname || active.has(nickname)) continue;
+      nickname.classList.add('is-nickname-highlighted');
+      active.add(nickname);update(nickname);
+    }
+  };
 }
-setupNicknameHighlight();
 
-function setupDesktopFocus(){
-  const desktop=matchMedia('(min-width:901px) and (hover:hover) and (pointer:fine)');
-  let pin=null,pointer=null,highlighted=null,pending=0;
-  const identity=index=>filtered===null ? index : filtered[index];
-  function mounted(identityValue){
-    if(identityValue===null) return null;
-    let index=identityValue;
+let messageSelectionFrame=0;
+function setupMessageSelection(){
+  let pin=null,pointer=null,pointerTarget=null,scrollY=window.scrollY;
+  let pinnedRow=null,hoveredRow=null,automaticRow=null;
+  const highlightNicknames=setupNicknameHighlight();
+  function mounted(identity){
+    let index=identity;
     if(filtered!==null){
       let lo=0,hi=filtered.length;
       while(lo<hi){
         const mid=(lo+hi)>>>1;
-        if(filtered[mid]<identityValue) lo=mid+1;
+        if(filtered[mid]<identity) lo=mid+1;
         else hi=mid;
       }
-      if(filtered[lo]!==identityValue) return null;
+      if(filtered[lo]!==identity) return null;
       index=lo;
     }
     return blockNodes.get(Math.floor(index/CHUNK))?.children[index%CHUNK] ?? null;
   }
-  function render(){
-    pending=0;
-    const mobile=MOBILE_MQ.matches;
-    const bounds=mobile ? null : chatViewport(),attached=mobile ? null : mounted(pin);
-    const pinned=desktop.matches && rowIntersects(attached,bounds) ? attached : null;
-    if(!pinned && (attached || !windowBusy && !FILTERING)) pin=null;
-    const hovered=desktop.matches && pointer
-      ? document.elementFromPoint(pointer[0],pointer[1])?.closest('#list .row') : null;
-    const active=!mobile && hasVodImage && !desktopPreviewCollapsed;
-    const hover=rowIntersects(hovered,bounds) ? hovered : null;
-    const automatic=active && !pinned && !hover ? bottomRow(bounds) : null;
-    if(automatic!==highlighted){
-      highlighted?.classList.remove('is-preview-anchor');
-      automatic?.classList.add('is-preview-anchor');
-      highlighted=automatic;
+  function highlight(previous,next,className){
+    if(previous!==next){
+      previous?.classList.remove(className);
+      next?.classList.add(className);
     }
-    const selected=active ? pinned || hover || automatic : null;
-    const next=selected ? +selected.dataset.id : null;
-    // The same displayed index can identify a different row after filtering.
-    desktopFrameIndex=next;
-    refreshPreviewFrame();
+    return next;
   }
-  queueDesktopFocus=()=>{
-    if(MOBILE_MQ.matches && !highlighted && desktopFrameIndex===null) return;
-    if(!pending) pending=requestAnimationFrame(render);
+  function render(){
+    messageSelectionFrame=0;
+    if(panelAnimating || FILTERING || windowBusy || resizeAnchor) return;
+    const mobile=MOBILE_MQ.matches;
+    const bounds=chatViewport(),attached=pin && mounted(pin.identity);
+    const pinned=rowIntersects(attached,bounds) ? attached : null;
+    if(pin && !pinned) clearMessagePin();
+    const hit=pointer && document.elementFromPoint(...pointer);
+    const hovered=messageRow(hit);
+    const hoveredNickname=hovered && hit.closest('.user');
+    pointerTarget=hoveredNickname || hovered;
+    const hover=rowIntersects(hovered,bounds) ? hovered : null;
+    pinnedRow=highlight(pinnedRow,pinned,'is-message-pinned');
+    hoveredRow=highlight(hoveredRow,hover,'is-message-hovered');
+    highlightNicknames(hover ? hoveredNickname : null,pinned ? pin.nickname : null);
+    if(mobile && scrubActive()) return;
+    const previewActive=!mobile && hasVodImage && !desktopPreviewCollapsed;
+    const directRow=pinned || hover;
+    if(directRow) scrubSettled=null;
+    let index=directRow ? +directRow.dataset.id : mobile ? settledScrubIndex(bounds) : null;
+    const automatic=index===null && (mobile || previewActive) ? automaticMessageRow(bounds) : null;
+    automaticRow=highlight(automaticRow,previewActive ? automatic : null,'is-preview-anchor');
+    if(mobile){
+      if(index===null) index=!window.scrollY ? 0
+        : automatic ? catchUpIndex(+automatic.dataset.id,initialMobileTarget(bounds.bottom)) : scrubIndex;
+      setScrubIndex(index);
+    }
+    const desktopIndex=previewActive ? index ?? (automatic ? +automatic.dataset.id : null) : null;
+    if(desktopIndex!==desktopFrameIndex){
+      desktopFrameIndex=desktopIndex;
+      refreshPreviewFrame();
+    }
+  }
+  queueMessageSelection=()=>{
+    if(!messageSelectionFrame) messageSelectionFrame=requestAnimationFrame(render);
   };
-  const clear=()=>{pin=null;queueDesktopFocus();};
-  const mouse=event=>desktop.matches && event.pointerType==='mouse';
+  pinMessage=(row,touch,nickname)=>{
+    pin={identity:rowIdentity(+row.dataset.id),touch,nickname,y:window.scrollY};
+    scrubSettled=null;
+    queueMessageSelection();
+  };
+  clearMessagePin=()=>{
+    if(!pin) return;
+    const nickname=pin.nickname;
+    pin=null;
+    if(nickname && nickname===contextAnchor) closeContext();
+    queueMessageSelection();
+  };
+  touchContextPinned=()=>!!pin?.nickname;
+  clearContextPin=anchor=>{if(pin?.nickname===anchor) clearMessagePin();};
+  clearMessageHover=()=>{
+    if(!pointer) return;
+    pointer=pointerTarget=null;queueMessageSelection();
+  };
   elList.addEventListener('pointermove',event=>{
-    if(mouse(event)) pointer=[event.clientX,event.clientY];
-  },{passive:true});
-  for(const type of ['pointerover','pointerout']) elList.addEventListener(type,event=>{
-    if(!mouse(event)) return;
-    const before=event.target.closest?.('.row'),after=event.relatedTarget?.closest?.('.row');
+    if(event.pointerType!=='mouse') return;
     pointer=[event.clientX,event.clientY];
-    if(before!==after) queueDesktopFocus();
+    const target=event.target.closest?.('.user') || messageRow(event.target);
+    if(target!==pointerTarget){
+      pointerTarget=target;queueMessageSelection();
+    }
   },{passive:true});
-  elList.addEventListener('pointerleave',()=>{pointer=null;queueDesktopFocus();});
-  document.addEventListener('click',event=>{
-    if(!desktop.matches || event.button!==0 || event.detail===0 ||
-       event.pointerType==='touch' || event.sourceCapabilities?.firesTouchEvents) return;
-    if(!elList.contains(event.target)){clear();return;}
-    const row=event.target.closest?.('.row');
-    if(!row || event.target.closest('a,button,input,.user,[data-chat-context]') ||
-       window.getSelection()?.toString()) return;
-    pin=identity(+row.dataset.id);
-    queueDesktopFocus();
-  },{capture:true});
-  document.addEventListener('scroll',()=>{if(!MOBILE_MQ.matches) queueDesktopFocus();},{passive:true});
-  window.addEventListener('resize',clear,{passive:true});
-  window.visualViewport?.addEventListener('resize',clear,{passive:true});
-  window.addEventListener('blur',()=>{pointer=null;clear();});
-  desktop.addEventListener('change',()=>{pointer=null;clear();});
+  elList.addEventListener('pointerleave',event=>{if(event.pointerType==='mouse') clearMessageHover();});
+  document.addEventListener('scroll',()=>{
+    if(window.scrollY===scrollY) return;
+    scrollY=window.scrollY;
+    if(chatPointer?.touch) chatPointer.moved=true;
+    if(pin?.touch && pin.y!==scrollY) clearMessagePin();
+  },{passive:true});
+  window.addEventListener('resize',queueMessageSelection,{passive:true});
+  for(const type of ['resize','scroll']) window.visualViewport?.addEventListener(type,queueMessageSelection,{passive:true});
+  window.addEventListener('blur',()=>{clearMessageHover();clearMessagePin();});
 }
-setupDesktopFocus();
+setupMessageSelection();
 
 function setupPreviewFrames(){
   let timer=0,idle=0,lastUpdate=-Infinity,shownFrame,listeners;

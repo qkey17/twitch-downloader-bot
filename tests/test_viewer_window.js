@@ -161,7 +161,8 @@ test('PNG selection keeps only range/indices, decoding one requested row at a ti
 function sliderContext(count=10000){
   const events={},frames=[],attributes={},times=[{style:{}},{style:{}}],percents=[{},{}];let mounted=0,activeBuilders=0,maxBuilders=0;
   const ctx=vm.createContext({count,filtered:null,meta:{duration_seconds:21088},FILTER_TOKEN:0,FILTERING:false,windowBusy:false,panelAnimating:false,storyboardMode:false,CHUNK:800,averageHeight:40,stableAnchor:null,scrollIntent:0,resizeAnchor:null,
-    MOBILE_MQ:{matches:true,addEventListener(){}},refreshPreviewFrame(){},mobileVisibleIndex:()=>mounted,clampNumber:(n,a,b)=>Math.min(b,Math.max(a,n)),
+    MOBILE_MQ:{matches:true,addEventListener(){}},refreshPreviewFrame(){},queueMessageSelection(){},clearMessagePin(){},clearMessageHover(){},clampNumber:(n,a,b)=>Math.min(b,Math.max(a,n)),
+    rowIntersects:(node,bounds)=>node.getBoundingClientRect().bottom>bounds.top,
     rowCount:()=>ctx.count,rowAt:i=>({t:ctx.time ?? '01 : 42 : 15'}),
     requestAnimationFrame:fn=>{frames.push(fn);return frames.length},yieldViewer:async()=>{},
     elScrubber:{clientWidth:300,getBoundingClientRect:()=>({width:300}),classList:{add(){},remove(){}},style:{setProperty(k,v){attributes[k]=v}},setAttribute(k,v){attributes[k]=v},
@@ -174,7 +175,7 @@ function sliderContext(count=10000){
     visibleAnchor:()=>({id:mounted,top:75,inset:75}),scheduleWindow(){},
     showWindow:async b=>{activeBuilders++;maxBuilders=Math.max(maxBuilders,activeBuilders);await new Promise(r=>setTimeout(r,1));activeBuilders--}
   });
-  vm.runInContext(part('/* Logical-index mobile navigation.', '/* Selection endpoints belong')+`;globalThis.slider={scrubTarget,scrubPercent,scrubTime,durationTime,setScrubIndex,requestScrub,resetScrubber,sync:scheduleScrubSync,get state(){return {index:scrubIndex,active:scrubActive(),running:scrubRunning,pending:scrubPending,gesture:scrubGesture}}}`,ctx);
+  vm.runInContext(part('/* Logical-index mobile navigation.', '/* Selection endpoints belong')+`;globalThis.slider={scrubTarget,scrubPercent,scrubTime,durationTime,setScrubIndex,requestScrub,resetScrubber,settledScrubIndex,get state(){return {index:scrubIndex,active:scrubActive(),running:scrubRunning,pending:scrubPending,gesture:scrubGesture}}}`,ctx);
   return {ctx,slider:ctx.slider,events,attributes,times,percents,get maxBuilders(){return maxBuilders},
     async drain(){for(let i=0;i<100;i++){frames.splice(0).forEach(fn=>fn());await new Promise(r=>setTimeout(r,2));if(!frames.length && !ctx.slider.state.active)return;}throw Error('Slider did not settle');}};
 }
@@ -226,7 +227,8 @@ test('a release over the slider without its own gesture reaches existing selecti
 test('chosen visible row near the clamped bottom remains stable until actual scroll',async()=>{
   const h=sliderContext(20);h.ctx.window.scrollY=1;h.ctx.document.documentElement.scrollHeight=900;
   h.slider.requestScrub(18);await h.drain();assert.equal(h.slider.state.index,18);
-  h.ctx.window.scrollY=2;h.slider.sync();await h.drain();assert.equal(h.slider.state.index,19);
+  assert.equal(h.slider.settledScrubIndex({top:75,bottom:900}),18);
+  h.ctx.window.scrollY=2;assert.equal(h.slider.settledScrubIndex({top:75,bottom:900}),null);
 });
 
 test('duration and timestamps normalize unlimited hours without inventing unknown values',()=>{
@@ -234,17 +236,17 @@ test('duration and timestamps normalize unlimited hours without inventing unknow
   assert.equal(s.scrubTime('105 : 42 : 15'),'105:42:15');assert.equal(s.scrubTime('5:02:03'),'05:02:03');
   for(const bad of [null,undefined,true,'5h',-1,NaN,Infinity,3.4,0])assert.equal(s.durationTime(bad),'—');
 });
-test('physical end uses full duration only without filters, restores time after scrolling up',()=>{
+test('selected row always supplies time at the physical end, including a manual last-row jump',()=>{
   const h=sliderContext(20);h.ctx.document.documentElement.scrollHeight=1000;h.ctx.window.scrollY=100;
   h.slider.setScrubIndex(18);assert.equal(h.times[0].textContent,'01:42:15 / 05:51:28');
-  h.slider.setScrubIndex(19);assert.equal(h.times[0].textContent,'05:51:28 / 05:51:28');
+  h.slider.setScrubIndex(19);assert.equal(h.times[0].textContent,'01:42:15 / 05:51:28');
   assert.equal(h.attributes['--scrub-progress'],'100.0000%');assert.equal(h.slider.state.index,19);
   h.ctx.window.scrollY=95;h.slider.setScrubIndex(18);assert.equal(h.times[0].textContent,'01:42:15 / 05:51:28');
   assert.notEqual(h.attributes['--scrub-progress'],'100.0000%');
   h.ctx.filtered=[1,2];h.ctx.window.scrollY=100;h.slider.setScrubIndex(1);assert.equal(h.times[0].textContent,'01:42:15 / 05:51:28');
   h.ctx.meta.duration_seconds=null;h.slider.setScrubIndex(1);assert.equal(h.times[0].textContent,'01:42:15 / —');
   h.ctx.filtered=null;h.ctx.count=1;h.slider.setScrubIndex(0);
-  assert.equal(h.attributes['--scrub-progress'],'100.0000%');assert.equal(h.attributes['aria-valuenow'],'0');assert.equal(h.attributes['aria-disabled'],'true');
+  assert.equal(h.attributes['--scrub-progress'],'0.0000%');assert.equal(h.attributes['aria-valuenow'],'0');assert.equal(h.attributes['aria-disabled'],'true');
 });
 test('metadata groups preserve plain/export text and treat untrusted values as text',()=>{
   const doc={createElement:()=>({setAttribute(){}}),createTextNode:text=>({textContent:text})};
@@ -310,22 +312,25 @@ test('mobile inset follows the actual header boundary without the obsolete extra
 
 test('mobile catch-up is deterministic from visible indexes, including the tall-row fallback',()=>{
   const ctx=vm.createContext({});
-  vm.runInContext(part('function catchUpIndex(', 'function mobileVisibleIndex('),ctx);
+  vm.runInContext(part('function catchUpIndex(', 'function restoreAnchor('),ctx);
   const select=ctx.catchUpIndex;
   assert.deepEqual(Array.from({length:12},(_,i)=>select(i+9,9)),[0,2,4,6,8,10,12,14,16,18,19,20]);
   assert.deepEqual([19,17,10,9,17].map(i=>select(i,9)),[19,16,2,0,16]);
   assert.equal(select(14,null),14);
 });
 
-test('bottom visible row prefers a complete row and handles an oversized row',()=>{
+test('automatic selection uses the penultimate fully visible row across blocks',()=>{
   const node=(top,bottom,children=[])=>({children,getBoundingClientRect:()=>({top,bottom})});
-  const top=node(-18,12),full=node(12,32),bottom=node(32,58);
-  const ctx=vm.createContext({blockNodes:new Map([[0,node(-18,58,[top,full,bottom])]])});
-  vm.runInContext(part('function rowIntersects(', 'function initialMobileBottom('),ctx);
-  assert.equal(ctx.bottomRow({top:0,bottom:40}),full);
-  assert.equal(ctx.bottomRow({top:15,bottom:29}),full);
-  assert.equal(ctx.bottomRow({top:34,bottom:44}),bottom);
-  assert.equal(ctx.bottomRow({top:59,bottom:70}),null);
+  const top=node(-18,12),full=node(12,32),second=node(32,48),bottom=node(48,58);
+  const ctx=vm.createContext({blockNodes:new Map([[0,node(-18,32,[top,full])],[1,node(32,58,[second,bottom])]])});
+  vm.runInContext(part('function rowIntersects(', 'function initialMobileTarget('),ctx);
+  const choose=ctx.automaticMessageRow;
+  assert.equal(choose({top:0,bottom:50}),full);
+  assert.equal(choose({top:0,bottom:58}),second);
+  assert.equal(choose({top:0,bottom:40}),full);
+  assert.equal(choose({top:15,bottom:29}),full);
+  assert.equal(choose({top:50,bottom:54}),bottom);
+  assert.equal(choose({top:59,bottom:70}),null);
 });
 
 test('only the owner resolved from channel metadata gets white mentions',async()=>{

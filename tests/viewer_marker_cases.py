@@ -11,7 +11,7 @@ async def check_marker(call, evaluate, wait, out, args, errors, requests):
     results=[];baseline_thumbs={};desktop=[]
 
     async def settled():
-        await wait('!FILTERING && !panelAnimating && !windowBusy && !scrubActive() && !scrubSyncFrame')
+        await wait('!FILTERING && !panelAnimating && !windowBusy && !scrubActive() && !messageSelectionFrame')
         await asyncio.sleep(.12)
 
     async def size(width):
@@ -112,7 +112,7 @@ text:rect(elScrubber.querySelector('.scrub-times')),label:elScrubber.getAttribut
                     await settled();assert await evaluate('scrubIndex')>5000
                     await size(390 if width==320 else 320);await settled()
                     await evaluate('requestScrub(rowCount()-1);true');await settled()
-                    assert await evaluate('physicalChatEnd() && +elScrubber.getAttribute("aria-valuenow")===100')
+                    assert await evaluate('scrubIndex===rowCount()-1 && +elScrubber.getAttribute("aria-valuenow")===100')
                     await evaluate('window.scrollTo(0,0);true');await settled()
                     assert await evaluate('scrubIndex')<100
     for version in ('base','new'):

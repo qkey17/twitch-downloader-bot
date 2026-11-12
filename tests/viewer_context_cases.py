@@ -94,7 +94,7 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
             await tap(selector)
         else:
             await click(selector)
-        assert await evaluate("linkClicks.length===1 && !linkClicks[0][1] && chatContext.hidden")
+        assert await evaluate("linkClicks.length===1 && !linkClicks[0][1] && chatContext.hidden && !elList.querySelector('.is-message-pinned')")
         assert await evaluate('''elList.querySelector('.chat-link').dispatchEvent(
           new MouseEvent('contextmenu',{bubbles:true,cancelable:true}))''')
         if not touchscreen:
@@ -204,6 +204,8 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
       return matches.map(n=>n.textContent).join(',')==='@KANAuser,@FixtureStreamer,@FarAway,@情報本部,@ijuos'
         && matches[0].style.color===document.querySelector('.row[data-id="0"] .user').style.color
         && matches[1].style.color==='rgb(255, 255, 255)'
+        && matches.every(node=>getComputedStyle(node).fontWeight==='700')
+        && getComputedStyle(matches[0].parentElement).fontWeight==='400'
         && matches[2].style.color==='rgb(251, 115, 162)'
         && matches.slice(3).every(n=>n.style.color===author.style.color && n.dataset.chatContext==='ijuos')
         && !document.querySelector(`.row[data-id="${rows.length-1}"]`)

@@ -13,7 +13,7 @@ async def check_panel(call, evaluate, wait, out, args, errors, requests):
         await call('Page.navigate', dict(url=(out / f'{version}-100000-offline.html').as_uri()))
         await wait("document.readyState==='complete' && typeof scrubActive==='function' && !windowBusy && !panelAnimating")
         await evaluate('requestScrub(60000);true')
-        await wait('!windowBusy && !scrubActive() && !scrubSyncFrame')
+        await wait('!windowBusy && !scrubActive() && !messageSelectionFrame')
         await asyncio.sleep(.15)
         await evaluate('''window.__calls={rect:0,measure:0,visible:0,geometry:0};
 const rect=Element.prototype.getBoundingClientRect;
@@ -53,7 +53,7 @@ else resolve({elapsed_ms:performance.now()-start,frames_ms:frames,calls:{...__ca
 async def visual_checks(call,evaluate,wait,out,errors,requests):
     results=[]
     async def settled():
-        await wait('!panelAnimating && !windowBusy && !scrubActive() && !scrubSyncFrame')
+        await wait('!panelAnimating && !windowBusy && !scrubActive() && !messageSelectionFrame')
         await asyncio.sleep(.15)
     async def size(width):
         await call('Emulation.setDeviceMetricsOverride',dict(width=width,height=900,deviceScaleFactor=1,mobile=width<900))
@@ -147,7 +147,7 @@ async def check_message_clearance(call,evaluate,wait,out,args,errors,requests):
     """Focused gap/anchor regression; no gesture matrix or profiling."""
     results=[]
     async def settled():
-        await wait('!panelAnimating && !windowBusy && !scrubActive() && !scrubSyncFrame')
+        await wait('!panelAnimating && !windowBusy && !scrubActive() && !messageSelectionFrame')
         await asyncio.sleep(.12)
     async def load(width,version):
         await call('Emulation.setDeviceMetricsOverride',dict(width=width,height=900,deviceScaleFactor=1,mobile=width<900))

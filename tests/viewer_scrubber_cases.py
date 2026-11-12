@@ -3,8 +3,17 @@ import asyncio,base64,json,time
 
 async def check_scrubber(call,evaluate,wait,out,args,errors,requests):
     results=[]
+    automatic_index="""(()=>{
+      const {top,bottom}=chatViewport(), visible=[], full=[];
+      for(const row of elList.querySelectorAll('.row')){
+        const rect=row.getBoundingClientRect();
+        if(rect.bottom>top && rect.top<bottom) visible.push(row);
+        if(rect.top>=top-.5 && rect.bottom<=bottom+.5) full.push(row);
+      }
+      return +(full.at(-2) || full.at(-1) || visible.at(-1))?.dataset.id;
+    })()"""
     async def settled():
-        await wait('!FILTERING && !panelAnimating && !windowBusy && !scrubActive() && !scrubFrame && !scrubSyncFrame')
+        await wait('!FILTERING && !panelAnimating && !windowBusy && !scrubActive() && !scrubFrame && !messageSelectionFrame')
         await asyncio.sleep(.18)
         await wait('!windowBusy && !scrubActive()')
     async def metrics(width):
@@ -41,7 +50,7 @@ async def check_scrubber(call,evaluate,wait,out,args,errors,requests):
     async def touch(fractions,cancel=False):return await gesture(fractions,touching=True,cancel=cancel)
     async def verify_target(index):
         await settled()
-        state=await evaluate('''(()=>{const id='''+str(index)+''',n=elList.querySelector(`.row[data-id="${id}"]`),r=n?.getBoundingClientRect();return {id:scrubIndex,top:r?.top??null,bottom:r?.bottom??null,inset:viewportInset(),rows:elList.querySelectorAll('.row').length,visible:visibleAnchor(),max:window.__maxRows||0,active:scrubActive(),busy:windowBusy,pct:elScrubber.getAttribute('aria-valuenow'),time:elScrubber.querySelector('.scrub-times').textContent,expected:((physicalChatEnd() && durationTime(meta.duration_seconds)!=='—')?durationTime(meta.duration_seconds):scrubTime(rowAt(id).t))+' / '+durationTime(meta.duration_seconds)}})()''')
+        state=await evaluate('''(()=>{const id='''+str(index)+''',n=elList.querySelector(`.row[data-id="${id}"]`),r=n?.getBoundingClientRect();return {id:scrubIndex,top:r?.top??null,bottom:r?.bottom??null,inset:viewportInset(),rows:elList.querySelectorAll('.row').length,visible:visibleAnchor(),max:window.__maxRows||0,active:scrubActive(),busy:windowBusy,pct:elScrubber.getAttribute('aria-valuenow'),time:elScrubber.querySelector('.scrub-times').textContent,expected:scrubTime(rowAt(id).t)+' / '+durationTime(meta.duration_seconds)}})()''')
         assert state['top'] is not None and state['bottom']>state['inset'] and state['top']<900,(index,state)
         assert state['id']==index,(index,state)
         assert state['time']==state['expected'],state
@@ -102,13 +111,13 @@ window.__show=showWindow;showWindow=async(...args)=>{__builders++;__maxBuilders=
                         await call('Input.dispatchTouchEvent',dict(type='touchEnd',touchPoints=[]))
                         target=round(max(0,min(count-1,base+delta/r['width']*(count-1))))
                         await verify_target(target)
-                    # End is physical, not just a visible last row; filters never substitute duration.
+                    # A deliberate End jump shows the last row's own time.
                     await key('End');await settled()
-                    assert await evaluate("elScrubber.querySelector('.scrub-times').textContent==='120:51:28 / 120:51:28'")
-                    await evaluate('window.scrollBy(0,-2);true');await settled()
-                    assert await evaluate("elScrubber.querySelector('.scrub-times').textContent.startsWith('120:51:28 /')")
-                    await evaluate('window.scrollBy(0,-6);true');await settled()
-                    assert await evaluate("!elScrubber.querySelector('.scrub-times').textContent.startsWith('120:51:28 /')")
+                    await verify_target(count-1)
+                    await evaluate('window.scrollBy(0,-70);true');await settled()
+                    await evaluate('window.scrollTo(0,document.documentElement.scrollHeight);true');await settled()
+                    assert await evaluate(f"scrubIndex===({automatic_index}) && scrubIndex<rowCount()-1")
+                    assert await evaluate("elScrubber.querySelector('.scrub-times').textContent===scrubTime(rowAt(scrubIndex).t)+' / 120:51:28'")
                     await evaluate("elQ.value='unique-last';elQ.dispatchEvent(new Event('input'));true");await settled()
                     assert await evaluate("elScrubber.querySelector('.scrub-times').textContent===scrubTime(rowAt(0).t)+' / 120:51:28'")
                     await evaluate("elQ.value='';elQ.dispatchEvent(new Event('input'));true");await settled()
@@ -139,11 +148,11 @@ window.__show=showWindow;showWindow=async(...args)=>{__builders++;__maxBuilders=
                 await key('End');await verify_target(count-1)
                 await key('Home');await key('ArrowRight');await verify_target(1)
                 await key('PageDown');await verify_target(1+round((count-1)/10))
-                # Ordinary vertical document scroll follows the first visible logical row.
+                # Ordinary document scrolling follows the penultimate complete row.
                 await mouse([.45]);await settled();await evaluate('window.scrollBy(0,700);true');await settled()
-                assert await evaluate('scrubIndex===visibleAnchor().id')
+                assert await evaluate(f'scrubIndex===({automatic_index})')
                 # Panel reflow preserves same logical row and relative position below header.
-                before=await evaluate('visibleAnchor()');index=await evaluate('scrubIndex')
+                before=await evaluate('visibleAnchor()')
                 await evaluate('window.__panelSamples=[];window.__panelSampling=true;function samplePanel(){if(!__panelSampling)return;const a=visibleAnchor();if(a)__panelSamples.push(a);requestAnimationFrame(()=>setTimeout(samplePanel,0));}samplePanel();true')
                 await panel();assert await evaluate('PANEL_EXPANDED')
                 samples=await evaluate('__panelSampling=false;__panelSamples')
@@ -153,7 +162,7 @@ window.__show=showWindow;showWindow=async(...args)=>{__builders++;__maxBuilders=
                 await panel();assert await evaluate('PANEL_EXPANDED')
                 after=await evaluate('visibleAnchor()')
                 assert before['id']==after['id'] and abs((before['top']-before['inset'])-(after['top']-after['inset']))<3,(before,after)
-                assert await evaluate('scrubIndex')==index
+                assert await evaluate(f'scrubIndex===({automatic_index})')
                 await mouse([.8]);await verify_target(round(.8*(count-1)))
                 if count==10000 and mode=='offline':
                     for f in (0,.25,.5,.75,1):
@@ -184,7 +193,7 @@ window.__show=showWindow;showWindow=async(...args)=>{__builders++;__maxBuilders=
                         await call('Input.dispatchTouchEvent',dict(type='touchMove',touchPoints=[dict(x=150,y=600-step*20,id=1)]));await asyncio.sleep(.016)
                     await call('Input.dispatchTouchEvent',dict(type='touchEnd',touchPoints=[]))
                     await settled();assert await evaluate('scrollY')>y,(y,await evaluate('({y:scrollY,gesture:scrubGesture,panel:PANEL_DRAG})'))
-                    assert await evaluate('scrubIndex===visibleAnchor().id')
+                    assert await evaluate(f'scrubIndex===({automatic_index})')
                 # Fast filter changes during a far jump invalidate old indices/builds.
                 await mouse([.99],release=False)
                 await evaluate("elQ.value='long';elQ.dispatchEvent(new Event('input'));elQ.value='not-present';elQ.dispatchEvent(new Event('input'));elQ.value='unique-last';elQ.dispatchEvent(new Event('input'));true")

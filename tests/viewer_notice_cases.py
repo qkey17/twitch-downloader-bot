@@ -8,7 +8,7 @@ async def check_notices(call, evaluate, wait, out, args, errors, requests):
     results = []
 
     async def settled():
-        await wait('!FILTERING && !panelAnimating && !windowBusy && !scrubActive() && !scrubFrame && !scrubSyncFrame')
+        await wait('!FILTERING && !panelAnimating && !windowBusy && !scrubActive() && !scrubFrame && !messageSelectionFrame')
         await asyncio.sleep(.15)
         await wait('!windowBusy')
 
