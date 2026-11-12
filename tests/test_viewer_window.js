@@ -163,7 +163,7 @@ function sliderContext(count=10000){
   const ctx=vm.createContext({count,filtered:null,meta:{duration_seconds:21088},FILTER_TOKEN:0,FILTERING:false,windowBusy:false,panelAnimating:false,storyboardMode:false,CHUNK:800,averageHeight:40,stableAnchor:null,scrollIntent:0,resizeAnchor:null,
     MOBILE_MQ:{matches:true,addEventListener(){}},refreshPreviewFrame(){},queueMessageSelection(){},clearMessagePin(){},clearMessageHover(){},clampNumber:(n,a,b)=>Math.min(b,Math.max(a,n)),
     rowIntersects:(node,bounds)=>node.getBoundingClientRect().bottom>bounds.top,
-    rowCount:()=>ctx.count,rowAt:i=>({t:ctx.time ?? '01 : 42 : 15'}),
+    rowCount:()=>ctx.count,rowIdentity:i=>ctx.filtered?.[i] ?? i,rowAt:i=>({t:ctx.time ?? '01 : 42 : 15'}),
     requestAnimationFrame:fn=>{frames.push(fn);return frames.length},yieldViewer:async()=>{},
     elScrubber:{clientWidth:300,getBoundingClientRect:()=>({width:300}),classList:{add(){},remove(){}},style:{setProperty(k,v){attributes[k]=v}},setAttribute(k,v){attributes[k]=v},
       querySelectorAll:s=>s==='.scrub-times'?times:percents,
@@ -331,6 +331,36 @@ test('automatic selection uses the penultimate fully visible row across blocks',
   assert.equal(choose({top:15,bottom:29}),full);
   assert.equal(choose({top:50,bottom:54}),bottom);
   assert.equal(choose({top:59,bottom:70}),null);
+});
+
+test('physical end requires document scrolling and allows pixel rounding',()=>{
+  const page={scrollHeight:900,clientHeight:900,scrollTop:0};
+  const ctx=vm.createContext({document:{scrollingElement:page}});
+  vm.runInContext(part('function atChatEnd(', 'function automaticMessageRow('),ctx);
+  assert.equal(ctx.atChatEnd(),false);
+  page.scrollHeight=1400;page.scrollTop=495;
+  assert.equal(ctx.atChatEnd(),false);
+  page.scrollTop=499.5;
+  assert.equal(ctx.atChatEnd(),true);
+  page.scrollTop=480;
+  assert.equal(ctx.atChatEnd(),false);
+});
+
+test('storyboard uses only preceding frames and reserves source endpoints for the cover',()=>{
+  const ctx=vm.createContext({});
+  vm.runInContext(part('function previewStoryFrame(', 'function setStoryboardPanelLimit('),ctx);
+  const frames=[[80,'first'],[90,'second'],[120,'last']];
+  const choose=ctx.previewStoryFrame;
+  assert.equal(choose(frames,79,1,4),undefined);
+  assert.equal(choose(frames,88,1,4),frames[0]);
+  assert.equal(choose(frames,90,2,4),frames[1]);
+  assert.equal(choose(frames,160,2,4),frames[2]);
+  assert.equal(choose(frames,90,0,4),undefined);
+  assert.equal(choose(frames,90,3,4),undefined);
+  assert.equal(choose(frames,90,0,1),undefined);
+  assert.equal(choose(frames,90,null,0),undefined);
+  assert.equal(choose(frames,NaN,1,4),undefined);
+  assert.equal(choose([],90,1,4),undefined);
 });
 
 test('only the owner resolved from channel metadata gets white mentions',async()=>{

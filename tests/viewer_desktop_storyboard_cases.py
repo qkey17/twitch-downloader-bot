@@ -40,7 +40,7 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
             await load(version,width)
             if width<901:
                 await expand_mobile()
-            await wait(f'{ready}==={pixels}')
+            await wait(f'{ready}==={1280 if version=="new" and width<901 else pixels}')
             assert await evaluate("""elVodLink.textContent==='🔗 Ссылка' && !elVodLink.hidden
               && document.documentElement.scrollWidth<=innerWidth
               && document.querySelectorAll('#vodPreviewImg').length===1""")
@@ -131,11 +131,13 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
     }})()"""
     selection_matches=f'desktopFrameIndex===({automatic}) && elList.querySelector(".is-preview-anchor")?.dataset.id==desktopFrameIndex'
     frame_matches="""(()=>{
-      const t=MOBILE_MQ.matches ? scrubSelectedTime : desktopFrameIndex===null ? '' : scrubTime(rowAt(desktopFrameIndex).t);
+      const index=MOBILE_MQ.matches ? scrubIndex : desktopFrameIndex;
+      if(index===null) return false;
+      const t=scrubTime(rowAt(index).t), source=filtered===null ? index : filtered[index];
       if(!t || t==='—')return false;
       const seconds=t.split(':').reduce((n,v)=>60*n+Number(v),0);
-      const frame=DATA.vod_preview.frames.reduce((a,b)=>Math.abs(a[0]-seconds)<=Math.abs(b[0]-seconds) ? a : b);
-      return elVodPreviewImg.getAttribute('src')===frame[1];
+      const frame=source===0 || source===rows.length-1 ? null : DATA.vod_preview.frames.filter(f=>f[0]<=seconds).at(-1);
+      return elVodPreviewImg.getAttribute('src')===(frame?.[1] || DATA.vod_preview.cover || null);
     })()"""
     async def message_point(index,nickname=False):
         selector=f'.row[data-id="{index}"]'+(' .user' if nickname else '')
@@ -200,6 +202,15 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
     await mouse('mousePressed',first[1:])
     await mouse('mouseReleased',first[1:])
     await wait(f'desktopFrameIndex==={first[0]}')
+    await evaluate("visualViewport.dispatchEvent(new Event('scroll'));true")
+    assert await evaluate(f'elList.querySelector(".is-message-pinned")?.dataset.id==="{first[0]}"')
+    await evaluate('scrollBy(0,15);true')
+    await wait('!elList.querySelector(".is-message-pinned")')
+    await evaluate('scrollTo(0,0);true')
+    await wait('scrollY===0 && !windowBusy')
+    await mouse('mousePressed',first[1:])
+    await mouse('mouseReleased',first[1:])
+    await wait(f'elList.querySelector(".is-message-pinned")?.dataset.id==="{first[0]}"')
     await mouse('mouseMoved',second[1:])
     await wait(f'''desktopFrameIndex==={first[0]} && elList.querySelector(".is-message-hovered")?.dataset.id=={second[0]}
       && !elList.querySelector(".is-preview-anchor")
@@ -256,7 +267,8 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
     await resize(1024)
     await wait('innerWidth===1024')
     await mouse('mouseMoved',[10,10])
-    await wait(f'!resizeAnchor && desktopFrameIndex==={pin_id}')
+    await wait('!resizeAnchor && !elList.querySelector(".is-message-pinned")')
+    await wait(selection_matches)
     await evaluate("elQ.value='unlikely-preview-search-miss';elQ.dispatchEvent(new Event('input'));true")
     await wait('!FILTERING && !windowBusy && rowCount()===0 && elVodPreviewImg.src===DATA.vod_preview.cover && !elList.querySelector(".is-message-pinned")')
     await evaluate("elQ.value='';elU.value=decodeMessage(rows[rows.length-1]).user;elU.dispatchEvent(new Event('input'));true")
@@ -286,7 +298,53 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
       && elScrubber.querySelector('.scrub-times').textContent.startsWith(scrubTime(rowAt(scrubIndex).t)+' / ')
       && !elList.querySelector('.is-preview-anchor')""")
     await resize(901)
-    await wait(f'!resizeAnchor && desktopFrameIndex==={narrow} && elList.querySelector(".is-message-pinned")?.dataset.id=={narrow}')
+    await wait('!resizeAnchor && !elList.querySelector(".is-message-pinned")')
+
+    await load('new',1440)
+    await mouse('mouseMoved',[10,10])
+    for event in ('zoom','visibility'):
+        index=await evaluate(f'({visible})[2][0]')
+        point=await message_point(index)
+        await mouse('mousePressed',point)
+        await mouse('mouseReleased',point)
+        await wait('!!elList.querySelector(".is-message-pinned")')
+        if event=='zoom':
+            await call('Emulation.setPageScaleFactor',dict(pageScaleFactor=1.25))
+            await wait('visualViewport.scale>1 && !elList.querySelector(".is-message-pinned")')
+            await call('Emulation.setPageScaleFactor',dict(pageScaleFactor=1))
+        else:
+            await evaluate("""Object.defineProperty(document,'hidden',{configurable:true,value:true});
+              document.dispatchEvent(new Event('visibilitychange'));true""")
+            await wait('!elList.querySelector(".is-message-pinned")')
+            await evaluate("delete document.hidden;document.dispatchEvent(new Event('visibilitychange'));true")
+
+    for width in (1440,390):
+        await load('new',width)
+        if width<901:
+            await expand_mobile()
+            await wait('scrubIndex===0 && elVodPreviewImg.src===embeddedCover')
+        await mouse('mouseMoved',[10,10])
+        index='scrubIndex' if width<901 else 'desktopFrameIndex'
+        await evaluate('scrollTo(0,document.scrollingElement.scrollHeight);true')
+        await wait(f'atChatEnd() && !windowBusy && {index}===rowCount()-1')
+        await wait(frame_matches)
+        await evaluate('scrollBy(0,-80);true')
+        await wait(f'!atChatEnd() && !windowBusy && {index}===+automaticMessageRow(chatViewport()).dataset.id')
+        await wait(frame_matches)
+        await evaluate("""elU.value=decodeMessage(rows.at(-1)).user.includes('user1') ? 'user2' : 'user1';applyFilters()""")
+        await wait('!windowBusy && !FILTERING && rowCount()>1 && rowCount()<rows.length')
+        await evaluate('scrollTo(0,document.scrollingElement.scrollHeight);true')
+        await wait(f'atChatEnd() && !windowBusy && {index}===rowCount()-1 && rowIdentity({index})!==rows.length-1')
+        await wait(frame_matches)
+        assert await evaluate('elVodPreviewImg.src!==embeddedCover && elList.querySelectorAll(".row").length<=2400')
+
+    await load('no-cover',390)
+    await expand_mobile()
+    assert await evaluate('scrubIndex===0 && !elVodPreviewImg.hasAttribute("src")')
+    await evaluate("requestScrub(Math.floor(rowCount()/2));true")
+    await wait('!scrubActive() && elVodPreviewImg.hasAttribute("src")')
+    await evaluate('requestScrub(rowCount()-1);true')
+    await wait('!scrubActive() && !elVodPreviewImg.hasAttribute("src")')
 
     await load('new',1440)
     assert await evaluate("""getComputedStyle(document.body).backgroundColor==='rgb(14, 14, 16)'
@@ -343,10 +401,11 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
     await load('new',1440)
     await evaluate("elList.querySelector('.row').style.minHeight='1400px';scrollTo(0,100);true")
     await wait('desktopFrameIndex===0 && elList.querySelector(".is-preview-anchor")?.dataset.id==="0"')
+    await wait(frame_matches)
 
     await load('new',390,720)
     await expand_mobile()
-    await wait(f'{ready}===220 && scrubIndex===0')
+    await wait(f'{ready}===1280 && scrubIndex===0')
     await evaluate('elVodCard.click();true')
     await wait('storyboardMode && !finishPreviewFlight')
     await evaluate("elScrubber.dispatchEvent(new KeyboardEvent('keydown',{key:'End'}));true")
@@ -394,8 +453,10 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
             if width==390:await expand_mobile()
             result=await evaluate("""(async()=>{
               const times=[];let inline=0,lookups=0;
-              const select=nearestStoryFrame;
-              nearestStoryFrame=(...args)=>{lookups++;return select(...args);};
+              const select=typeof previewStoryFrame==='function' ? previewStoryFrame : nearestStoryFrame;
+              const instrument=(...args)=>{lookups++;return select(...args);};
+              if(typeof previewStoryFrame==='function') previewStoryFrame=instrument;
+              else nearestStoryFrame=instrument;
               for(const part of [0,.1,.25,.4,.6,.8,.3,.05]){
                 const before=lookups,start=performance.now();
                 scrollTo(0,elList.offsetTop+heightBefore(Math.floor(blockCount()*part)));

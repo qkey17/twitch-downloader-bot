@@ -2113,6 +2113,15 @@ function rowIntersects(row,bounds){
   const rect=row.getBoundingClientRect();
   return rect.bottom>bounds.top && rect.top<bounds.bottom;
 }
+function atChatEnd(){
+  const page=document.scrollingElement;
+  const end=page.scrollHeight-page.clientHeight;
+  return end>1 && Math.abs(end-page.scrollTop)<=1;
+}
+function restoreChatEnd(){
+  const page=document.scrollingElement;
+  page.scrollTop=page.scrollHeight;
+}
 function automaticMessageRow(bounds){
   if(bounds.bottom<=bounds.top) return null;
   let full=null,partial=null;
@@ -2170,6 +2179,7 @@ function restoreAnchor(anchor){
 }
 function measureBlocks(anchor=resizeAnchor || stableAnchor || visibleAnchor()){
   const keepScrub=scrubSettled && (resizeAnchor || Math.abs(window.scrollY-scrubSettled.y)<1);
+  const keepEnd=!keepScrub && !scrubActive() && atChatEnd();
   let total=0,count=0;
   for(const [b,node] of blockNodes){
     if(node.dataset.pending) continue;
@@ -2177,7 +2187,10 @@ function measureBlocks(anchor=resizeAnchor || stableAnchor || visibleAnchor()){
     total+=heights[b];count+=blockLength(b);
   }
   if(count) averageHeight=total/count;
-  updateSpaces();restoreAnchor(anchor);stableAnchor=visibleAnchor();
+  updateSpaces();
+  if(keepEnd) restoreChatEnd();
+  else restoreAnchor(anchor);
+  stableAnchor=visibleAnchor();
   if(keepScrub) rememberScrubPosition();
   queueMessageSelection();
 }
@@ -2201,6 +2214,8 @@ async function showWindow(block, force=false){
   if(!touchContextPinned()) closeContext();
   rememberSelection();
   const anchor=visibleAnchor(),intent=scrollIntent;
+  // The bottom spacer is estimated until the last blocks are mounted.
+  let endScroll=!scrubActive() && end===count && atChatEnd() ? window.scrollY : null;
   for(const [b,node] of blockNodes){
     if(force || b<start || b>=end){blockObserver.unobserve(node);node.remove();blockNodes.delete(b);}
   }
@@ -2215,6 +2230,7 @@ async function showWindow(block, force=false){
     const next=[...blockNodes].filter(([key])=>key>b).sort((a,b)=>a[0]-b[0])[0]?.[1] || bottomSpace;
     elList.insertBefore(placeholder,next);blockNodes.set(b,placeholder);
   }
+  if(endScroll!==null){restoreChatEnd();endScroll=window.scrollY;}
   for(let b=start;b<end;b++){
     if(!blockNodes.get(b).dataset.pending) continue;
     const node=document.createElement('div');
@@ -2232,13 +2248,16 @@ async function showWindow(block, force=false){
       }else await yieldViewer();
       if(token!==windowToken) return;
     }
+    if(endScroll!==null && (intent!==scrollIntent || window.scrollY!==endScroll)) endScroll=null;
     if(!early){blockNodes.get(b).replaceWith(node);blockNodes.set(b,node);}
     node.style.minHeight='';
     // Keep map traversal in document order even when restoring earlier blocks.
     const ordered=[...blockNodes].sort((a,b)=>a[0]-b[0]);blockNodes.clear();
     for(const entry of ordered) blockNodes.set(...entry);
     heights[b]=node.getBoundingClientRect().height;
-    updateSpaces();if(intent===scrollIntent) restoreAnchor(anchor);
+    updateSpaces();
+    if(endScroll!==null){restoreChatEnd();endScroll=window.scrollY;}
+    else if(intent===scrollIntent) restoreAnchor(anchor);
     blockObserver.observe(node);
   }
   windowBusy=false;
@@ -2431,14 +2450,15 @@ let scrubRevision=0, scrubFrame=0;
 
 const STORYBOARD_REFRESH_MS=125;
 let storyboardScrollTop=0;
-function nearestStoryFrame(frames,seconds){
-  let left=0,right=frames.length-1;
+function previewStoryFrame(frames,seconds,identity,count){
+  if(identity===null || identity===0 || identity===count-1 || !Number.isFinite(seconds)) return undefined;
+  let left=0,right=frames.length;
   while(left<right){
     const middle=Math.floor((left+right)/2);
-    if(frames[middle][0]<seconds) left=middle+1;
+    if(frames[middle][0]<=seconds) left=middle+1;
     else right=middle;
   }
-  return left && seconds-frames[left-1][0]<=frames[left][0]-seconds ? frames[left-1] : frames[left];
+  return frames[left-1];
 }
 function setStoryboardPanelLimit(insetBase){
   elPanelDetails.style.setProperty('--panel-chrome',Math.max(0,insetBase)+'px');
@@ -2507,7 +2527,7 @@ function durationTime(seconds){
   if(!Number.isSafeInteger(seconds) || seconds<=0) return '—';
   return String(Math.floor(seconds/3600)).padStart(2,'0')+':'+String(Math.floor(seconds/60)%60).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0');
 }
-let scrubLabelSignature='',scrubSelectedTime='—';
+let scrubLabelSignature='',scrubSelectedTime='—',scrubPreviewIdentity=null;
 function fitScrubLabel(){
   const span=elScrubber.querySelector('.scrub-times');
   if(!MOBILE_MQ.matches || !span) return;
@@ -2522,7 +2542,10 @@ function setScrubIndex(index){
   const count=rowCount();scrubIndex=clampNumber(index,0,Math.max(0,count-1));
   const percent=scrubPercent(scrubIndex,count),duration=durationTime(meta.duration_seconds);
   const time=count ? scrubTime(rowAt(scrubIndex).t) : '—';
-  if(time!==scrubSelectedTime){scrubSelectedTime=time;refreshPreviewFrame();}
+  const identity=count ? rowIdentity(scrubIndex) : null;
+  if(time!==scrubSelectedTime || identity!==scrubPreviewIdentity){
+    scrubSelectedTime=time;scrubPreviewIdentity=identity;refreshPreviewFrame();
+  }
   const label=time+' / '+duration;
   elScrubber.style.setProperty('--scrub-progress',percent.toFixed(4)+'%');
   elScrubber.style.setProperty('--scrub-ratio',String(percent/100));
@@ -3243,14 +3266,16 @@ function setupMessageSelection(){
     const directRow=pinned || hover;
     if(directRow) scrubSettled=null;
     let index=directRow ? +directRow.dataset.id : mobile ? settledScrubIndex(bounds) : null;
-    const automatic=index===null && (mobile || previewActive) ? automaticMessageRow(bounds) : null;
+    const endIndex=index===null && (mobile || previewActive) && rowCount() && atChatEnd() ? rowCount()-1 : null;
+    const automatic=index===null && (mobile || previewActive)
+      ? endIndex===null ? automaticMessageRow(bounds) : mounted(rowIdentity(endIndex)) : null;
     automaticRow=highlight(automaticRow,previewActive ? automatic : null,'is-preview-anchor');
     if(mobile){
-      if(index===null) index=!window.scrollY ? 0
-        : automatic ? catchUpIndex(+automatic.dataset.id,initialMobileTarget(bounds.bottom)) : scrubIndex;
+      if(index===null) index=endIndex ?? (!window.scrollY ? 0
+        : automatic ? catchUpIndex(+automatic.dataset.id,initialMobileTarget(bounds.bottom)) : scrubIndex);
       setScrubIndex(index);
     }
-    const desktopIndex=previewActive ? index ?? (automatic ? +automatic.dataset.id : null) : null;
+    const desktopIndex=previewActive ? index ?? endIndex ?? (automatic ? +automatic.dataset.id : null) : null;
     if(desktopIndex!==desktopFrameIndex){
       desktopFrameIndex=desktopIndex;
       refreshPreviewFrame();
@@ -3294,10 +3319,22 @@ function setupMessageSelection(){
     if(window.scrollY===scrollY) return;
     scrollY=window.scrollY;
     if(chatPointer?.touch) chatPointer.moved=true;
-    if(pin?.touch && pin.y!==scrollY) clearMessagePin();
+    if(pin && pin.y!==scrollY) clearMessagePin();
   },{passive:true});
-  window.addEventListener('resize',queueMessageSelection,{passive:true});
-  for(const type of ['resize','scroll']) window.visualViewport?.addEventListener(type,queueMessageSelection,{passive:true});
+  const clearMousePin=()=>{if(pin && !pin.touch) clearMessagePin();};
+  const viewport=window.visualViewport;
+  const viewportSize=()=>[innerWidth,innerHeight,window.devicePixelRatio,viewport?.width,viewport?.height,viewport?.scale];
+  let size=viewportSize();
+  function onViewportChange(){
+    const next=viewportSize();
+    if(next.some((value,index)=>value!==size[index])) clearMousePin();
+    size=next;queueMessageSelection();
+  }
+  window.addEventListener('resize',onViewportChange,{passive:true});
+  for(const type of ['resize','scroll']) viewport?.addEventListener(type,onViewportChange,{passive:true});
+  document.addEventListener('visibilitychange',()=>{
+    if(document.hidden){clearMousePin();clearMessageHover();}
+  });
   window.addEventListener('blur',()=>{clearMessageHover();clearMessagePin();});
 }
 setupMessageSelection();
@@ -3308,11 +3345,12 @@ function setupPreviewFrames(){
   function paintFrame(){
     if(finishPreviewFlight || !listeners || (MOBILE_MQ.matches ? !PANEL_EXPANDED : desktopPreviewCollapsed)) return;
     lastUpdate=performance.now();
-    const time=FILTERING ? '—' : MOBILE_MQ.matches ? scrubSelectedTime
-      : desktopFrameIndex!==null && desktopFrameIndex<rowCount() ? scrubTime(rowAt(desktopFrameIndex).t) : '—';
+    const mobile=MOBILE_MQ.matches;
+    const desktopSelected=desktopFrameIndex!==null && desktopFrameIndex<rowCount();
+    const identity=FILTERING ? null : mobile ? scrubPreviewIdentity : desktopSelected ? rowIdentity(desktopFrameIndex) : null;
+    const time=mobile ? scrubSelectedTime : identity===null ? '—' : scrubTime(rowAt(desktopFrameIndex).t);
     const seconds=time==='—' ? NaN : time.split(':').reduce((total,part)=>60*total+Number(part),0);
-    const frame=Number.isFinite(seconds) && seconds<=meta.duration_seconds
-      ? nearestStoryFrame(storyboardFrames,seconds) : undefined;
+    const frame=seconds<=meta.duration_seconds ? previewStoryFrame(storyboardFrames,seconds,identity,rows.length) : undefined;
     if(frame===shownFrame) return;
     shownFrame=frame;
     const src=embeddedJpeg(frame?.[1]) || embeddedCover;

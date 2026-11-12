@@ -52,6 +52,10 @@ async def run(args):
             new_data=re.search(r'<script id="chat-data" type="application/json">(.*?)</script>',page,re.S).group(1)
             old_data=new_data if args.scrubber or args.panel or controls or context or storyboard else json.dumps(dict(meta=json.loads(new_data)['meta'],rows=rows),ensure_ascii=False).replace('<','\\u003c')
             if storyboard and mode=='offline':
+                without_cover=json.loads(new_data)
+                without_cover['vod_preview'].pop('cover')
+                no_cover=json.dumps(without_cover,ensure_ascii=False,separators=(',',':')).replace('<','\\u003c')
+                (out/f'no-cover-{count}-offline.html').write_text(page.replace(new_data,no_cover,1),encoding='utf-8')
                 without_frames=json.loads(new_data)
                 without_frames['vod_preview'].pop('frames')
                 no_frames=json.dumps(without_frames,ensure_ascii=False,separators=(',',':')).replace('<','\\u003c')
