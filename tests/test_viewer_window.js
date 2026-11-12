@@ -327,3 +327,27 @@ test('bottom visible row prefers a complete row and handles an oversized row',()
   assert.equal(ctx.bottomRow({top:34,bottom:44}),bottom);
   assert.equal(ctx.bottomRow({top:59,bottom:70}),null);
 });
+
+test('only the owner resolved from channel metadata gets white mentions',async()=>{
+  const rows=[
+    {login:'owNER',user:'星空',color:'#e36b89'},
+    {login:'other',user:'Другой',color:'#72abef'},
+    {login:'lookalike',user:'星空別',color:'#77cc77'},
+  ];
+  const ctx=vm.createContext({rows,meta:{channel_login:'OwNeR',channel:'星空'},performance,
+    mentionIndexStarted:false,mentionUsers:null,mentionAliases:null,
+    showWindow:async()=>{},targetBlock:()=>0,yieldViewer:async()=>{}});
+  vm.runInContext(legacyAccess+part('const TWITCH_SITE_ROUTES=', 'let mentionUsers=')+
+    part('function searchKey(', 'function matches(')+linkSource+
+    part('async function buildMentionIndex(', 'function searchKey('),ctx);
+  await ctx.buildMentionIndex();
+  const resolved=Array.from(ctx.mentionRanges('@OWNER @星空 @другой @星空別',ctx.mentionUsers,ctx.mentionAliases),
+    hit=>[hit.login,ctx.mentionUsers.get(hit.login).color]);
+  assert.deepEqual(resolved,[['owner','#ffffff'],['owner','#ffffff'],['other','#72abef'],['lookalike','#77cc77']]);
+  assert.equal(ctx.authorColor(rows[0].user,rows[0].color),'#e36b89');
+  ctx.meta.channel='Другой';
+  ctx.mentionIndexStarted=false;
+  await ctx.buildMentionIndex();
+  assert.equal(Array.from(ctx.mentionRanges('@Другой',ctx.mentionUsers,ctx.mentionAliases)).length,0);
+  assert.equal(ctx.mentionUsers.get('other').color,'#72abef');
+});

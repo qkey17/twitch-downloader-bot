@@ -629,12 +629,13 @@ html{overflow-anchor:none;}
   .chat{max-width: calc(var(--controls-w) + var(--chat-w) + var(--gap)); display:flex; gap:var(--gap); align-items:flex-start}
 
   .sidebar{
-    display:flex;align-items:end;position:sticky;top:24px;
+    display:flex;align-items:stretch;position:sticky;top:24px;
     height:calc(100dvh - 48px);flex:0 0 var(--controls-w);min-width:0;
   }
   header{
     position:static;width:100%;min-width:0;max-height:100%;
-    border-radius:14px;padding:20px;
+    --sidebar-gap:12px;height:100%;justify-content:space-between;gap:var(--sidebar-gap);
+    border:0;padding:0;background:none;pointer-events:none;transition:none;
   }
 
   /* make controls vertical and full width of left column */
@@ -870,23 +871,42 @@ html{overflow-anchor:none;}
 #vodLink:focus-visible,#desktopPreviewToggle:focus-visible{outline:2px solid #b3adff;outline-offset:2px;}
 #vodPreviewImg.vod-preview-flight{position:fixed;z-index:106;pointer-events:none;transform-origin:top left;}
 @media (min-width:901px){
+  :root{
+    --bg:#0e0e10;--panel:#18181b;--text:#efeff1;--muted:#adadb8;--border:#303036;
+    --row-highlight:#38383d;
+  }
+  #list{background:var(--panel);}
   .panel-details,.panel-details-content{display:flex;flex-direction:column;gap:var(--control-gap);}
-  .panel-details{min-height:0;overflow:auto;scrollbar-width:thin;}
+  .panel-details,.desktop-preview{
+    background:var(--panel);border:1px solid var(--border);border-radius:14px;
+    padding:20px;pointer-events:auto;
+  }
+  .panel-details{min-height:0;overflow:auto;scrollbar-width:thin;scrollbar-gutter:stable;}
   .panel-details-content{flex:none;}
-  .desktop-preview{
-    display:block;flex:none;min-width:0;overflow:hidden;
-    border-top:1px solid var(--border);padding-top:var(--control-gap);
+  .desktop-preview{display:block;flex:none;min-width:0;overflow:hidden;}
+  header.cards-joined{gap:0;}
+  .cards-joined .panel-details{flex:1 1 auto;border-radius:14px 14px 0 0;border-bottom-color:transparent;}
+  .cards-joined .desktop-preview{border-radius:0 0 14px 14px;}
+  .controls input{background:#0e0e10;border-color:#67676f;}
+  .controls input::placeholder{color:var(--muted);}
+  header .meta-buttons button,header .meta-buttons button.is-active{
+    background:#2f2f35;border-color:#494950;color:var(--text);
+  }
+  header .meta-buttons button.is-inactive{background:var(--panel);opacity:1;}
+  header .meta-buttons button:hover{background:#404047;border-color:#67676f;box-shadow:none;}
+  header .meta-buttons button:active{background:#50505a;}
+  header .meta-buttons button:focus-visible,.controls input:focus-visible{
+    outline:2px solid #bf94ff;outline-offset:-2px;
   }
   .desktop-preview .vod-card:not([hidden]){
-    display:block;margin-inline:auto;max-width:max(70px,calc((100dvh - 180px) * 16 / 9));
+    display:block;margin-inline:auto;max-width:max(70px,calc((100dvh - 206px) * 16 / 9));
     transition:border-color .18s ease;
   }
   .desktop-preview .vod-card:hover,.desktop-preview .vod-card:active{transform:none;box-shadow:none;}
   .desktop-preview .vod-card-media{aspect-ratio:16/9;}
   #desktopPreviewToggle{width:100%;white-space:nowrap;}
   .meta-buttons button{min-width:0;padding-inline:2px;white-space:nowrap;}
-  #list .row.is-preview-anchor{background:#29292f;}
-  #list .row.is-chat-pinned{background:#35323d;}
+  #list .row.is-preview-anchor{background:var(--row-highlight);}
 
   .panel-top{display:flex;flex-direction:column;gap:var(--control-gap);}
   .panel-top .meta{order:-1;height:auto;}
@@ -894,9 +914,18 @@ html{overflow-anchor:none;}
   .vod-card{margin-bottom:0;}
 }
 @media (min-width:901px) and (hover:hover) and (pointer:fine){
-  #list .row:hover{background:#29292f;}
-  #list .row.is-chat-pinned:hover{background:#35323d;}
-  #list .row .user:hover{background:#3c3c44;border-radius:3px;}
+  #list .row:hover{background:var(--row-highlight);}
+  #list .row .user:hover{background:#53535f;border-radius:3px;box-decoration-break:clone;}
+  #list .row .user.has-ink-highlight:hover{position:relative;isolation:isolate;background:none;}
+  #list .row .user.has-ink-highlight:hover::before{
+    content:"";position:absolute;z-index:-1;pointer-events:none;
+    inset-inline:-2px;top:var(--ink-top);height:var(--ink-height);
+    background:#53535f;border-radius:3px;
+  }
+}
+@media (min-width:901px) and (max-height:230px){
+  .panel-details,.desktop-preview{padding-block:8px;}
+  .desktop-preview .vod-card:not([hidden]){max-width:max(2px,calc((100dvh - 132px) * 16 / 9));}
 }
 .mobile-control-row{display:none;}
 @media(max-width:900px){
@@ -1038,7 +1067,7 @@ html{overflow-anchor:none;}
       </div>
       <button class="panel-toggle" type="button" aria-label="Развернуть панель" aria-expanded="false" aria-controls="panelDetails">
         <svg class="panel-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6"/></svg>
-        <svg class="panel-exit" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="M4 9h5V4m11 5h-5V4M4 15h5v5m11-5h-5v5"/></svg>
+        <svg class="panel-exit" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="m6 15 6-6 6 6"/></svg>
       </button>
       </div>
       <div id="desktopPreview" class="desktop-preview" hidden>
@@ -2234,7 +2263,7 @@ async function buildMentionIndex(){
   if(validProfileLogin(streamer)){
     const key=streamer.toLowerCase();
     indexMentionAlias(aliases,meta.channel,key);
-    if(!users.has(key)) users.set(key,{color:authorColor(meta.channel||streamer),explicit:false});
+    users.set(key,{...users.get(key),color:'#ffffff'});
   }
   mentionUsers=users;mentionAliases=aliases;
   if(users.size) await showWindow(targetBlock(),true);
@@ -2988,6 +3017,44 @@ const reducedPreviewMotion=window.matchMedia('(prefers-reduced-motion: reduce)')
 let previewOpened=false,finishPreviewFlight=null;
 let desktopPreviewCollapsed=false,desktopPreviewAnimation,desktopFrameIndex=null;
 
+function setupDesktopCards(){
+  const sidebar=elHeader.parentElement;
+  let frame=0;
+  function update(){
+    if(MOBILE_MQ.matches || elDesktopPreview.hidden){
+      elHeader.classList.remove('cards-joined');
+      return;
+    }
+    const style=getComputedStyle(elPanelDetails);
+    const verticalSpace=['paddingTop','paddingBottom','borderTopWidth','borderBottomWidth']
+      .reduce((total,key)=>total+parseFloat(style[key]),0);
+    const gap=parseFloat(getComputedStyle(elHeader).getPropertyValue('--sidebar-gap'));
+    const needed=elPanelContent.getBoundingClientRect().height+verticalSpace+
+      elDesktopPreview.getBoundingClientRect().height+gap;
+    elHeader.classList.toggle('cards-joined',needed>sidebar.clientHeight+.5);
+  }
+  const queue=()=>{
+    if(frame || desktopPreviewAnimation?.playState==='running') return;
+    frame=requestAnimationFrame(()=>{
+      frame=0;
+      if(desktopPreviewAnimation?.playState!=='running') update();
+    });
+  };
+  const observer=new ResizeObserver(queue);
+  function syncBreakpoint(){
+    observer.disconnect();
+    if(MOBILE_MQ.matches){elHeader.classList.remove('cards-joined');return;}
+    for(const node of [sidebar,elPanelContent,elVodCard,elDesktopPreviewToggle]) observer.observe(node);
+    queue();
+  }
+  MOBILE_MQ.addEventListener('change',syncBreakpoint);
+  syncBreakpoint();
+  // Set the final layout before starting a growing preview, and let a
+  // shrinking preview finish before splitting the cards again.
+  syncDesktopCards=update;
+}
+let syncDesktopCards=()=>{};
+
 function movePreview(target,from){
   target.appendChild(elVodPreviewImg);
   if(!from || reducedPreviewMotion.matches || !elVodPreviewImg.animate) return;
@@ -3042,14 +3109,17 @@ function setDesktopPreviewCollapsed(collapsed){
   elDesktopPreviewToggle.hidden=!collapsed;
   (collapsed ? elDesktopPreviewToggle : elVodCard).focus({preventScroll:true});
   const to=elDesktopPreview.getBoundingClientRect().height;
+  if(!collapsed) syncDesktopCards();
   if(!reducedPreviewMotion.matches && from!==to){
     desktopPreviewAnimation=elDesktopPreview.animate(
       [{height:from+'px'},{height:to+'px'}],{duration:250,easing:'ease'});
-  }
+    desktopPreviewAnimation.onfinish=syncDesktopCards;
+  }else syncDesktopCards();
   queueDesktopFocus();
 }
 if(hasVodImage){
   elHeader.style.setProperty('--preview-ratio',previewRatio);
+  setupDesktopCards();
   placePreviewControl(MOBILE_MQ.matches);
   elVodCard.addEventListener('click',()=>{
     if(!MOBILE_MQ.matches){setDesktopPreviewCollapsed(true);return;}
@@ -3071,15 +3141,68 @@ if(hasVodImage){
   });
   window.addEventListener('resize',()=>{if(!storyboardMode) finishPreviewFlight?.();});
   reducedPreviewMotion.addEventListener('change',()=>{
-    finishPreviewFlight?.();desktopPreviewAnimation?.cancel();
+    finishPreviewFlight?.();desktopPreviewAnimation?.cancel();syncDesktopCards();
   });
 }
 window.visualViewport?.addEventListener('resize',scheduleScrubSync,{passive:true});
 window.visualViewport?.addEventListener('scroll',scheduleScrubSync,{passive:true});
 
+function setupNicknameHighlight(){
+  const desktop=matchMedia('(min-width:901px) and (hover:hover) and (pointer:fine)');
+  const cache=new Map();
+  let canvas,nickname=null;
+  function update(){
+    if(!nickname?.isConnected || !desktop.matches) return;
+    nickname.classList.remove('has-ink-highlight');
+    // A wrapped nickname uses one normal inline highlight per fragment.
+    const rects=nickname.getClientRects();
+    if(rects.length!==1) return;
+    const style=getComputedStyle(nickname);
+    const font=[style.fontStyle,style.fontWeight,style.fontSize,style.fontFamily].join(' ');
+    const text=nickname.textContent,key=font+'\n'+text;
+    let ink=cache.get(key);
+    if(!ink){
+      canvas ||= document.createElement('canvas').getContext('2d');
+      if(!canvas) return;
+      canvas.font=font;
+      const metrics=canvas.measureText(text);
+      const {actualBoundingBoxAscent:ascent,actualBoundingBoxDescent:descent,
+        fontBoundingBoxAscent:fontAscent,fontBoundingBoxDescent:fontDescent}=metrics;
+      if(!Number.isFinite(ascent+descent+fontAscent+fontDescent) || ascent+descent<=0) return;
+      ink={ascent,descent,fontAscent,fontDescent};
+      if(cache.size>=256) cache.delete(cache.keys().next().value);
+      cache.set(key,ink);
+    }
+    const baseline=ink.fontAscent+(rects[0].height-ink.fontAscent-ink.fontDescent)/2;
+    nickname.style.setProperty('--ink-top',(baseline-ink.ascent-2)+'px');
+    nickname.style.setProperty('--ink-height',(ink.ascent+ink.descent+4)+'px');
+    nickname.classList.add('has-ink-highlight');
+  }
+  function choose(next){
+    if(next===nickname) return;
+    if(nickname){
+      nickname.classList.remove('has-ink-highlight');
+      nickname.style.removeProperty('--ink-top');
+      nickname.style.removeProperty('--ink-height');
+    }
+    nickname=next;
+    update();
+  }
+  elList.addEventListener('pointerover',event=>{
+    if(desktop.matches && event.pointerType==='mouse') choose(event.target.closest?.('.user') || null);
+  });
+  elList.addEventListener('pointerout',event=>{
+    if(event.pointerType==='mouse' && nickname && !nickname.contains(event.relatedTarget)) choose(null);
+  });
+  desktop.addEventListener('change',()=>choose(null));
+  window.addEventListener('resize',update,{passive:true});
+  document.fonts?.addEventListener('loadingdone',()=>{cache.clear();update();});
+}
+setupNicknameHighlight();
+
 function setupDesktopFocus(){
   const desktop=matchMedia('(min-width:901px) and (hover:hover) and (pointer:fine)');
-  let pin=null,pointer=null,highlighted=null,pinnedRow=null,pending=0;
+  let pin=null,pointer=null,highlighted=null,pending=0;
   const identity=index=>filtered===null ? index : filtered[index];
   function mounted(identityValue){
     if(identityValue===null) return null;
@@ -3102,11 +3225,6 @@ function setupDesktopFocus(){
     const bounds=mobile ? null : chatViewport(),attached=mobile ? null : mounted(pin);
     const pinned=desktop.matches && rowIntersects(attached,bounds) ? attached : null;
     if(!pinned && (attached || !windowBusy && !FILTERING)) pin=null;
-    if(pinned!==pinnedRow){
-      pinnedRow?.classList.remove('is-chat-pinned');
-      pinned?.classList.add('is-chat-pinned');
-      pinnedRow=pinned;
-    }
     const hovered=desktop.matches && pointer
       ? document.elementFromPoint(pointer[0],pointer[1])?.closest('#list .row') : null;
     const active=!mobile && hasVodImage && !desktopPreviewCollapsed;
@@ -3124,7 +3242,7 @@ function setupDesktopFocus(){
     refreshPreviewFrame();
   }
   queueDesktopFocus=()=>{
-    if(MOBILE_MQ.matches && !highlighted && !pinnedRow && desktopFrameIndex===null) return;
+    if(MOBILE_MQ.matches && !highlighted && desktopFrameIndex===null) return;
     if(!pending) pending=requestAnimationFrame(render);
   };
   const clear=()=>{pin=null;queueDesktopFocus();};
