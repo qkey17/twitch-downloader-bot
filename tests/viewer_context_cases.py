@@ -94,7 +94,8 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
             await tap(selector)
         else:
             await click(selector)
-        assert await evaluate("linkClicks.length===1 && !linkClicks[0][1] && chatContext.hidden && !elList.querySelector('.is-message-pinned')")
+        await wait("elList.querySelector('.is-message-pinned')?.dataset.id==='0'")
+        assert await evaluate("linkClicks.length===1 && !linkClicks[0][1] && chatContext.hidden")
         assert await evaluate('''elList.querySelector('.chat-link').dispatchEvent(
           new MouseEvent('contextmenu',{bubbles:true,cancelable:true}))''')
         if not touchscreen:
@@ -315,6 +316,127 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
         assert await evaluate("document.querySelectorAll('#chatContext').length===1 && document.querySelectorAll('#list .row').length<=2400")
         await check_link(touchscreen=True)
         assert not errors, errors
+
+    async def check_row_activation(width, touchscreen):
+        await load(width, mode='offline')
+        await call('Emulation.setTouchEmulationEnabled', dict(enabled=touchscreen, maxTouchPoints=1))
+        await evaluate('''window.pinEvents=[];
+          const originalPin=pinMessage;
+          pinMessage=(row,...args)=>{pinEvents.push(+row.dataset.id);originalPin(row,...args);};
+          document.addEventListener('click',e=>{if(e.target.closest('.chat-link'))e.preventDefault();}, {capture:true});
+          true''')
+        for index, selector, context in (
+            (0, user, 'profile'), (4, mention, 'profile'), (1, '.row[data-id="1"] .msg', None),
+            (2, '.row[data-id="2"]', None), (0, badge, 'Subscriber'),
+            (0, emote, 'Kappa'), (8, '.row[data-id="8"] .chat-link', None),
+        ):
+            point=await pos(selector)
+            if selector.endswith('"]'):
+                point['x']=await evaluate(f'document.querySelector({json.dumps(selector)}).getBoundingClientRect().right-4')
+            before=await evaluate('pinEvents.length')
+            if touchscreen:
+                await touch('touchStart', point)
+                await touch('touchEnd')
+            else:
+                await call('Input.dispatchMouseEvent', dict(type='mouseMoved', **point))
+                for event in ('mousePressed', 'mouseReleased'):
+                    await call('Input.dispatchMouseEvent', dict(type=event, button='left', clickCount=1, **point))
+            await wait(f'elList.querySelector(".is-message-pinned")?.dataset.id==="{index}"')
+            assert await evaluate(f'pinEvents.length==={before+1} && pinEvents.at(-1)==={index}')
+            if context:
+                if context=='profile':
+                    await wait("!chatContext.hidden && chatContext.firstChild?.href==='https://www.twitch.tv/kanauser'")
+                    await wait('!!contextAnchor?.classList.contains("is-nickname-highlighted")')
+                else:
+                    await wait(f'!chatContext.hidden && chatContext.textContent.includes({json.dumps(context)})')
+                await call('Input.dispatchKeyEvent',dict(type='keyDown',key='Escape'))
+                await wait(hidden)
+                if touchscreen and context=='profile':
+                    await wait('!elList.querySelector(".is-message-pinned,.is-nickname-highlighted")')
+                else:
+                    assert await evaluate(f'elList.querySelector(".is-message-pinned")?.dataset.id==="{index}"')
+            if not touchscreen:
+                await mouse('mouseMoved')
+                await wait('!elList.querySelector(".is-nickname-highlighted")')
+        # Native selection and compatibility clicks must not create a new pin.
+        before=await evaluate('pinEvents.length')
+        await evaluate("""const row=elList.querySelector('.row[data-id="1"]');
+          row.dispatchEvent(new MouseEvent('click',{bubbles:true,detail:1}));true""")
+        point=await pos('.row[data-id="1"] .msg')
+        if touchscreen:
+            await touch('touchStart',point)
+            await touch('touchMove',dict(x=point['x'],y=point['y']-42))
+            await touch('touchEnd')
+        else:
+            await call('Input.dispatchMouseEvent',dict(type='mousePressed',button='left',buttons=1,clickCount=1,**point))
+            assert await evaluate("getSelection().selectAllChildren(row.querySelector('.msg'));!!getSelection().toString()")
+            await call('Input.dispatchMouseEvent',dict(type='mouseReleased',button='left',buttons=0,clickCount=1,**point))
+            assert await evaluate(f'pinEvents.length==={before}')
+            await evaluate('getSelection().removeAllRanges();true')
+            await call('Input.dispatchMouseEvent',dict(type='mousePressed',button='left',buttons=1,clickCount=1,**point))
+            end=dict(x=point['x']+34,y=point['y'])
+            await call('Input.dispatchMouseEvent',dict(type='mouseMoved',buttons=1,**end))
+            await call('Input.dispatchMouseEvent',dict(type='mouseReleased',button='left',buttons=0,clickCount=1,**end))
+        assert await evaluate(f'pinEvents.length==={before}')
+        assert not errors, errors
+
+    for width in (900,901):
+        for touchscreen in (False,True):
+            await check_row_activation(width,touchscreen)
+
+    await load(320,mode='offline')
+    await call('Emulation.setTouchEmulationEnabled',dict(enabled=False))
+    await evaluate("""const row=elList.querySelector('.row[data-id="4"]');
+      Object.assign(row.querySelector('.msg').style,{display:'inline-block',width:'48px'});true""")
+    await wait(f'document.querySelector({json.dumps(mention)}).getClientRects().length>1')
+    height=await evaluate('row.offsetHeight')
+    await mouse('mouseMoved',mention)
+    await wait(f'''(()=>{{
+      const name=document.querySelector({json.dumps(mention)}), style=getComputedStyle(name);
+      return row.classList.contains('is-message-hovered') && name.classList.contains('is-nickname-highlighted')
+        && !name.classList.contains('has-ink-highlight') && style.boxDecorationBreak==='clone'
+        && style.fontWeight==='700' && style.color==='rgb(18, 171, 239)' && row.offsetHeight==={height};
+    }})()''')
+    await load(390,mode='offline')
+    unknown=await evaluate("""(()=>{
+      const message=elList.querySelector('.row[data-id="4"] .msg');
+      const walker=document.createTreeWalker(message,NodeFilter.SHOW_TEXT);
+      while(walker.nextNode()){
+        const node=walker.currentNode,start=node.data.indexOf('@Unknown');
+        if(start<0) continue;
+        const range=document.createRange();range.setStart(node,start);range.setEnd(node,start+8);
+        const r=range.getClientRects()[0];return {x:r.left+r.width/2,y:r.top+r.height/2};
+      }
+    })()""")
+    await touch('touchStart',unknown)
+    await touch('touchEnd')
+    await wait('elList.querySelector(".is-message-pinned")?.dataset.id==="4" && chatContext.hidden && !elList.querySelector(".is-nickname-highlighted")')
+
+    for width in (320,900,901,1440):
+        await load(width,mode='offline')
+        await call('Emulation.setPageScaleFactor',dict(pageScaleFactor=1.25))
+        await evaluate('scrollTo(0,elList.offsetTop+heightBefore(Math.floor(blockCount()/2)));true')
+        await wait('!windowBusy && +automaticMessageRow(chatViewport())?.dataset.id>rowCount()/3')
+        frame=await evaluate("""(()=>{
+          const style=getComputedStyle(elList), bounds=chatViewport();
+          const full=[...elList.querySelectorAll('.row')].filter(row=>{
+            const rect=row.getBoundingClientRect();return rect.top>=bounds.top-.5 && rect.bottom<=bounds.bottom+.5;
+          });
+          const before=[elList.clientWidth,elList.offsetHeight,scrollY];
+          const outline=[style.outlineColor,style.outlineWidth,style.outlineOffset,style.borderRadius];
+          elList.style.outline='none';
+          const after=[elList.clientWidth,elList.offsetHeight,scrollY];
+          elList.style.removeProperty('outline');
+          return {outline,before,after,scrollWidth:document.documentElement.scrollWidth,innerWidth,
+            rows:elList.querySelectorAll('.row').length,full:full.length,
+            automatic:automaticMessageRow(bounds)?.dataset.id,expected:full.at(-2)?.dataset.id};
+        })()""")
+        assert frame['outline']==['rgb(48, 48, 54)','1px','-1px','0px' if width<=900 else '14px'], (width,frame)
+        assert frame['before']==frame['after'] and frame['scrollWidth']<=frame['innerWidth'], (width,frame)
+        assert frame['rows']<=2400 and frame['full']>1 and frame['automatic']==frame['expected'], (width,frame)
+        await call('Emulation.setPageScaleFactor',dict(pageScaleFactor=1))
+        assert not errors, errors
     print(json.dumps(dict(control_heights={w: geometry[w,'new'] for w in (320,390,1440)},
                           search='PASS', mentions='PASS', copy='PASS', png='PASS',
-                          desktop='PASS', mobile='PASS', links='PASS'), ensure_ascii=False))
+                          desktop='PASS', mobile='PASS', links='PASS', row_activation='PASS',
+                          chat_frame='PASS', rows=count), ensure_ascii=False))

@@ -514,6 +514,9 @@ html{overflow-anchor:none;}
   margin-top:0;
   border-radius:0;
   overflow-x:hidden;
+  /* Paint inside the list without changing row wrapping or scroll geometry. */
+  outline:1px solid var(--border);
+  outline-offset:-1px;
 }
 
 /* row */
@@ -911,9 +914,9 @@ header .meta-buttons button.is-inactive{background:var(--panel);opacity:1;}
 header .meta-buttons :is(button,.button-toggle.is-active):hover,.chat-context-profile:hover{background:#404047;border-color:#67676f;}
 header .meta-buttons :is(button,.button-toggle.is-active):active,.chat-context-profile:active{background:#50505a;border-color:#bf94ff;}
 #list .row:is(.is-message-pinned,.is-message-hovered,.is-preview-anchor){background:var(--row-highlight);}
-#list .row .user.is-nickname-highlighted{background:#53535f;border-radius:3px;box-decoration-break:clone;}
-#list .row .user.has-ink-highlight{position:relative;isolation:isolate;background:none;}
-#list .row .user.has-ink-highlight::before{
+#list .row .is-nickname-highlighted{background:#53535f;border-radius:3px;-webkit-box-decoration-break:clone;box-decoration-break:clone;}
+#list .row .has-ink-highlight{position:relative;isolation:isolate;background:none;}
+#list .row .has-ink-highlight::before{
     content:"";position:absolute;z-index:-1;pointer-events:none;
     inset-inline:-2px;top:var(--ink-top);height:var(--ink-height);
     background:#53535f;border-radius:3px;
@@ -1894,6 +1897,7 @@ function createRowElement(r, includeTime, rowIndex, ownerDocument=document, sear
 const chatContext=document.getElementById('chatContext');
 let contextAnchor=null, contextPinned=false, chatPointer=null, contextTouchTarget=null;
 const messageRow=node=>node?.closest?.('#list .row') || null;
+const messageName=node=>node?.closest?.('.user,.chat-mention') || null;
 const contextTarget=node=>{
   const target=node?.closest?.('[data-chat-context]');
   return target && elList.contains(target) ? target : null;
@@ -1997,10 +2001,7 @@ document.addEventListener('pointerup',event=>{
   }
   if(row!==gesture.row || selectionGesture?.active || window.getSelection()?.toString()) return;
   const context=contextTarget(target);
-  if(context!==gesture.target || target.closest('a,button,input')) return;
-  const nickname=context?.classList.contains('user') ? context : null;
-  if(gesture.touch && context) showContext(context,true);
-  if(!context || nickname) pinMessage(row,gesture.touch,gesture.touch && contextAnchor===nickname ? nickname : null);
+  pinMessage(row,gesture.touch,context===gesture.target ? context : null);
 },{capture:true,passive:true});
 document.addEventListener('pointercancel',()=>{chatPointer=null;closeContext();},{passive:true});
 document.addEventListener('contextmenu',()=>{chatPointer=null;closeContext();});
@@ -3153,7 +3154,7 @@ function setupNicknameHighlight(){
   let canvas;
   function update(nickname){
     nickname.classList.remove('has-ink-highlight');
-    // A wrapped nickname uses one normal inline highlight per fragment.
+    // A wrapped name uses one inline highlight per fragment.
     const rects=nickname.getClientRects();
     if(rects.length!==1) return;
     const style=getComputedStyle(nickname);
@@ -3231,7 +3232,7 @@ function setupMessageSelection(){
     if(pin && !pinned) clearMessagePin();
     const hit=pointer && document.elementFromPoint(...pointer);
     const hovered=messageRow(hit);
-    const hoveredNickname=hovered && hit.closest('.user');
+    const hoveredNickname=hovered && messageName(hit);
     pointerTarget=hoveredNickname || hovered;
     const hover=rowIntersects(hovered,bounds) ? hovered : null;
     pinnedRow=highlight(pinnedRow,pinned,'is-message-pinned');
@@ -3258,8 +3259,12 @@ function setupMessageSelection(){
   queueMessageSelection=()=>{
     if(!messageSelectionFrame) messageSelectionFrame=requestAnimationFrame(render);
   };
-  pinMessage=(row,touch,nickname)=>{
-    pin={identity:rowIdentity(+row.dataset.id),touch,nickname,y:window.scrollY};
+  pinMessage=(row,touch,context)=>{
+    pin={identity:rowIdentity(+row.dataset.id),touch,nickname:null,y:window.scrollY};
+    if(touch && context){
+      showContext(context,true);
+      if(context===contextAnchor) pin.nickname=messageName(context);
+    }
     scrubSettled=null;
     queueMessageSelection();
   };
@@ -3279,7 +3284,7 @@ function setupMessageSelection(){
   elList.addEventListener('pointermove',event=>{
     if(event.pointerType!=='mouse') return;
     pointer=[event.clientX,event.clientY];
-    const target=event.target.closest?.('.user') || messageRow(event.target);
+    const target=messageName(event.target) || messageRow(event.target);
     if(target!==pointerTarget){
       pointerTarget=target;queueMessageSelection();
     }
