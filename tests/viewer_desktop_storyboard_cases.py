@@ -125,7 +125,10 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
       return [...elList.querySelectorAll('.row')].map(n=>[+n.dataset.id,n.getBoundingClientRect()])
         .filter(([,r])=>r.bottom>top && r.top<bottom);
     })()"""
-    automatic=f'({visible}).filter(([,r])=>r.top>=0 && r.bottom<=innerHeight).at(-1)?.[0]'
+    automatic=f"""(()=>{{
+      const all={visible}, full=all.filter(([,r])=>r.top>=Math.max(0,viewportInset())-.5 && r.bottom<=innerHeight+.5);
+      return (full.at(-2) || full.at(-1) || all.at(-1))?.[0];
+    }})()"""
     selection_matches=f'desktopFrameIndex===({automatic}) && elList.querySelector(".is-preview-anchor")?.dataset.id==desktopFrameIndex'
     frame_matches="""(()=>{
       const t=MOBILE_MQ.matches ? scrubSelectedTime : desktopFrameIndex===null ? '' : scrubTime(rowAt(desktopFrameIndex).t);
@@ -134,6 +137,58 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
       const frame=DATA.vod_preview.frames.reduce((a,b)=>Math.abs(a[0]-seconds)<=Math.abs(b[0]-seconds) ? a : b);
       return elVodPreviewImg.getAttribute('src')===frame[1];
     })()"""
+    async def message_point(index,nickname=False):
+        selector=f'.row[data-id="{index}"]'+(' .user' if nickname else '')
+        x='r.left+r.width/2' if nickname else 'r.right-6'
+        return await evaluate(f"""(()=>{{
+          const r=elList.querySelector({json.dumps(selector)}).getBoundingClientRect();
+          return [{x},r.top+r.height/2];
+        }})()""")
+
+    async def tap(point):
+        await call('Input.dispatchTouchEvent',dict(type='touchStart',touchPoints=[dict(x=point[0],y=point[1])]))
+        await call('Input.dispatchTouchEvent',dict(type='touchEnd',touchPoints=[]))
+
+    async def touch_selection(width):
+        await load('new',width,820)
+        await call('Emulation.setTouchEmulationEnabled',dict(enabled=True,maxTouchPoints=1))
+        if width<=900:
+            await expand_mobile()
+        index=await evaluate(f'({visible})[2][0]')
+        point=await message_point(index)
+        selected='scrubIndex' if width<=900 else 'desktopFrameIndex'
+        await evaluate('window.pinCount=0;const originalPin=pinMessage;pinMessage=(...args)=>{pinCount++;originalPin(...args);};true')
+        await tap(point)
+        await wait(f'{selected}==={index} && elList.querySelector(".is-message-pinned")?.dataset.id=={index}')
+        await wait(frame_matches)
+        await evaluate("visualViewport.dispatchEvent(new Event('resize'));visualViewport.dispatchEvent(new Event('scroll'));true")
+        assert await evaluate("pinCount===1 && !!elList.querySelector('.is-message-pinned')")
+        await evaluate('scrollBy(0,30);true')
+        await wait('!elList.querySelector(".is-message-pinned")')
+        index=await evaluate(f'({visible})[2][0]')
+        await tap(await message_point(index,True))
+        try:
+            await wait(f'!chatContext.hidden && {selected}==={index} && !!elList.querySelector(".user.is-nickname-highlighted")')
+        except AssertionError as failure:
+            state=await evaluate(f"""({{hidden:chatContext.hidden, selected:{selected}, pins:pinCount,
+              anchor:contextAnchor?.outerHTML, pinned:elList.querySelector('.is-message-pinned')?.dataset.id,
+              selection:getSelection()?.toString(), scrollY}})""")
+            raise AssertionError((width,index,state,errors)) from failure
+        await evaluate("visualViewport.dispatchEvent(new Event('resize'));true")
+        assert await evaluate('!chatContext.hidden && pinCount===2')
+        await call('Input.dispatchKeyEvent',dict(type='keyDown',key='Escape'))
+        await wait('chatContext.hidden && !elList.querySelector(".is-message-pinned,.is-nickname-highlighted")')
+        await tap(await message_point(index))
+        await wait('!!elList.querySelector(".is-message-pinned")')
+        point=await evaluate("[elHeader.getBoundingClientRect().left+5,elHeader.getBoundingClientRect().top+5]")
+        await tap(point)
+        await wait('!elList.querySelector(".is-message-pinned")')
+        x,y=await message_point(index)
+        await call('Input.dispatchTouchEvent',dict(type='touchStart',touchPoints=[dict(x=x,y=y)]))
+        await call('Input.dispatchTouchEvent',dict(type='touchMove',touchPoints=[dict(x=x,y=y-70)]))
+        await call('Input.dispatchTouchEvent',dict(type='touchEnd',touchPoints=[]))
+        assert await evaluate('pinCount===3 && !elList.querySelector(".is-message-pinned")')
+
     await load('new',1440)
     await mouse('mouseMoved',[10,10])
     await wait(selection_matches)
@@ -146,24 +201,34 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
     await mouse('mouseReleased',first[1:])
     await wait(f'desktopFrameIndex==={first[0]}')
     await mouse('mouseMoved',second[1:])
-    assert await evaluate(f'''desktopFrameIndex==={first[0]} && elList.querySelector(".row:hover")?.dataset.id=={second[0]}
-      && !elList.querySelector(".is-preview-anchor,.is-chat-pinned")
-      && getComputedStyle(elList.querySelector('.row[data-id="{first[0]}"]')).backgroundColor==='rgba(0, 0, 0, 0)'
-      && getComputedStyle(elList.querySelector(".row:hover")).backgroundColor==='rgb(56, 56, 61)' ''')
+    await wait(f'''desktopFrameIndex==={first[0]} && elList.querySelector(".is-message-hovered")?.dataset.id=={second[0]}
+      && !elList.querySelector(".is-preview-anchor")
+      && ['.is-message-pinned','.is-message-hovered'].every(selector=>
+        getComputedStyle(elList.querySelector(selector)).backgroundColor==='rgb(56, 56, 61)')''')
     # Real username hover and click preserve the existing context panel.
     nick=await evaluate(f"""(()=>{{
       const r=elList.querySelector('.row[data-id="{third[0]}"] .user').getBoundingClientRect();
       return [r.left+r.width/2,r.top+r.height/2];
     }})()""")
     await mouse('mouseMoved',nick)
-    assert await evaluate('elList.querySelector(".user:hover")!==null')
+    await wait('elList.querySelector(".user.has-ink-highlight")!==null')
     await mouse('mousePressed',nick)
     await mouse('mouseReleased',nick)
-    assert await evaluate(f'!chatContext.hidden && desktopFrameIndex==={first[0]}')
+    await wait(f'!chatContext.hidden && desktopFrameIndex==={third[0]}')
+    await call('Input.dispatchKeyEvent',dict(type='keyDown',key='Escape'))
+    await mouse('mouseMoved',[10,10])
+    await wait(f'chatContext.hidden && desktopFrameIndex==={third[0]} && !elList.querySelector(".is-nickname-highlighted")')
     await mouse('mouseMoved',[10,10])
     await mouse('mousePressed',[10,10])
     await mouse('mouseReleased',[10,10])
     await wait(selection_matches)
+    x,y=first[1:]
+    await call('Input.dispatchMouseEvent',dict(type='mousePressed',button='left',buttons=1,clickCount=1,x=x,y=y))
+    await call('Input.dispatchMouseEvent',dict(type='mouseMoved',buttons=1,x=x-120,y=y))
+    await call('Input.dispatchMouseEvent',dict(type='mouseReleased',button='left',buttons=0,clickCount=1,x=x-120,y=y))
+    await mouse('mouseMoved',[10,10])
+    await wait(selection_matches)
+    await evaluate('getSelection().removeAllRanges();true')
     await evaluate('elVodCard.click();true')
     await wait('desktopPreviewCollapsed && desktopFrameIndex===null && !elList.querySelector(".is-preview-anchor")')
     await mouse('mouseMoved',first[1:])
@@ -181,7 +246,7 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
     await wait(f'desktopFrameIndex==={first[0]}')
     await evaluate("scrollTo(0,elList.offsetTop+heightBefore(Math.floor(blockCount()*.7)));true")
     await mouse('mouseMoved',[10,10])
-    await wait('!windowBusy && desktopFrameIndex>rows.length/2 && !elList.querySelector(".is-chat-pinned")')
+    await wait('!windowBusy && desktopFrameIndex>rows.length/2 && !elList.querySelector(".is-message-pinned")')
     await wait(frame_matches)
     assert await evaluate("elList.querySelectorAll('.row').length<=2400")
     pin_id,*point=await evaluate(f'({visible}).slice(1,2).map(([id,r])=>[id,r.right-8,r.top+8])[0]')
@@ -191,12 +256,37 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
     await resize(1024)
     await wait('innerWidth===1024')
     await mouse('mouseMoved',[10,10])
-    await wait(selection_matches)
+    await wait(f'!resizeAnchor && desktopFrameIndex==={pin_id}')
     await evaluate("elQ.value='unlikely-preview-search-miss';elQ.dispatchEvent(new Event('input'));true")
-    await wait('!FILTERING && !windowBusy && rowCount()===0 && elVodPreviewImg.src===DATA.vod_preview.cover')
+    await wait('!FILTERING && !windowBusy && rowCount()===0 && elVodPreviewImg.src===DATA.vod_preview.cover && !elList.querySelector(".is-message-pinned")')
     await evaluate("elQ.value='';elU.value=decodeMessage(rows[rows.length-1]).user;elU.dispatchEvent(new Event('input'));true")
     await wait('!FILTERING && !windowBusy && rowCount()>0 && rowCount()<rows.length')
     await wait(selection_matches)
+
+    for width in (1440,390):
+        await touch_selection(width)
+
+    await load('new',900)
+    await expand_mobile()
+    await mouse('mouseMoved',[5,5])
+    assert await evaluate("""getComputedStyle(document.body).backgroundColor==='rgb(14, 14, 16)'
+      && getComputedStyle(elHeader).backgroundColor==='rgb(24, 24, 27)'
+      && getComputedStyle(elList).backgroundImage.includes('rgb(24, 24, 27)')""")
+    narrow=await evaluate(f'({visible})[2][0]')
+    nickname=await message_point(narrow,True)
+    await mouse('mouseMoved',nickname)
+    await wait(f'scrubIndex==={narrow} && !!elList.querySelector(".user.has-ink-highlight")')
+    await mouse('mousePressed',nickname)
+    await mouse('mouseReleased',nickname)
+    await wait('!chatContext.hidden && !!elList.querySelector(".is-message-pinned")')
+    await mouse('mouseMoved',[5,5])
+    await wait(f'scrubIndex==={narrow} && !elList.querySelector(".is-nickname-highlighted")')
+    await wait(frame_matches)
+    assert await evaluate("""elScrubber.getAttribute('aria-valuenow')==Math.round(scrubPercent(scrubIndex,rowCount()))
+      && elScrubber.querySelector('.scrub-times').textContent.startsWith(scrubTime(rowAt(scrubIndex).t)+' / ')
+      && !elList.querySelector('.is-preview-anchor')""")
+    await resize(901)
+    await wait(f'!resizeAnchor && desktopFrameIndex==={narrow} && elList.querySelector(".is-message-pinned")?.dataset.id=={narrow}')
 
     await load('new',1440)
     assert await evaluate("""getComputedStyle(document.body).backgroundColor==='rgb(14, 14, 16)'
@@ -265,7 +355,7 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
     await evaluate("scrollTo(0,300);true")
     await wait('!windowBusy && !scrubActive() && scrubIndex<100')
     await wait(frame_matches)
-    assert await evaluate('!elList.querySelector(".is-chat-pinned,.is-preview-anchor")')
+    assert await evaluate('!elList.querySelector(".is-message-pinned,.is-preview-anchor")')
     header_height=await evaluate('elHeader.offsetHeight')
     await evaluate("""window.layoutCalls=0;window.scrollWrites=0;
       const layout=resizeStoryboardPanel;
