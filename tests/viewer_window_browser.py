@@ -36,6 +36,7 @@ async def run(args):
         if storyboard and not context:
             for index, row in enumerate(rows):
                 t = index * index // max(1, count - 1)
+                row['login'] = row['user']
                 row['t'] = f'{t//3600:02}:{t//60%60:02}:{t%60:02}'
         for mode in ('online','offline'):
             badge_images={'subscriber/1':pixel,'subscriber/2':pixel}

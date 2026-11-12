@@ -144,7 +144,9 @@ class ViewerPreviewLayoutTests(unittest.TestCase):
     def test_mobile_compact_panel_uses_a_clipped_measured_section(self):
         self.assertEqual('hidden',self.properties('.panel-details')['overflow'])
         self.assertEqual('0',self.properties('.panel-details')['height'])
-        self.assertEqual('contents',self.responsive_properties('.panel-details',1440)['display'])
+        self.assertEqual('flex',self.responsive_properties('.panel-details',1440)['display'])
+        self.assertEqual('auto',self.responsive_properties('.panel-details',1440)['overflow'])
+        self.assertEqual('none',self.responsive_properties('.desktop-preview',390)['display'])
 
     def test_mobile_live_warning_and_expanded_metadata_are_scoped(self):
         for width in (320,390,900):

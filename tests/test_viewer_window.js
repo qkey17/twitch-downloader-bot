@@ -161,7 +161,7 @@ test('PNG selection keeps only range/indices, decoding one requested row at a ti
 function sliderContext(count=10000){
   const events={},frames=[],attributes={},times=[{style:{}},{style:{}}],percents=[{},{}];let mounted=0,activeBuilders=0,maxBuilders=0;
   const ctx=vm.createContext({count,filtered:null,meta:{duration_seconds:21088},FILTER_TOKEN:0,FILTERING:false,windowBusy:false,panelAnimating:false,storyboardMode:false,CHUNK:800,averageHeight:40,stableAnchor:null,scrollIntent:0,resizeAnchor:null,
-    MOBILE_MQ:{matches:true,addEventListener(){}},clampNumber:(n,a,b)=>Math.min(b,Math.max(a,n)),
+    MOBILE_MQ:{matches:true,addEventListener(){}},refreshPreviewFrame(){},mobileVisibleIndex:()=>mounted,clampNumber:(n,a,b)=>Math.min(b,Math.max(a,n)),
     rowCount:()=>ctx.count,rowAt:i=>({t:ctx.time ?? '01 : 42 : 15'}),
     requestAnimationFrame:fn=>{frames.push(fn);return frames.length},yieldViewer:async()=>{},
     elScrubber:{clientWidth:300,getBoundingClientRect:()=>({width:300}),classList:{add(){},remove(){}},style:{setProperty(k,v){attributes[k]=v}},setAttribute(k,v){attributes[k]=v},
@@ -236,8 +236,9 @@ test('duration and timestamps normalize unlimited hours without inventing unknow
 });
 test('physical end uses full duration only without filters, restores time after scrolling up',()=>{
   const h=sliderContext(20);h.ctx.document.documentElement.scrollHeight=1000;h.ctx.window.scrollY=100;
-  h.slider.setScrubIndex(18);assert.equal(h.times[0].textContent,'05:51:28 / 05:51:28');
-  assert.equal(h.attributes['--scrub-progress'],'100.0000%');assert.equal(h.slider.state.index,18);
+  h.slider.setScrubIndex(18);assert.equal(h.times[0].textContent,'01:42:15 / 05:51:28');
+  h.slider.setScrubIndex(19);assert.equal(h.times[0].textContent,'05:51:28 / 05:51:28');
+  assert.equal(h.attributes['--scrub-progress'],'100.0000%');assert.equal(h.slider.state.index,19);
   h.ctx.window.scrollY=95;h.slider.setScrubIndex(18);assert.equal(h.times[0].textContent,'01:42:15 / 05:51:28');
   assert.notEqual(h.attributes['--scrub-progress'],'100.0000%');
   h.ctx.filtered=[1,2];h.ctx.window.scrollY=100;h.slider.setScrubIndex(1);assert.equal(h.times[0].textContent,'01:42:15 / 05:51:28');
@@ -305,4 +306,24 @@ test('mobile inset follows the actual header boundary without the obsolete extra
   vm.runInContext(part('function viewportInset()', 'function visibleAnchor('),ctx);
   assert.equal(ctx.viewportInset(),63.25);
   ctx.MOBILE_MQ.matches=false;assert.equal(ctx.viewportInset(),0);
+});
+
+test('mobile catch-up is deterministic from visible indexes, including the tall-row fallback',()=>{
+  const ctx=vm.createContext({});
+  vm.runInContext(part('function catchUpIndex(', 'function mobileVisibleIndex('),ctx);
+  const select=ctx.catchUpIndex;
+  assert.deepEqual(Array.from({length:12},(_,i)=>select(i+9,9)),[0,2,4,6,8,10,12,14,16,18,19,20]);
+  assert.deepEqual([19,17,10,9,17].map(i=>select(i,9)),[19,16,2,0,16]);
+  assert.equal(select(14,null),14);
+});
+
+test('bottom visible row prefers a complete row and handles an oversized row',()=>{
+  const node=(top,bottom,children=[])=>({children,getBoundingClientRect:()=>({top,bottom})});
+  const top=node(-18,12),full=node(12,32),bottom=node(32,58);
+  const ctx=vm.createContext({blockNodes:new Map([[0,node(-18,58,[top,full,bottom])]])});
+  vm.runInContext(part('function rowIntersects(', 'function initialMobileBottom('),ctx);
+  assert.equal(ctx.bottomRow({top:0,bottom:40}),full);
+  assert.equal(ctx.bottomRow({top:15,bottom:29}),full);
+  assert.equal(ctx.bottomRow({top:34,bottom:44}),bottom);
+  assert.equal(ctx.bottomRow({top:59,bottom:70}),null);
 });
