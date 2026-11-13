@@ -2452,6 +2452,7 @@ elToggleTime.addEventListener('click',async e=>{
 /* Logical-index mobile navigation. At most one builder and one pending target. */
 let scrubIndex=0, scrubGesture=null, scrubPending=null, scrubRunning=false, scrubSettled=null;
 let scrubStart=true, scrubEndCatchup=null;
+let scrubInFlight=null;
 let scrubRevision=0, scrubFrame=0;
 
 const STORYBOARD_REFRESH_MS=125;
@@ -2601,8 +2602,15 @@ function resetScrubber(){
 }
 function requestScrub(index,edge=null){
   if(!MOBILE_MQ.matches || FILTERING || rowCount()<2) return;
-  if(edge==='end' && scrubSettled?.index===index && scrubEndCatchup && atChatEnd()) return;
-  const request={index:clampNumber(index,0,rowCount()-1),edge,epoch:FILTER_TOKEN,revision:++scrubRevision};
+  index=clampNumber(index,0,rowCount()-1);
+  const latest=scrubPending || scrubInFlight;
+  if(edge && latest?.revision===scrubRevision && latest.epoch===FILTER_TOKEN
+     && latest.index===index && latest.edge===edge) return;
+  if(edge==='start' && !scrubActive() && scrubStart && window.scrollY===0) return;
+  if(edge==='end' && scrubSettled?.epoch===FILTER_TOKEN && scrubSettled.edge===edge
+     && scrubSettled.index===index && scrubEndCatchup
+     && Math.abs(window.scrollY-scrubSettled.y)<1 && atChatEnd()) return;
+  const request={index,edge,epoch:FILTER_TOKEN,revision:++scrubRevision};
   clearMessagePin();clearMessageHover();
   scrubPending=request;scrubSettled=null;scrubEndCatchup=null;
   setScrubIndex(edge==='start' ? null : request.index);
@@ -2615,7 +2623,7 @@ async function runScrubber(){
   scrubRunning=true;elScrubber.setAttribute('aria-busy','true');
   try{
     while(scrubPending){
-      const request=scrubPending;scrubPending=null;
+      const request=scrubInFlight=scrubPending;scrubPending=null;
       const current=()=>request.revision===scrubRevision && request.epoch===FILTER_TOKEN && !FILTERING && MOBILE_MQ.matches;
       while(windowBusy && current()) await yieldViewer();
       if(!current()) continue;
@@ -2646,6 +2654,7 @@ async function runScrubber(){
       }
     }
   }finally{
+    scrubInFlight=null;
     scrubRunning=false;elScrubber.setAttribute('aria-busy','false');
     queueMessageSelection();scheduleWindow();
   }

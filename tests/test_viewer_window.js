@@ -295,6 +295,53 @@ test('endpoint reversal immediately consumes motion in both directions without h
     assert.equal(h.slider.state.index,right?8000:2000);
   }
 });
+for(const offline of [false,true]) test(`held right endpoint runs once (OFFLINE=${offline})`,async()=>{
+  const h=sliderContext(101),{ctx,slider:s,events}=h;
+  const scroll=[];
+  ctx.window.scrollTo=()=>scroll.push('seed');
+  ctx.window.scrollBy=()=>scroll.push('align');
+  ctx.restoreChatEnd=()=>scroll.push('end');
+  ctx.time=offline ? '05:51:29' : '05:51:28';
+  const revision=()=>vm.runInContext('scrubRevision',ctx);
+  const event=(x,type='pointermove')=>({pointerId:1,button:0,clientX:x,type,preventDefault(){},stopPropagation(){}});
+  s.setScrubIndex(80);events.pointerdown(event(100,'pointerdown'));
+  const before=revision();
+  events.pointermove(event(180));
+  events.pointermove(event(200));
+  assert.equal(revision(),before+1);
+  let finishBuild;
+  ctx.showWindow=()=>new Promise(resolve=>{finishBuild=resolve;});
+  const drain=h.drain();
+  assert.equal(s.state.running,true);
+  events.pointermove(event(230));
+  events.pointermove(event(260));
+  assert.equal(revision(),before+1);
+  assert.deepEqual(scroll,['seed']);
+  events.pointerup(event(280,'pointerup'));
+  assert.equal(revision(),before+1);
+  finishBuild();await drain;
+  assert.deepEqual(scroll,['seed','end','end','end']);
+  assert.equal(h.times[0].textContent,offline ? 'OFFLINE' : '05:51:28 / 05:51:28');
+  ctx.showWindow=async()=>{};
+  events.pointerdown(event(280,'pointerdown'));
+  events.pointermove(event(310));
+  events.pointermove(event(309)); // Same rounded index, but no longer the endpoint.
+  assert.equal(s.state.index,100);
+  assert.equal(s.state.pending.edge,null);
+  events.pointermove(event(300));
+  assert.ok(s.state.index<100);
+  events.pointermove(event(320));
+  const endRevision=revision();
+  events.pointerup(event(330,'pointerup'));
+  assert.equal(revision(),endRevision);
+  await h.drain();
+  assert.deepEqual(scroll,['seed','end','end','end','seed','end','end','end']);
+  ctx.window.scrollY=50;
+  s.requestScrub(100,'end');
+  await h.drain();
+  assert.equal(scroll.filter(operation=>operation==='seed').length,3);
+});
+
 test('media-query crossings reset mobile compact, while mobile width changes preserve intent',()=>{
   const ctx=vm.createContext({MOBILE_MQ:{matches:true},panelMobile:true,PANEL_EXPANDED:false,storyboardMode:false,calls:[],closeVodPreview(){},placePreviewControl(){}});
   ctx.syncPanelState=(expanded,animate)=>{ctx.PANEL_EXPANDED=expanded;ctx.calls.push([expanded,animate]);};
