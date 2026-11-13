@@ -101,14 +101,61 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
         assert await evaluate("linkClicks.length===0 && document.activeElement===elList.querySelector('.chat-link')")
         await wait("!!elList.querySelector('.clip-card')")
         assert await evaluate("""elList.querySelector('.clip-card strong').textContent==='<img onerror=window.fixtureXSS=1>'
-          && elList.querySelector('.clip-card small').textContent==='Clip Author'
+          && elList.querySelector('.clip-card small').textContent==='Автор клипа: Clip Author'
           && elList.querySelectorAll('.clip-card img').length===1 && window.fixtureXSS===undefined""")
-        await (tap if touchscreen else click)('.clip-card')
-        await wait('linkConfirm.open')
+        card = '.clip-card'
+        await wait("elList.querySelector('.clip-card').classList.contains('is-author-below')")
+
+        async def layout(title, author, below):
+            await evaluate(f"""(async()=>{{
+              DATA.clips.Kappa.title={json.dumps(title)};
+              DATA.clips.Kappa.creator={json.dumps(author)};
+              await showWindow(0,true);
+            }})()""")
+            await wait(f"""(()=>{{
+              const card=elList.querySelector('.clip-card'), img=card.querySelector('img');
+              const copy=card.querySelector('strong'), author=card.querySelector('small');
+              const ir=img.getBoundingClientRect(), ar=author.getBoundingClientRect(), cr=copy.getBoundingClientRect();
+              return card.classList.contains('is-author-below')==={json.dumps(below)}
+                && (ar.top>=ir.bottom)==={json.dumps(below)}
+                && (!{json.dumps(below)} || Math.abs(ar.left-ir.left)<1)
+                && getComputedStyle(copy).webkitLineClamp==='2' && cr.height<=48
+                && card.scrollWidth<=card.clientWidth+1 && Math.abs(ir.width-window.clipImageWidth)<1;
+            }})()""")
+
+        await evaluate("window.clipImageWidth=elList.querySelector('.clip-card img').getBoundingClientRect().width")
+        await layout('Clip', 'Name', False)
+        await layout('Long title '*20, 'Name', True)
+        await layout('Clip', 'LongNickname'*20, True)
+        await layout('Long title '*20, 'LongNickname'*20, True)
+        if not touchscreen:
+            await layout('W'*10, 'Name', False)
+            await call('Emulation.setDeviceMetricsOverride', dict(width=190,height=900,deviceScaleFactor=1,mobile=False))
+            await wait("innerWidth===190 && elList.querySelector('.clip-card').classList.contains('is-author-below')")
+            await call('Emulation.setDeviceMetricsOverride', dict(width=1440,height=900,deviceScaleFactor=1,mobile=False))
+            await wait("innerWidth===1440 && !elList.querySelector('.clip-card').classList.contains('is-author-below')")
+            from viewer_storyboard_cases import preview_fixture
+            frame = preview_fixture(16)['preview_assets']['frames'][1]
+            await evaluate(f"storyboardFrames.push({json.dumps(frame)});meta.duration_seconds=60;setupPreviewFrames();setDesktopPreviewCollapsed(false)")
+            await mouse('mouseMoved', '.row .user')
+            await wait("!!elList.querySelector('.row.is-message-hovered')")
+            await mouse('mouseMoved', card)
+            await wait("elList.querySelector('.clip-card').matches(':hover') && !elList.querySelector('.row.is-message-hovered')")
+            await wait("desktopFrameIndex===0 && elVodPreviewImg.getAttribute('src')===embeddedJpeg(storyboardFrames[0][1])")
+        await (tap if touchscreen else click)(card)
+        await wait("linkConfirm.open && !!elList.querySelector('.clip-card.is-link-source')")
+        await wait("""getComputedStyle(elList.querySelector('.row')).backgroundColor==='rgba(0, 0, 0, 0)'
+          && (MOBILE_MQ.matches ? scrubSelectedTime==='00:00:08' : desktopFrameIndex===0)""")
         await mouse('mousePressed')
         await mouse('mouseReleased')
         await wait("!linkConfirm.open && !document.documentElement.classList.contains('confirming-link')")
-        assert await evaluate('linkClicks.length===0')
+        assert await evaluate("linkClicks.length===0 && !elList.querySelector('.clip-card.is-link-source')")
+        if not touchscreen:
+            await evaluate("elList.querySelector('.clip-card').focus();true")
+            await call('Input.dispatchKeyEvent',dict(type='keyDown',key='Enter',windowsVirtualKeyCode=13))
+            await wait("linkConfirm.open && !!elList.querySelector('.clip-card.is-link-source')")
+            await click('#linkConfirm button[value="cancel"]')
+            await wait("!linkConfirm.open && !elList.querySelector('.clip-card.is-link-source')")
         assert await evaluate("""(()=>{
           const card=elList.querySelector('.clip-card'), link=elList.querySelector('.chat-link');
           const url=card.querySelector('img').src;
