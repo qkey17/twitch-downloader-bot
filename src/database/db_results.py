@@ -5,12 +5,14 @@ import logging
 import os
 import re
 import stat
+import sqlite3
 import time
 import uuid
 from pathlib import Path
 
 from src import config, html_publisher
 from src.file_lock import try_lock_file
+from src.resource_usage import log_resources
 from .db_core import _connect
 from .db_cache import _upsert_cache
 
@@ -83,6 +85,18 @@ def create_schema(con):
         con.execute(statement)
 
 
+# Registry-only metadata, carried by both the preparation and the ready row.
+_STABLE_SQL = "CASE WHEN json_valid(meta_json) THEN COALESCE(json_type(meta_json, '$._stable_html') = 'true', 0) ELSE 0 END"
+
+
+def stable_result(row):
+    try:
+        meta = json.loads(row['meta_json'])
+        return isinstance(meta, dict) and meta.get('_stable_html') is True
+    except (ValueError, TypeError):
+        return False
+
+
 def _roots():
     return {Path(value).expanduser().resolve() for value in
             (html_publisher.OUT_DIR, html_publisher.PUBLIC_HTML_DIR) if value}
@@ -109,8 +123,10 @@ def file_status(row):
         path = result_path(row)
         if path is None:
             return "unmanaged"
+        if not stat.S_ISREG(path.lstat().st_mode):
+            return "invalid"
         with path.open("rb") as source:
-            size = path.stat().st_size
+            size = os.fstat(source.fileno()).st_size
             if not size or (row.get("size_bytes") is not None and size != row["size_bytes"]):
                 return "invalid"
             return "available" if source.read(1) else "invalid"
@@ -276,7 +292,7 @@ def _lease_path(key):
 
 
 class Publication:
-    def __init__(self, vod_id, fmt="html_online", mode=None):
+    def __init__(self, vod_id, fmt="html_online", mode=None, *, stable=False):
         self.vod_id = normalize_vod_id(vod_id)
         if fmt != "html_online":
             raise ValueError("Unsupported generation format")
@@ -294,12 +310,24 @@ class Publication:
                     html_publisher.public_html_url(self.filename))
         self.previous_id = None
         self.meta, self.stats = {}, {}
+        self.stable = stable
+        self._vod_lease = None
+        self._replacement = None
+        self._staged_temp = None
+        self._published_path = False
+        self._committed = False
         self._lease = None
         self._published = False
         self._proof = None
         self._lease_created = False
 
     def reserve(self):
+        if self.stable:
+            key = uuid.uuid5(uuid.NAMESPACE_URL, f'tcd:html-online:{self.vod_id}').hex
+            self._vod_lease = _recovery_lease(key)
+            if self._vod_lease is None:
+                raise RuntimeError("HTML publication already in progress for this VOD")
+            self._recover_pending()
         self.root.mkdir(parents=True,exist_ok=True)
         if (self.root / self.filename).exists():
             raise FileExistsError("Generation filename already exists")
@@ -317,11 +345,38 @@ class Publication:
                 migrate_legacy(con,self.vod_id)
                 previous = con.execute("SELECT result_id FROM html_current WHERE vod_id=? AND fmt=?",(self.vod_id,self.fmt)).fetchone()
                 self.previous_id = previous['result_id'] if previous else None
+                if self.stable and self.previous_id is not None:
+                    head = _replacement_head(con, self.previous_id, self.vod_id, self.fmt)
+                    if head and head['root'] == str(self.root) and file_status(head) == 'available' and _reference_matches(head):
+                        self._replacement = head
+                        self.ref = head['html_ref']
+                    elif stable_result(con.execute("SELECT meta_json FROM html_results WHERE id=?", (self.previous_id,)).fetchone()):
+                        raise OSError("Stable HTML target is unavailable")
                 con.execute("""INSERT INTO html_results(id,vod_id,fmt,origin,state,root,filename,temp_name,
-                            html_ref,managed,created_at,previous_id,lease_root) VALUES(?,?,?,'generated','building',?,?,?,?,1,?,?,?)""",
-                            (self.id,self.vod_id,self.fmt,str(self.root),self.filename,self.temp_name,self.ref,time.time(),self.previous_id,str(lease.parent)))
+                            html_ref,managed,created_at,previous_id,lease_root,meta_json)
+                            VALUES(?,?,?,'generated','building',?,?,?,?,?,?,?,?,?)""",
+                            (self.id,self.vod_id,self.fmt,str(self.root),self.filename,self.temp_name,self.ref,
+                             int(self._replacement is None),time.time(),self.previous_id,str(lease.parent),
+                             '{"_stable_html":true}' if self.stable else '{}'))
         finally:
             con.close()
+
+    def _recover_pending(self):
+        con = _connect()
+        try:
+            keys = con.execute(f"""SELECT id FROM html_results WHERE vod_id=? AND fmt=?
+                AND ({_STABLE_SQL}) AND state='publishing'""", (self.vod_id,self.fmt)).fetchall()
+            for (key,) in keys:
+                _recover_one(con,key)
+                pending = con.execute("SELECT state FROM html_results WHERE id=?", (key,)).fetchone()
+                if pending and pending[0] == 'publishing':
+                    raise OSError("Prior HTML publication still requires recovery")
+        finally:
+            con.close()
+
+    @property
+    def result_id(self):
+        return self._replacement['id'] if self._replacement else self.id
 
     def path(self):
         path = result_path({'id':self.id,'origin':'generated','root':str(self.root),'filename':self.filename,'managed':1})
@@ -329,8 +384,11 @@ class Publication:
             raise ValueError("Unsafe HTML publication path")
         return path
 
-    def stage(self, size_bytes, sha256):
+    def stage(self, size_bytes, sha256, *, staged_identity=None):
         meta = dict(self.meta, html_url=self.ref)
+        if self.stable:
+            meta['_stable_html'] = True
+            meta['_staged_html_identity'] = staged_identity
         con = _connect()
         try:
             with con:
@@ -344,6 +402,8 @@ class Publication:
             con.close()
 
     def complete(self):
+        if self.stable:
+            return self._complete_stable()
         if not self._published:
             raise ValueError("HTML generation has not been published")
         con = _connect()
@@ -364,7 +424,61 @@ class Publication:
         finally:
             con.close()
 
+    def _complete_stable(self):
+        if self._staged_temp is None:
+            raise ValueError("HTML generation has not been prepared")
+        replacement = self._replacement
+        lease = _recovery_lease(replacement['id']) if replacement else None
+        if replacement and lease is None:
+            raise OSError("Current HTML is in use")
+        try:
+            if replacement:
+                target = result_path(replacement)
+                if not target:
+                    raise OSError("Current HTML target is unsafe")
+                old_identity = _file_identity(target.lstat())
+                if not _ready_proof(target,replacement):
+                    raise OSError("Current HTML does not match its registered proof")
+            con = _connect()
+            try:
+                with con:
+                    con.execute("BEGIN IMMEDIATE")
+                    row = dict(con.execute("SELECT * FROM html_results WHERE id=?", (self.id,)).fetchone())
+                    if row['state'] != 'publishing' or (row['size_bytes'],row['sha256']) != self._proof:
+                        raise ValueError("HTML preparation changed before publication")
+                    if replacement:
+                        if _replacement_head(con, replacement['id'], self.vod_id, self.fmt) != replacement:
+                            raise ValueError("Current HTML changed before publication")
+                        final = result_path(replacement)
+                        if not final or not _reference_matches(replacement) or _file_identity(final.lstat()) != old_identity:
+                            raise OSError("Current HTML is unavailable")
+                        cache_id = _apply_replacement(con, row, replacement)
+                    else:
+                        final = self.path()
+                        cache_id = _activate(con, row, self.previous_id)
+                    # SQLite changes are still private. The committed preparation
+                    # record lets recovery finish if replace succeeds before COMMIT.
+                    temp, identity = self._staged_temp
+                    if _file_identity(temp.lstat()) != identity:
+                        raise OSError("Prepared HTML was replaced")
+                    if replacement:
+                        os.replace(temp, final)
+                    else:
+                        os.link(temp, final)
+                    self._published_path = True
+                    html_publisher.sync_html_directory(final.parent)
+                self._committed = True
+                log_resources('html_published',html_bytes=row['size_bytes'])
+                return cache_id
+            finally:
+                con.close()
+        finally:
+            if lease is not None:
+                lease.close()
+
     def fail(self, error):
+        if self._published_path:
+            return  # Recover using the committed preparation and the visible file.
         con = _connect()
         try:
             with con:
@@ -375,9 +489,28 @@ class Publication:
             con.close()
 
     def close(self):
+        if self._staged_temp:
+            temp, identity = self._staged_temp
+            try:
+                if _file_identity(temp.lstat()) == identity:
+                    temp.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                log.warning("Could not remove owned HTML staging file: id=%s",self.id)
+            self._staged_temp = None
         if self._lease is not None:
             self._lease.close()
             self._lease = None
+        if self._vod_lease is not None:
+            try:
+                if self._published_path and not self._committed:
+                    self._recover_pending()
+            except (OSError, ValueError, RuntimeError, sqlite3.Error):
+                log.warning("HTML publication recovery deferred: vod=%s",self.vod_id)
+            finally:
+                self._vod_lease.close()
+                self._vod_lease = None
         # Stable pathname: another owner may already hold this inode. Never unlink.
         self._lease_created = False
 
@@ -392,6 +525,8 @@ def _payload(row):
         raise ValueError("Invalid generation statistics")
     if type(meta.get('length_seconds')) is not int or meta['length_seconds'] < 0:
         meta['length_seconds'] = None  # Optional metadata must not hide a usable HTML.
+    meta.pop('_stable_html',None)
+    meta.pop('_staged_html_identity',None)
     meta['html_url'] = row['html_ref']
     return meta,stats
 
@@ -415,6 +550,84 @@ def _activate(con,row,expected_previous):
                    ON CONFLICT(vod_id,fmt) DO UPDATE SET result_id=excluded.result_id""",(row['vod_id'],row['fmt'],row['id']))
     con.execute('DELETE FROM html_removed_heads WHERE vod_id=? AND fmt=?',(row['vod_id'],row['fmt']))
     return cache_id
+
+
+def _file_identity(info):
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
+
+
+def _replacement_head(con, result_id, vod_id, fmt):
+    row = con.execute("""SELECT r.* FROM html_current h JOIN html_results r ON r.id=h.result_id
+        WHERE h.vod_id=? AND h.fmt=? AND r.id=? AND r.state='ready' AND r.managed=1
+        AND NOT EXISTS(SELECT 1 FROM html_deletions d WHERE d.result_id=r.id AND d.phase!='cancelled')""",
+        (vod_id, fmt, result_id)).fetchone()
+    return dict(row) if row else None
+
+
+def _apply_replacement(con, pending, head):
+    if pending['root'] != head['root'] or pending['html_ref'] != head['html_ref']:
+        raise ValueError("Replacement target differs from the reserved current HTML")
+    meta, stats = _payload(pending)
+    vod_id, fmt = head['vod_id'], head['fmt']
+    cache_id = _upsert_cache(con,vod_id,fmt,f"https://www.twitch.tv/videos/{vod_id}",meta,stats,[])
+    ready_meta = json.dumps(dict(meta, _stable_html=True), ensure_ascii=False)
+    con.execute("""UPDATE html_results SET size_bytes=?,sha256=?,meta_json=?,stats_json=?,
+        completed_at=?,cache_id=? WHERE id=?""",
+        (pending['size_bytes'],pending['sha256'],ready_meta,pending['stats_json'],time.time(),cache_id,head['id']))
+    # The operation journal must not turn into another ready generation.
+    con.execute("DELETE FROM html_results WHERE id=?", (pending['id'],))
+    return cache_id
+
+
+def _matches_proof(path, row):
+    if path is None or not row['sha256']:
+        return False
+    digest = hashlib.sha256()
+    if not stat.S_ISREG(path.lstat().st_mode):
+        return False
+    with path.open('rb') as source:
+        info = os.fstat(source.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size != row['size_bytes']:
+            return False
+        for chunk in iter(lambda:source.read(65536), b''):
+            digest.update(chunk)
+        return digest.hexdigest() == row['sha256'] and _file_identity(info) == _file_identity(path.lstat())
+
+
+def _ready_proof(path, row):
+    return (_matches_proof(path,row) if row['sha256'] else
+            row['origin'] == 'legacy' and file_status(row) == 'available' and _legacy_html_complete(row))
+
+
+def _recover_replacement(con, row):
+    lease = _recovery_lease(row['previous_id'])
+    if lease is None:
+        return
+    try:
+        _recover_replacement_locked(con,row)
+    finally:
+        lease.close()
+
+
+def _recover_replacement_locked(con, row):
+    with con:
+        con.execute("BEGIN IMMEDIATE")
+        head = _replacement_head(con,row['previous_id'],row['vod_id'],row['fmt'])
+        if head is None:
+            # No writer may silently install a second name over ambiguous state.
+            return
+        if row['root'] != head['root'] or row['html_ref'] != head['html_ref'] or not _reference_matches(head):
+            return
+        path = result_path(head)
+        if path is None:
+            return
+        identity = json.loads(row['meta_json']).get('_staged_html_identity')
+        if identity == list(_file_identity(path.lstat())) and _matches_proof(path,row):
+            html_publisher.sync_html_directory(path.parent)
+            _apply_replacement(con,row,head)
+        elif _ready_proof(path,head):
+            con.execute("UPDATE html_results SET state='interrupted',recovered_at=? WHERE id=?",
+                        (time.time(),row['id']))
 
 
 def _reference_matches(row):
@@ -470,27 +683,37 @@ def _recovery_lease(key, *, create_only=False):
 
 
 def _recover_one(con,key):
-    row = dict(con.execute("SELECT * FROM html_results WHERE id=?",(key,)).fetchone())
-    if row['lease_root'] != str(_lease_path(key).parent):
-        log.warning("Generation work root changed; recovery skipped: id=%s",key)
+    stored = con.execute("SELECT lease_root FROM html_results WHERE id=?", (key,)).fetchone()
+    if stored is None or stored['lease_root'] != str(_lease_path(key).parent):
         return
     lease = _recovery_lease(key)
     if lease is None:
         return
     try:
+        stored = con.execute("SELECT * FROM html_results WHERE id=?", (key,)).fetchone()
+        if not stored or stored['state'] not in ('building','publishing','failed','cancelled','interrupted') or stored['recovered_at'] is not None:
+            return
+        row = dict(stored)
+        if stable_result(row) and not row['managed']:
+            if row['state'] == 'publishing':
+                _recover_replacement(con,row)
+            else:
+                with con:
+                    con.execute("""UPDATE html_results SET state=CASE WHEN state='building' THEN 'interrupted' ELSE state END,
+                                recovered_at=? WHERE id=?""", (time.time(),key))
+            return
         status = file_status(row)
         if status == 'unavailable':
             log.warning("Generation recovery deferred: id=%s",key)
             return
         valid = False
         if status=='available' and row['sha256'] and row['error_code']!='FileExistsError' and _reference_matches(row):
-            digest=hashlib.sha256()
-            with result_path(row).open('rb') as source:
-                for chunk in iter(lambda:source.read(65536),b''):
-                    digest.update(chunk)
-            valid = digest.hexdigest()==row['sha256']
-            if not isinstance(json.loads(row['meta_json']),dict) or not isinstance(json.loads(row['stats_json']),dict):
-                valid=False
+            path = result_path(row)
+            valid = _matches_proof(path,row)
+            meta,stats = json.loads(row['meta_json']),json.loads(row['stats_json'])
+            valid = valid and isinstance(meta,dict) and isinstance(stats,dict)
+            if valid and stable_result(row):
+                valid = meta.get('_staged_html_identity') == list(_file_identity(path.lstat()))
         # A reservation proves only intent, not creation of a particular file.
         # Even matching bytes/inodes cannot prove ownership after a crash.
         path=result_path(row)
@@ -505,7 +728,10 @@ def _recover_one(con,key):
             if valid:
                 # Never displace an older ready head during recovery. A first
                 # publication interrupted after linking may be adopted safely.
-                if row['state']=='publishing' and row['previous_id'] is None:
+                if row['state']=='publishing' and stable_result(row):
+                    html_publisher.sync_html_directory(path.parent)
+                    _activate(con,row,row['previous_id'])
+                elif row['state']=='publishing' and row['previous_id'] is None:
                     head=con.execute("SELECT 1 FROM html_current WHERE vod_id=? AND fmt=?",(row['vod_id'],row['fmt'])).fetchone()
                     if not head:
                         _activate(con,row,None)
@@ -555,7 +781,8 @@ def protected_temp_files():
     con=_connect()
     protected=set()
     try:
-        for record in con.execute("SELECT id,root,temp_name FROM html_results WHERE origin='generated'"):
+        for record in con.execute(f"""SELECT id,root,temp_name FROM html_results WHERE origin='generated'
+            AND (NOT ({_STABLE_SQL}) OR state IN ('building','publishing'))"""):
             key,root,temp=record
             if (isinstance(key,str) and _KEY.fullmatch(key) and isinstance(root,str)
                     and isinstance(temp,str) and html_publisher._TEMP_HTML_FILENAME_RE.fullmatch(temp)):

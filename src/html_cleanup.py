@@ -175,7 +175,7 @@ def _claim(row, info):
             con.execute('BEGIN IMMEDIATE')
             current = con.execute('SELECT * FROM html_results WHERE id=?', (row['id'],)).fetchone()
             if (not current or dict(current) != row or row['state'] != 'ready' or not row['managed'] or row['fmt']!='html_online'
-                    or _protected(con, row['id'])):
+                    or results.stable_result(row) or _protected(con, row['id'])):
                 return None
             prior = con.execute('SELECT phase FROM html_deletions WHERE result_id=?', (row['id'],)).fetchone()
             if prior and prior['phase'] != 'cancelled':
@@ -397,7 +397,8 @@ def run_cleanup(stop=None):
                 if free >= config.HTML_CLEANUP_TARGET_BYTES or _cancelled(stop):
                     break
                 page = '' if after is None else ' AND (COALESCE(completed_at,created_at),created_at,id)>(?,?,?)'
-                row = _one(con, """SELECT r.* FROM html_results r WHERE state='ready' AND managed=1 AND fmt='html_online' AND root=?
+                row = _one(con, f"""SELECT r.* FROM html_results r WHERE state='ready' AND managed=1
+                    AND NOT ({results._STABLE_SQL}) AND fmt='html_online' AND root=?
                     AND NOT EXISTS(SELECT 1 FROM html_deletions d WHERE d.result_id=r.id AND d.phase!='cancelled')"""
                     +page+' ORDER BY COALESCE(completed_at,created_at),created_at,id LIMIT 1',
                     (str(root),) + (() if after is None else after))

@@ -6,7 +6,7 @@ from src.database import database as db
 
 
 class PublicationStub:
-    def __init__(self,vod_id,fmt="html_online",mode=None,ref="local:chat_0123456789abcdef0123456789abcdef.html"):
+    def __init__(self,vod_id,fmt="html_online",mode=None,ref="local:chat_0123456789abcdef0123456789abcdef.html", *, stable=False):
         self.vod_id,self.fmt,self.ref=vod_id,fmt,ref
         self.meta,self.stats={},{}
 
