@@ -8,8 +8,9 @@ from src.html_renderer import render_viewer_html, write_viewer_html
 from src.html_publisher import publish_html, publish_html_local, publish_html_stream
 from src.chat_spool import ChatSpool
 from src.twitch_api.storyboard import fetch_preview
+from src.twitch_api.clips import collect_clip_ids, fetch_clip_metadata
 from .worker_io import run_blocking
-from src.resource_usage import stage, measure_stage
+from src.resource_usage import stage
 from src.twitch_api import (
     fetch_7tv_emote_map,
     fetch_bttv_emote_map,
@@ -116,18 +117,19 @@ async def build_html_result(
     preview_assets = await fetch_preview(session, meta, check_cancelled)
     check_cancelled()
 
-    @measure_stage('analysis_html_publication')
-    def render_and_publish():
+    def analyze_chat():
         targets = set()
         targets_by_id = set()
         global_ids = set()
         used_subscriber_ids = set()
+        clip_ids = {}
 
         rows = chat_rows.iter_rows() if isinstance(chat_rows, ChatSpool) else iter(chat_rows)
         try:
             for row in rows:
                 check_cancelled()
                 text = row.get("text") or ""
+                collect_clip_ids(text, clip_ids)
                 for word in text.split():
                     if word in combined_map:
                         targets.add(word)
@@ -168,7 +170,7 @@ async def build_html_result(
                 cdn_sources[emote_id] = "other" if emote_id in subscriber_ids else "twitch"
 
         check_cancelled()
-        options = dict(
+        return clip_ids, dict(
             title=(meta.title or "—"),
             channel=(meta.channel or "—"),
             vod_url=vod_url,
@@ -190,6 +192,7 @@ async def build_html_result(
             captured_during_live=getattr(meta, 'is_live', None) is True,
         )
 
+    def render_and_publish(options):
         if isinstance(chat_rows, ChatSpool):
             if HTML_PUBLISH_MODE not in {"local", "public"}:
                 raise ValueError(f"Unsupported HTML publication mode: {HTML_PUBLISH_MODE}")
@@ -217,6 +220,13 @@ async def build_html_result(
 
         return html_result_ref
 
-    html_result_ref = await run_blocking(render_and_publish, on_cancel=stop.set)
+    with stage('analysis_html_publication'):
+        clip_ids, options = await run_blocking(analyze_chat, on_cancel=stop.set)
+        check_cancelled()
+        clips = await fetch_clip_metadata(session, clip_ids)
+        if clips:
+            options["clips"] = clips
+        check_cancelled()
+        html_result_ref = await run_blocking(render_and_publish, options, on_cancel=stop.set)
 
     return sent_files, html_result_ref
