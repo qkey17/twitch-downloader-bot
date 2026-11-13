@@ -146,6 +146,11 @@ class ReadyHtml:
                 or _identity(info) != _identity(os.fstat(self.handle.fileno()))
                 or _identity(info) != _identity(named)):
             raise HtmlUnavailable()
+        if results.stable_result(row) and os.name == 'posix':
+            # The open inode remains valid throughout this upload, even if the
+            # public pathname is atomically replaced by a later publication.
+            self.lease.close()
+            self.lease = None
         self.handle.seek(0)
         self.filename = f'chat_{self.vod_id}_{row["id"]}.html'
         self.document_filename = document_name(row.get('meta_json'),self.filename)

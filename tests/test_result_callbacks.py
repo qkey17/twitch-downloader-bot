@@ -155,7 +155,7 @@ class ResultCallbacksTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(handlers_vod._FORMAT_PROMPT_TEXT,update.message.reply_text.await_args.args[0])
         self.assertEqual('123456789',context.user_data['vod_pending']['vod_id'])
 
-    async def test_successful_regeneration_keeps_old_file_and_switches_current(self):
+    async def test_successful_regeneration_reuses_current_file_and_result(self):
         old=self.ready()
         update,context=self.request()
         _,regen=await self.choose(update,context)
@@ -163,12 +163,53 @@ class ResultCallbacksTestCase(unittest.IsolatedAsyncioTestCase):
         await handlers_vod.vod_result_callback(update,context)
         await self.finish()
         current=results.get_ready_result('123456789')
-        self.assertNotEqual(old.id,current['id'])
+        self.assertEqual(old.id,current['id'])
         self.assertTrue(old.path().exists())
-        self.assertEqual(2,len(self.rows()))
+        self.assertEqual(1,len(self.rows()))
         self.assertEqual(3,current['stats']['messages'])
         self.assertFalse(is_busy(context))
         self.assertEqual(0,db.get_history_count(1))
+
+    async def test_existing_public_card_downloads_replaced_bytes(self):
+        from src.html_sender import start_sender, stop_sender
+        from src.ui.html_file_action import file_callback, keyboard
+        from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+        old = results.Publication('123456789', mode='public', stable=True)
+        old.reserve()
+        try:
+            self.publish(old, 'first')
+            old.complete()
+        finally:
+            old.close()
+        update, context = self.request()
+        original = InlineKeyboardMarkup([[InlineKeyboardButton('Chat', url=old.ref)]])
+        markup = keyboard(context, 1, 1, results.get_ready_result(old.vod_id), original)
+        buttons = [button for row in markup.inline_keyboard for button in row]
+        self.assertTrue(any(button.url == old.ref for button in buttons))
+        q = update.callback_query
+        q.data = next(button.callback_data for button in buttons if button.callback_data)
+        q.message.reply_markup = markup
+        q.message.from_user = SimpleNamespace(id=context.bot.id)
+
+        replacement = results.Publication(old.vod_id, mode='public', stable=True)
+        replacement.reserve()
+        try:
+            self.publish(replacement, 'updated')
+            replacement.complete()
+        finally:
+            replacement.close()
+        self.assertEqual(old.ref, replacement.ref)
+        async def upload(**kwargs):
+            self.assertEqual(b'<html>updated</html>', kwargs['document'].input_file_content.read(65536))
+        context.bot.send_document = AsyncMock(side_effect=upload)
+        self.application.bot = context.bot
+        self.application.running = True
+        start_sender(self.application)
+        try:
+            await file_callback(update, context)
+        finally:
+            await stop_sender(self.application)
+        context.bot.send_document.assert_awaited_once()
 
     def public_ready(self, text='old'):
         plan=self.plan(mode='public')
@@ -345,7 +386,7 @@ class ResultCallbacksTestCase(unittest.IsolatedAsyncioTestCase):
         finish_download(other,operation)
         await handlers_vod.vod_result_callback(update,context)
         await self.finish()
-        self.assertEqual(2,len(self.rows()))
+        self.assertEqual(1,len(self.rows()))
         self.assertTrue(old.path().exists())
 
     async def test_double_click_starts_only_one_generation(self):
@@ -356,7 +397,7 @@ class ResultCallbacksTestCase(unittest.IsolatedAsyncioTestCase):
         await asyncio.gather(handlers_vod.vod_result_callback(update,context),handlers_vod.vod_result_callback(update,context))
         await self.finish()
         self.assertEqual(1,self.application.create_task.call_count)
-        self.assertEqual(2,len(self.rows()))
+        self.assertEqual(1,len(self.rows()))
         # A delayed duplicate must not start again after completion either.
         await handlers_vod.vod_result_callback(update,context)
         self.assertEqual(1,self.application.create_task.call_count)
@@ -370,7 +411,7 @@ class ResultCallbacksTestCase(unittest.IsolatedAsyncioTestCase):
         await asyncio.gather(handlers_vod.vod_result_callback(first,context1),handlers_vod.vod_result_callback(second,context2))
         await self.finish()
         self.assertEqual(1,self.application.create_task.call_count)
-        self.assertEqual(2,len(self.rows()))
+        self.assertEqual(1,len(self.rows()))
         self.assertFalse(is_busy(context1))
         self.assertFalse(is_busy(context2))
 
@@ -409,7 +450,7 @@ class ResultCallbacksTestCase(unittest.IsolatedAsyncioTestCase):
                 elif stage=='serialize':
                     target=patch.object(worker_html,'write_viewer_html',side_effect=TypeError('test failure'))
                 else:
-                    target=patch.object(html_publisher.os,'link',side_effect=OSError(errno.ENOSPC,'test disk full'))
+                    target=patch.object(html_publisher.os,'replace',side_effect=OSError(errno.ENOSPC,'test disk full'))
                 with target:
                     await handlers_vod.vod_result_callback(update,context)
                     await self.finish()
@@ -451,7 +492,7 @@ class ResultCallbacksTestCase(unittest.IsolatedAsyncioTestCase):
             await handlers_vod.vod_result_callback(update,context)
             await self.finish()
         current=results.get_ready_result('123456789')
-        self.assertNotEqual(old.id,current['id'])
+        self.assertEqual(old.id,current['id'])
         self.assertTrue(old.path().exists())
         self.assertEqual('ready',self.rows()[-1]['state'])
         self.assertFalse(is_busy(context))

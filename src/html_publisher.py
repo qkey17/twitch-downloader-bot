@@ -128,6 +128,15 @@ def publish_html_stream(write_content, *, local=False, cancel_check=None, public
     return f"{LOCAL_HTML_PREFIX}{filename}" if local else public_html_url(filename)
 
 
+def sync_html_directory(path):
+    if os.name != 'nt':
+        directory_fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+
+
 def _publish_registered(write_content, publication, cancel_check):
     if publication._lease is None or not publication._lease_created:
         raise ValueError("HTML generation has not been reserved")
@@ -178,18 +187,23 @@ def _publish_registered(write_content, publication, cancel_check):
         check_cancelled()
         if not size:
             raise ValueError("Empty HTML output")
-        publication.stage(size,digest.hexdigest())  # Durable proof precedes final-file visibility.
+        info = temp.lstat()
+        staged_identity = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+        # Durable proof precedes final-file visibility.
+        if publication.stable:
+            publication.stage(size,digest.hexdigest(),staged_identity=staged_identity)
+        else:
+            publication.stage(size,digest.hexdigest())
         check_cancelled()
         publication.path()  # Revalidate configured root after any blocking DB wait.
         if not still_owned():
             raise ValueError("HTML temporary file was replaced")
+        if publication.stable:
+            publication._staged_temp = (temp, staged_identity)
+            created = False  # Publication.close() owns it across the commit fence.
+            return publication.ref
         os.link(temp,final)  # Atomic visibility, no overwrite even on a filename collision.
-        if os.name != 'nt':
-            directory_fd = os.open(final.parent,os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+        sync_html_directory(final.parent)
         publication._published = True
         log_resources('html_published',html_bytes=size)
         return publication.ref

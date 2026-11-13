@@ -751,7 +751,7 @@ async def _runner(
     if ui and ui['operation'] != operation_id:
         ui = None
     try:
-        publication = results.Publication(vod_id,fmt,mode=HTML_PUBLISH_MODE)
+        publication = results.Publication(vod_id,fmt,mode=HTML_PUBLISH_MODE,stable=True)
         with stage('result_reserve'):
             await run_blocking(publication.reserve)
         meta, stats, files, html_result_ref = await download_and_send(
@@ -809,7 +809,7 @@ async def _runner(
                     return
                 record['phase']='ready'
                 await _edit_progress_message_with_card(pctx,record['chat'],record['message'],item,html_url,
-                    ready=dict(id=getattr(publication,'id',None),vod_id=vod_id),owner_id=part.owner,
+                    ready=dict(id=_published_result_id(publication),vod_id=vod_id),owner_id=part.owner,
                     photo=record.get('photo',False))
             await group.finish(deliver)
         else:
@@ -820,7 +820,7 @@ async def _runner(
                 message_id=progress_message_id,
                 item=item,
                 html_url=html_url,
-                ready=dict(id=getattr(publication,'id',None), vod_id=vod_id), owner_id=user_id,
+                ready=dict(id=_published_result_id(publication), vod_id=vod_id), owner_id=user_id,
                 photo=bool(ui and ui.get('photo')),
             )
 
@@ -929,6 +929,11 @@ async def _show_cancelled(context, chat_id, message_id, ui):
         await cleanup_card(context.bot, chat_id, shown)
     except Exception:
         _diagnostic('cancel_restore_failed')
+
+
+def _published_result_id(publication):
+    result_id = getattr(publication,'result_id',None)
+    return result_id if isinstance(result_id,str) else getattr(publication,'id',None)
 
 
 async def _record_generation_failure(publication,error):
