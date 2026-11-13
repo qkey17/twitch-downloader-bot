@@ -18,6 +18,13 @@ CLIP_LINK = re.compile(
 )
 THUMBNAIL_HOSTS = {"clips-media-assets.twitch.tv", "clips-media-assets2.twitch.tv"}
 
+VAP_THUMBNAIL = re.compile(
+    r"https://static-cdn\.jtvnw\.net/twitch-video-assets/"
+    r"twitch-vap-video-assets-prod-[a-z]{2}-[a-z]+-[0-9]+/"
+    r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/"
+    r"landscape/thumb/thumb-[0-9]{10}-[0-9]+x[0-9]+\.jpg"
+)
+
 
 def collect_clip_ids(text, ids):
     if len(ids) >= MAX_CLIPS or not isinstance(text, str) or "twitch.tv/" not in text.lower():
@@ -32,10 +39,13 @@ def clip_metadata(item):
     title, creator, thumbnail = (item.get(key) for key in ("title", "creator_name", "thumbnail_url"))
     if not all(isinstance(value, str) and value.strip() for value in (title, creator, thumbnail)):
         return None
-    if len(thumbnail) > 512 or not re.fullmatch(r"https://[a-z0-9.-]+/(?:[a-zA-Z0-9_./-]|%[0-9A-Fa-f]{2})+\.jpe?g", thumbnail):
+    if len(thumbnail) > 512:
         return None
-    if urlsplit(thumbnail).netloc not in THUMBNAIL_HOSTS:
-        return None
+    if not VAP_THUMBNAIL.fullmatch(thumbnail):
+        if not re.fullmatch(r"https://[a-z0-9.-]+/(?:[a-zA-Z0-9_./-]|%[0-9A-Fa-f]{2})+\.jpe?g", thumbnail):
+            return None
+        if urlsplit(thumbnail).netloc not in THUMBNAIL_HOSTS:
+            return None
     title = title.strip()[:256].encode("utf-8", errors="replace").decode()
     creator = creator.strip()[:80].encode("utf-8", errors="replace").decode()
     return {"title": title, "creator": creator, "thumbnail": thumbnail}

@@ -1846,6 +1846,11 @@ function revealViewer(){
   loading.hidden=true;loading.classList.remove('is-loading');
   document.documentElement.classList.remove('viewer-loading');
 }
+function isClipThumbnailUrl(url){
+  if(typeof url!=='string' || url.length>512) return false;
+  return /^https:\/\/clips-media-assets2?\.twitch\.tv\/(?:[a-zA-Z0-9_./-]|%[0-9A-Fa-f]{2})+\.jpe?g(?![\s\S])/.test(url)
+    || /^https:\/\/static-cdn\.jtvnw\.net\/twitch-video-assets\/twitch-vap-video-assets-prod-[a-z]{2}-[a-z]+-[0-9]+\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\/landscape\/thumb\/thumb-[0-9]{10}-[0-9]+x[0-9]+\.jpg(?![\s\S])/.test(url);
+}
 function appendClipCards(row,document){
   if(!DATA.clips) return;
   const shown=new Set();
@@ -1854,7 +1859,7 @@ function appendClipCards(row,document){
     if(!id || shown.has(id) || !Object.hasOwn(DATA.clips,id)) continue;
     const clip=DATA.clips[id];
     if(typeof clip?.title!=='string' || !clip.title.trim() || typeof clip.creator!=='string' || !clip.creator.trim() ||
-       typeof clip.thumbnail!=='string' || clip.thumbnail.length>512 || !/^https:\/\/clips-media-assets2?\.twitch\.tv\/(?:[a-zA-Z0-9_./-]|%[0-9A-Fa-f]{2})+\.jpe?g(?![\s\S])/.test(clip.thumbnail)) continue;
+       !isClipThumbnailUrl(clip.thumbnail)) continue;
     shown.add(id);
     const card=document.createElement('a'),img=document.createElement('img'),copy=document.createElement('span');
     const title=document.createElement('strong'),creator=document.createElement('small');

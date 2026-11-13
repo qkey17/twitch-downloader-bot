@@ -46,7 +46,7 @@ async def run(args):
                 context_meta=dict(channel_login='FixtureStreamer',badge_titles={'event/1':'Event <Final>'},
                                   global_twitch_emote_ids=['25'], subscriber_twitch_emote_ids=['26'])
                 context_meta['clips']={'Kappa':dict(title='<img onerror=window.fixtureXSS=1>',creator='Clip Author',
-                    thumbnail='https://clips-media-assets2.twitch.tv/example%7Cpreview-480x272.jpg')}
+                    thumbnail='https://static-cdn.jtvnw.net/twitch-video-assets/twitch-vap-video-assets-prod-us-west-2/6b5bdfa8-72f3-4233-9fa2-c2910b75b53e/landscape/thumb/thumb-0000000000-480x272.jpg')}
             if storyboard:
                 from viewer_storyboard_cases import preview_fixture
                 context_meta.update(preview_fixture(count))
@@ -104,7 +104,7 @@ async def run(args):
                             canvas=out/'html2canvas.min.js'
                             if 'html2canvas' in url and canvas.exists():
                                 method2='Fetch.fulfillRequest';params2=dict(requestId=item['requestId'],responseCode=200,body=base64.b64encode(canvas.read_bytes()).decode(),responseHeaders=[dict(name='Content-Type',value='application/javascript')])
-                            elif 'emoticons' in url or '/emote/01H1P0YF7G0008W9SSAM2XE7GF/' in url or url=='https://clips-media-assets2.twitch.tv/example%7Cpreview-480x272.jpg':
+                            elif 'emoticons' in url or '/emote/01H1P0YF7G0008W9SSAM2XE7GF/' in url or url=='https://static-cdn.jtvnw.net/twitch-video-assets/twitch-vap-video-assets-prod-us-west-2/6b5bdfa8-72f3-4233-9fa2-c2910b75b53e/landscape/thumb/thumb-0000000000-480x272.jpg':
                                 method2='Fetch.fulfillRequest';params2=dict(requestId=item['requestId'],responseCode=200,body=pixel.split(',')[1],responseHeaders=[dict(name='Content-Type',value='image/svg+xml'),dict(name='Access-Control-Allow-Origin',value='*')])
                             else:method2='Fetch.failRequest';params2=dict(requestId=item['requestId'],errorReason='BlockedByClient')
                             await ws.send_json(dict(id=counter,method=method2,params=params2))
