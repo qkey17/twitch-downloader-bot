@@ -318,6 +318,11 @@ test('top boundary selects passed rows on mobile and fully visible rows on deskt
   vm.runInContext(part('function rowIntersects(', 'function restoreAnchor('),ctx);
   assert.deepEqual([0,19,20,39,40,60,39,19].map(ctx.mobileAutomaticIndex),[null,null,0,0,1,2,0,null]);
   assert.equal(ctx.desktopAutomaticRow({top:1,bottom:60}),children[1]);
+  // The first row starts below the viewport edge. Scrolling through the
+  // clearance keeps the cover until the actual row crosses that edge.
+  const viewport=top=>({top,bottom:top+60});
+  assert.deepEqual([-10,-5,0,1,0,-5].map(top=>ctx.desktopAutomaticRow(viewport(top))),
+    [null,null,null,children[1],null,null]);
   assert.equal(ctx.desktopAutomaticRow({top:25,bottom:30}),children[1]);
   ctx.blockNodes.clear();
   assert.equal(ctx.mobileAutomaticIndex(80),null);

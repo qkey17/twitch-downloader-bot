@@ -2118,6 +2118,8 @@ function restoreChatEnd(){
 }
 function desktopAutomaticRow(bounds){
   if(bounds.bottom<=bounds.top) return null;
+  const first=blockNodes.get(0)?.children[0]?.getBoundingClientRect();
+  if(first && first.top>=bounds.top-.5 && first.bottom<=bounds.bottom+.5) return null;
   let partial=null;
   for(const node of blockNodes.values()){
     const box=node.getBoundingClientRect(),children=node.children;
@@ -3210,7 +3212,7 @@ function setupMessageSelection(){
     const directRow=pinned || hover;
     if(directRow) scrubSettled=null;
     const index=directRow ? +directRow.dataset.id : mobile ? settledScrubIndex(bounds) : null;
-    const automatic=previewActive && index===null && window.scrollY>0 ? desktopAutomaticRow(bounds) : null;
+    const automatic=previewActive && index===null ? desktopAutomaticRow(bounds) : null;
     automaticRow=highlight(automaticRow,automatic,'is-preview-anchor');
     if(mobile){
       setScrubIndex(index ?? mobileAutomaticIndex(viewportInset()));

@@ -108,7 +108,7 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
     })()"""
     automatic=f"""(()=>{{
       const all={visible}, full=all.filter(([,r])=>r.top>=Math.max(0,viewportInset())-.5 && r.bottom<=innerHeight+.5);
-      return scrollY===0 ? null : (full[0] || all[0])?.[0] ?? null;
+      return full[0]?.[0]===0 ? null : (full[0] || all[0])?.[0] ?? null;
     }})()"""
     selection_matches=f'desktopFrameIndex===({automatic}) && (elList.querySelector(".is-preview-anchor")?.dataset.id ?? null)==desktopFrameIndex'
     frame_matches="""(()=>{
