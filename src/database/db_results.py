@@ -12,6 +12,7 @@ from pathlib import Path
 
 from src import config, html_publisher
 from src.file_lock import try_lock_file
+from src.resource_usage import log_resources
 from .db_core import _connect
 from .db_cache import _upsert_cache
 
@@ -467,6 +468,7 @@ class Publication:
                     self._published_path = True
                     html_publisher.sync_html_directory(final.parent)
                 self._committed = True
+                log_resources('html_published',html_bytes=row['size_bytes'])
                 return cache_id
             finally:
                 con.close()
@@ -755,7 +757,7 @@ def recover_results():
                 continue
             try:
                 _recover_one(con,key)
-            except (OSError,ValueError,TypeError,RuntimeError,sqlite3.Error) as exc:
+            except (OSError,ValueError,TypeError,RuntimeError) as exc:
                 log.warning("Generation recovery deferred: id=%s error=%s",key,type(exc).__name__)
         # A crash before the INSERT can leave only a lease, not a finished HTML.
         root=Path(config.SPOOL_DIR).expanduser().resolve()
