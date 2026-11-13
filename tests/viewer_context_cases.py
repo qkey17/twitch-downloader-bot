@@ -86,16 +86,38 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
             && msg.querySelectorAll('.emote').length===1;
           selected.removeAllRanges();return ok;
         })()''')
-        await evaluate('''window.linkClicks=[];document.addEventListener('click',e=>{
-          const link=e.target.closest('.chat-link');if(!link)return;
-          linkClicks.push([link.href,e.defaultPrevented]);e.preventDefault();
-        },{once:true})''')
+        await evaluate('window.linkClicks=[];window.open=(...args)=>linkClicks.push(args);true')
         if touchscreen:
             await tap(selector)
         else:
             await click(selector)
         await wait("elList.querySelector('.is-message-pinned')?.dataset.id==='0'")
-        assert await evaluate("linkClicks.length===1 && !linkClicks[0][1] && chatContext.hidden")
+        await wait('linkConfirm.open')
+        assert await evaluate("""linkClicks.length===0 && chatContext.hidden
+          && linkDestination.textContent===elList.querySelector('.chat-link').href
+          && !linkDestination.querySelector('a') && getComputedStyle(document.documentElement).overflow==='hidden'""")
+        await call('Input.dispatchKeyEvent',dict(type='keyDown',key='Escape',windowsVirtualKeyCode=27))
+        await wait("!linkConfirm.open && !document.documentElement.classList.contains('confirming-link')")
+        assert await evaluate("linkClicks.length===0 && document.activeElement===elList.querySelector('.chat-link')")
+        await wait("!!elList.querySelector('.clip-card')")
+        assert await evaluate("""elList.querySelector('.clip-card strong').textContent==='<img onerror=window.fixtureXSS=1>'
+          && elList.querySelector('.clip-card small').textContent==='Clip Author'
+          && elList.querySelectorAll('.clip-card img').length===1 && window.fixtureXSS===undefined""")
+        await (tap if touchscreen else click)('.clip-card')
+        await wait('linkConfirm.open')
+        await mouse('mousePressed')
+        await mouse('mouseReleased')
+        await wait("!linkConfirm.open && !document.documentElement.classList.contains('confirming-link')")
+        assert await evaluate('linkClicks.length===0')
+        await evaluate("elList.querySelector('.chat-link').focus();true")
+        await call('Input.dispatchKeyEvent',dict(type='keyDown',key='Enter',windowsVirtualKeyCode=13))
+        await wait('linkConfirm.open')
+        if touchscreen:
+            await tap('#linkConfirm button[value="open"]')
+        else:
+            await click('#linkConfirm button[value="open"]')
+        await wait('!linkConfirm.open')
+        assert await evaluate("linkClicks.length===1 && linkClicks[0][0]===elList.querySelector('.chat-link').href && linkClicks[0][1]==='_blank' && linkClicks[0][2]==='noopener,noreferrer'")
         assert await evaluate('''elList.querySelector('.chat-link').dispatchEvent(
           new MouseEvent('contextmenu',{bubbles:true,cancelable:true}))''')
         if not touchscreen:
@@ -342,6 +364,10 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
                 for event in ('mousePressed', 'mouseReleased'):
                     await call('Input.dispatchMouseEvent', dict(type=event, button='left', clickCount=1, **point))
             await wait(f'elList.querySelector(".is-message-pinned")?.dataset.id==="{index}"')
+            if selector.endswith('.chat-link'):
+                await wait('linkConfirm.open')
+                await click('#linkConfirm button[value="cancel"]')
+                await wait('!linkConfirm.open')
             assert await evaluate(f'pinEvents.length==={before+1} && pinEvents.at(-1)==={index}')
             if context:
                 if context=='profile':
@@ -453,6 +479,16 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
         })()""")
         assert abs(gaps[0]-gaps[1])<.5,(scale,gaps)
     await call('Emulation.setPageScaleFactor',dict(pageScaleFactor=1))
+    for state in ('waiting','empty','broken'):
+        await call('Page.navigate', dict(url=(out/f'{state}-{count}-offline.html').as_uri()))
+        await wait("document.readyState==='complete' && !!document.getElementById('viewerLoading')")
+        if state=='waiting':
+            assert await evaluate("""viewerLoading.textContent==='Загрузка чата...'
+              && getComputedStyle(document.querySelector('.page')).visibility==='hidden'""")
+        elif state=='empty':
+            await wait('viewerLoading.hidden && rowCount()===0')
+        else:
+            await wait("viewerLoading.textContent==='Не удалось загрузить чат.' && !viewerLoading.classList.contains('is-loading')")
     print(json.dumps(dict(control_heights={w: geometry[w,'new'] for w in (320,390,1440)},
                           search='PASS', mentions='PASS', copy='PASS', png='PASS',
                           desktop='PASS', mobile='PASS', links='PASS', row_activation='PASS',

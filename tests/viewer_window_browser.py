@@ -45,6 +45,8 @@ async def run(args):
                 badge_images.update({key:pixel for key in ('event/1','lead_moderator/1','unknown/1')})
                 context_meta=dict(channel_login='FixtureStreamer',badge_titles={'event/1':'Event <Final>'},
                                   global_twitch_emote_ids=['25'], subscriber_twitch_emote_ids=['26'])
+                context_meta['clips']={'Kappa':dict(title='<img onerror=window.fixtureXSS=1>',creator='Clip Author',
+                    thumbnail='https://clips-media-assets2.twitch.tv/example-preview-480x272.jpg')}
             if storyboard:
                 from viewer_storyboard_cases import preview_fixture
                 context_meta.update(preview_fixture(count))
@@ -63,10 +65,18 @@ async def run(args):
                 without_frames.pop('vod_preview')
                 no_preview=json.dumps(without_frames,ensure_ascii=False,separators=(',',':')).replace('<','\\u003c')
                 (out/f'no-preview-{count}-offline.html').write_text(page.replace(new_data,no_preview,1),encoding='utf-8')
+            if context and mode=='offline':
+                empty=page.replace(new_data, '{"rows":[]}', 1)
+                broken=page.replace(new_data, '{', 1)
+                waiting=page.replace('setupLinkConfirmation();\napplyFilters()', 'setupLinkConfirmation();\nnew Promise(()=>{}).then(()=>applyFilters())', 1)
+                for state,fixture in [('empty',empty),('broken',broken),('waiting',waiting)]:
+                    (out/f'{state}-{count}-offline.html').write_text(fixture,encoding='utf-8')
             for version,html in [('new',page),('base',baseline.replace('{{CHAT_DATA_JSON}}',old_data))]:
                 # Test-only instrumentation: same decoder/renderer, no production metrics globals.
                 if not notices:
                     html=html.replace('applyFilters();\n</script>','applyFilters().then(()=>{window.viewerMetrics.ready_ms=performance.now()});\n</script>')
+                    html=html.replace('applyFilters().then(revealViewer).catch(viewerLoadFailed);',
+                        'applyFilters().then(()=>{revealViewer();window.viewerMetrics.ready_ms=performance.now()}).catch(viewerLoadFailed);')
                 (out/f'{version}-{count}-{mode}.html').write_text(html,encoding='utf-8')
             size_file=out/f'sizes-{count}-{mode}.json'
             size_file.write_text(json.dumps(dict(new_html_bytes=len(page.encode()),base_html_bytes=len(baseline.replace('{{CHAT_DATA_JSON}}',old_data).encode()),new_json_bytes=len(new_data.encode()),base_json_bytes=len(old_data.encode()))),encoding='utf-8')
@@ -94,7 +104,7 @@ async def run(args):
                             canvas=out/'html2canvas.min.js'
                             if 'html2canvas' in url and canvas.exists():
                                 method2='Fetch.fulfillRequest';params2=dict(requestId=item['requestId'],responseCode=200,body=base64.b64encode(canvas.read_bytes()).decode(),responseHeaders=[dict(name='Content-Type',value='application/javascript')])
-                            elif 'emoticons' in url or '/emote/01H1P0YF7G0008W9SSAM2XE7GF/' in url:
+                            elif 'emoticons' in url or '/emote/01H1P0YF7G0008W9SSAM2XE7GF/' in url or url=='https://clips-media-assets2.twitch.tv/example-preview-480x272.jpg':
                                 method2='Fetch.fulfillRequest';params2=dict(requestId=item['requestId'],responseCode=200,body=pixel.split(',')[1],responseHeaders=[dict(name='Content-Type',value='image/svg+xml'),dict(name='Access-Control-Allow-Origin',value='*')])
                             else:method2='Fetch.failRequest';params2=dict(requestId=item['requestId'],errorReason='BlockedByClient')
                             await ws.send_json(dict(id=counter,method=method2,params=params2))

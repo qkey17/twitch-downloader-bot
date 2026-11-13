@@ -279,6 +279,38 @@ header{
 .chat-match{background:#ffdc82;color:#20212b;}
 .chat-mention{font-weight:700;}
 .chat-link{color:#b3adff;text-decoration:underline;overflow-wrap:anywhere;}
+.clip-card{display:flex;align-items:center;gap:10px;max-width:340px;margin-top:6px;padding:6px;
+  border:1px solid var(--border);border-radius:8px;background:var(--panel);color:var(--text);
+  text-decoration:none;user-select:none;}
+.clip-card img{width:96px;max-width:34%;aspect-ratio:16/9;object-fit:cover;border-radius:4px;}
+.clip-card strong,.clip-card small{display:block;overflow-wrap:anywhere;}
+.clip-card small{color:var(--muted);}
+.clip-card:hover{border-color:#67676f;}
+#viewerLoading{position:fixed;inset:0;z-index:120;display:grid;place-content:center;
+  justify-items:center;gap:12px;background:var(--bg);text-align:center;}
+#viewerLoading[hidden]{display:none;}
+#viewerLoading.is-loading::before{content:"";width:22px;height:22px;border-radius:50%;
+  border:2px solid var(--border);border-top-color:#bf94ff;animation:viewer-spin .8s linear infinite;}
+@keyframes viewer-spin{to{transform:rotate(360deg)}}
+html.viewer-loading .page{visibility:hidden;}
+html.viewer-loading,html.confirming-link{overflow:hidden;}
+#linkConfirm{width:min(390px,calc(100% - 32px));max-height:calc(100% - 32px);padding:20px;
+  color:var(--text);background:var(--panel);border:1px solid var(--border);border-radius:14px;}
+#linkConfirm::backdrop{background:rgba(0,0,0,.54);}
+#linkConfirm[open]{animation:link-dialog-in .14s ease-out;}
+@keyframes link-dialog-in{from{opacity:0;transform:translateY(5px)}}
+#linkConfirm h2{margin:0 0 12px;font-size:18px;}
+#linkDestination{margin:0;padding:10px;background:var(--bg);border-radius:8px;overflow-wrap:anywhere;}
+.link-confirm-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px;}
+.link-confirm-actions button{min-height:44px;padding:0 14px;border:1px solid var(--border);
+  border-radius:8px;background:#2f2f35;color:var(--text);cursor:pointer;}
+.link-confirm-actions button[value="open"]{background:#503870;}
+.link-confirm-actions button:hover{filter:brightness(1.18);}
+.link-confirm-actions button:active{filter:brightness(.9);}
+.clip-card:focus-visible,.link-confirm-actions button:focus-visible{outline:2px solid #bf94ff;outline-offset:2px;}
+@media(prefers-reduced-motion:reduce){
+  #viewerLoading.is-loading::before,#linkConfirm[open]{animation:none;}
+}
 img.chat-match{outline:2px solid #ffdc82;outline-offset:-2px;}
 .button-toggle.active{
   background:var(--panel);
@@ -1007,6 +1039,19 @@ header .meta-buttons :is(button,.button-toggle.is-active):active,.chat-context-p
 
 </head>
 <body>
+<div id="viewerLoading" class="is-loading" role="status">Загрузка чата...</div>
+<script type="text/javascript">
+document.documentElement.classList.add('viewer-loading');
+function viewerLoadFailed(){
+  const loading=document.getElementById('viewerLoading');
+  if(loading.classList.contains('is-loading')){
+    loading.classList.remove('is-loading');
+    loading.textContent='Не удалось загрузить чат.';
+  }
+}
+window.addEventListener('error',event=>{if(event instanceof ErrorEvent) viewerLoadFailed();});
+</script>
+<noscript><style>#viewerLoading{display:none}</style><p>Для просмотра чата включите JavaScript.</p></noscript>
 <div class="page">
   <div class="chat">
 
@@ -1078,6 +1123,14 @@ header .meta-buttons :is(button,.button-toggle.is-active):active,.chat-context-p
 
 <script id="chat-data" type="application/json">{{CHAT_DATA_JSON}}</script>
 <div id="chatContext" class="chat-context" hidden></div>
+<dialog id="linkConfirm" aria-labelledby="linkConfirmTitle" aria-describedby="linkDestination">
+  <h2 id="linkConfirmTitle">Открыть ссылку</h2>
+  <p id="linkDestination"></p>
+  <div class="link-confirm-actions">
+    <button type="button" value="cancel" autofocus>Отмена</button>
+    <button type="button" value="open">Открыть</button>
+  </div>
+</dialog>
 
 <script>
 /* DOM is shared by two layouts:
@@ -1739,6 +1792,80 @@ function* chatLinks(text){
     if(href) yield {start:index+prefix,end:index+prefix+label.length,href};
   }
 }
+function twitchClipId(href){
+  if(!/^https?:\/\//i.test(href)) return null;
+  const url=new URL(href);
+  if(url.port) return null;
+  const path=url.hostname==='clips.twitch.tv' ? /^\/([\w-]{1,128})\/?$/
+    : ['twitch.tv','www.twitch.tv'].includes(url.hostname) ? /^\/[a-z0-9_]{1,25}\/clip\/([\w-]{1,128})\/?$/i : null;
+  return path?.exec(url.pathname)?.[1] ?? null;
+}
+function setupLinkConfirmation(){
+  const dialog=document.getElementById('linkConfirm');
+  const destination=document.getElementById('linkDestination');
+  let source=null,href=null,closing=false;
+  function close(){
+    if(!dialog.open || closing) return;
+    closing=true;href=null;
+    const finish=()=>{if(dialog.open) dialog.close();};
+    if(matchMedia('(prefers-reduced-motion: reduce)').matches || !dialog.animate){finish();return;}
+    dialog.animate([{opacity:1},{opacity:0,transform:'translateY(5px)'}],{duration:120}).finished.then(finish,finish);
+  }
+  function confirm(event){
+    const link=event.target.closest?.('a.chat-link,a.clip-card');
+    if(!link || event.button===2) return;
+    event.preventDefault();
+    if(dialog.open) return;
+    const safe=chatLinkHref(link.href);
+    if(!safe || !/^https?:\/\//i.test(safe)) return;
+    source=link;href=safe;destination.textContent=safe;
+    document.documentElement.classList.add('confirming-link');
+    dialog.showModal();
+  }
+  elList.addEventListener('click',confirm);
+  elList.addEventListener('auxclick',confirm);
+  dialog.addEventListener('cancel',event=>{event.preventDefault();close();});
+  dialog.addEventListener('click',event=>{
+    if(event.target===dialog){
+      const rect=dialog.getBoundingClientRect();
+      if(event.clientX<rect.left || event.clientX>rect.right || event.clientY<rect.top || event.clientY>rect.bottom) close();
+    }else if(event.target.value==='cancel') close();
+    else if(event.target.value==='open' && href && !closing){
+      window.open(href,'_blank','noopener,noreferrer');close();
+    }
+  });
+  dialog.addEventListener('close',()=>{
+    document.documentElement.classList.remove('confirming-link');
+    source?.focus({preventScroll:true});
+    source=null;href=null;closing=false;
+  });
+}
+function revealViewer(){
+  const loading=document.getElementById('viewerLoading');
+  if(!loading.classList.contains('is-loading')) return;
+  loading.hidden=true;loading.classList.remove('is-loading');
+  document.documentElement.classList.remove('viewer-loading');
+}
+function appendClipCards(row,document){
+  if(!DATA.clips) return;
+  const shown=new Set();
+  for(const link of row.querySelectorAll('.chat-link')){
+    const id=twitchClipId(link.href);
+    if(!id || shown.has(id) || !Object.hasOwn(DATA.clips,id)) continue;
+    const clip=DATA.clips[id];
+    if(typeof clip?.title!=='string' || !clip.title.trim() || typeof clip.creator!=='string' || !clip.creator.trim() ||
+       typeof clip.thumbnail!=='string' || !/^https:\/\/clips-media-assets2?\.twitch\.tv\/[a-zA-Z0-9_./-]+\.jpe?g$/.test(clip.thumbnail)) continue;
+    shown.add(id);
+    const card=document.createElement('a'),img=document.createElement('img'),copy=document.createElement('span');
+    const title=document.createElement('strong'),creator=document.createElement('small');
+    card.className='clip-card';card.href=link.href;card.target='_blank';card.rel='noopener noreferrer';card.draggable=false;
+    img.alt='';img.loading='lazy';img.decoding='async';img.referrerPolicy='no-referrer';
+    img.addEventListener('error',()=>card.remove(),{once:true});
+    title.textContent=clip.title;creator.textContent=clip.creator;
+    copy.append(title,creator);card.append(img,copy);row.append(card);
+    img.src=clip.thumbnail;
+  }
+}
 function messageLinkParts(text,fragments){
   if(typeof text!=='string' || !LINK_HOST_HINT.test(text)) return null;
   const links=[...chatLinks(text)];
@@ -1894,6 +2021,7 @@ function createRowElement(r, includeTime, rowIndex, ownerDocument=document, sear
   }
   if(search?.q) highlightMatch(rowEl.querySelectorAll('.msg, .notice-system > span'),search.q);
   if(search?.u) highlightMatch(rowEl.querySelectorAll('.user'),search.u);
+  if(rowIndex!==undefined && rowIndex!==null) appendClipCards(rowEl,document);
   return rowEl;
 }
 
@@ -2249,6 +2377,7 @@ async function showWindow(block, force=false){
         node.style.minHeight=reserved+'px';
         blockNodes.get(b).replaceWith(node);blockNodes.set(b,node);early=true;
         // A real frame lets the first messages paint before filling 2400 rows.
+        revealViewer();
         await new Promise(requestAnimationFrame);
       }else await yieldViewer();
       if(token!==windowToken) return;
@@ -2734,7 +2863,10 @@ function selectionPoint(node,offset){
   const element=node?.nodeType===3 ? node.parentElement : node;
   const row=element?.closest?.('#list .row');
   if(!row) return null;
+  if(element.closest('.clip-card')) return null;
   const range=document.createRange();range.selectNodeContents(row);range.setEnd(node,offset);
+  const firstCard=row.querySelector('.clip-card');
+  if(firstCard && node===row && offset>Array.prototype.indexOf.call(row.childNodes,firstCard)) range.setEndBefore(firstCard);
   return {id:Number(row.dataset.id),offset:range.toString().length};
 }
 function selectionSignature(sel){
@@ -2763,17 +2895,19 @@ function domPoint(point){
   const id=Math.max(first,Math.min(last,point.id));
   const row=elList.querySelector(`.row[data-id="${id}"]`);
   if(!row) return null;
-  let offset=point.id<first ? 0 : point.id>last ? row.textContent.length : point.offset;
+  let offset=point.id<first ? 0 : point.id>last ? Infinity : point.offset;
   return textPoint(row,offset);
 }
 function textPoint(row,offset){
   const walker=row.ownerDocument.createTreeWalker(row,NodeFilter.SHOW_TEXT);
   let node;
   while(node=walker.nextNode()){
+    if(node.parentElement.closest('.clip-card')) break;
     if(offset<=node.length) return [node,offset];
     offset-=node.length;
   }
-  return [row,row.childNodes.length];
+  const firstCard=row.querySelector('.clip-card');
+  return [row,firstCard ? Array.prototype.indexOf.call(row.childNodes,firstCard) : row.childNodes.length];
 }
 function projectSelection(){
   if(!selectionRange) return;
@@ -3179,7 +3313,7 @@ function setupPreviewControls(){
   });
   elDesktopPreviewToggle.addEventListener('click',()=>setDesktopPreviewCollapsed(false));
   document.addEventListener('keydown',e=>{
-    if(e.key==='Escape' && previewOpened && !contextAnchor && !document.querySelector('.snapshot-overlay')){
+    if(e.key==='Escape' && previewOpened && !contextAnchor && !document.querySelector('.snapshot-overlay,#linkConfirm[open]')){
       e.preventDefault();closeVodPreview();
     }
   });
@@ -3410,7 +3544,8 @@ function setupPreviewFrames(){
   sync();
 }
 if(hasVodImage || Number.isSafeInteger(meta.duration_seconds)) setupPreviewFrames();
-applyFilters();
+setupLinkConfirmation();
+applyFilters().then(revealViewer).catch(viewerLoadFailed);
 </script>
 
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>

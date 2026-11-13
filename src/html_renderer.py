@@ -31,6 +31,7 @@ def render_viewer_html(
     global_twitch_emote_ids: list[str] | None = None,
     subscriber_twitch_emote_ids: list[str] | None = None,
     preview_assets: dict | None = None,
+    clips: dict | None = None,
 ) -> str:
     # The compatibility API shares the exact streaming encoder; it does not build
     # a second complete array of compact rows alongside chat_rows.
@@ -41,7 +42,7 @@ def render_viewer_html(
                       captured_during_live=captured_during_live, duration_seconds=duration_seconds,
                       channel_login=channel_login, badge_titles=badge_titles, cdn_emote_sources=cdn_emote_sources,
                       global_twitch_emote_ids=global_twitch_emote_ids,
-                      subscriber_twitch_emote_ids=subscriber_twitch_emote_ids, preview_assets=preview_assets)
+                      subscriber_twitch_emote_ids=subscriber_twitch_emote_ids, preview_assets=preview_assets, clips=clips)
     return output.getvalue()
 
 
@@ -50,7 +51,7 @@ def write_viewer_html(output, chat_rows, title, channel, vod_url, created_at=Non
                       channel_id=None, local_emotes=None, cdn_emotes=None, badge_images=None,
                       cancel_check=None, captured_during_live=False, duration_seconds=None, *,
                       channel_login=None, badge_titles=None, cdn_emote_sources=None, global_twitch_emote_ids=None,
-                      subscriber_twitch_emote_ids=None, preview_assets=None):
+                      subscriber_twitch_emote_ids=None, preview_assets=None, clips=None):
     """Write the same template/payload incrementally, with one row in memory."""
     template = Path(__file__).with_name("viewer_template.html").read_text(encoding="utf-8")
     prefix, marker, suffix = template.partition("{{CHAT_DATA_JSON}}")
@@ -88,7 +89,7 @@ def write_viewer_html(output, chat_rows, title, channel, vod_url, created_at=Non
         written = output.write(text)
         if written != len(text):
             raise OSError("Incomplete HTML write")
-        if preview_assets:
+        if preview_assets or clips:
             output_bytes += byte_count(text)
 
     def write_json(value, *, streaming=False):
@@ -149,6 +150,10 @@ def write_viewer_html(output, chat_rows, title, channel, vod_url, created_at=Non
                     encoded = ',"vod_preview":' + encoder.encode(selected).replace("<", "\\u003c")
                     write_template(encoded)
                     break
+        if clips:
+            encoded = ',"clips":' + encoder.encode(clips).replace("<", "\\u003c")
+            if output_bytes + byte_count(encoded) + byte_count(suffix) + 1 <= MAX_CLOUD_HTML_BYTES:
+                write(encoded)
         write('}')
         write_template(suffix)
     finally:
