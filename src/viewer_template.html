@@ -279,13 +279,24 @@ header{
 .chat-match{background:#ffdc82;color:#20212b;}
 .chat-mention{font-weight:700;}
 .chat-link{color:#b3adff;text-decoration:underline;overflow-wrap:anywhere;}
-.clip-card{display:flex;align-items:center;gap:10px;max-width:340px;margin-top:6px;padding:6px;
+.clip-card{position:relative;display:grid;grid-template-columns:min(96px,34%) minmax(0,1fr);
+  align-items:center;column-gap:10px;row-gap:4px;max-width:340px;margin-top:6px;padding:6px;
   border:1px solid var(--border);border-radius:8px;background:var(--panel);color:var(--text);
   text-decoration:none;user-select:none;}
-.clip-card img{width:96px;max-width:34%;aspect-ratio:16/9;object-fit:cover;border-radius:4px;}
+.clip-card img{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:4px;}
 .clip-card strong,.clip-card small{display:block;overflow-wrap:anywhere;}
+.clip-card strong{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;}
 .clip-card small{color:var(--muted);}
-.clip-card:hover{border-color:#67676f;}
+.clip-card:not(.is-author-below) img{grid-row:1/3;}
+.clip-card:not(.is-author-below) .clip-card-copy{align-self:end;}
+.clip-card:not(.is-author-below) small{align-self:start;grid-column:2;}
+.clip-card.is-author-below small{grid-column:1/-1;}
+.clip-card-measure{position:absolute;inset:0;overflow:hidden;visibility:hidden;pointer-events:none;white-space:nowrap;}
+.clip-card-measure span{display:block;width:max-content;}
+.clip-card-measure span:first-child{font-weight:bold;}
+.clip-card-measure span:last-child{font-size:smaller;}
+@media (hover:hover){.clip-card:hover{background:#404047;border-color:#67676f;}}
+.clip-card:is(:active,.is-link-source){background:#50505a;border-color:#bf94ff;}
 #viewerLoading{position:fixed;inset:0;z-index:120;display:grid;place-content:center;
   justify-items:center;gap:12px;background:var(--bg);text-align:center;}
 #viewerLoading[hidden]{display:none;}
@@ -943,7 +954,10 @@ header .meta-buttons button,header .meta-buttons :is(button.is-active,.button-to
 header .meta-buttons button.is-inactive{background:var(--panel);opacity:1;}
 header .meta-buttons :is(button,.button-toggle.is-active):hover,.chat-context-profile:hover{background:#404047;border-color:#67676f;}
 header .meta-buttons :is(button,.button-toggle.is-active):active,.chat-context-profile:active{background:#50505a;border-color:#bf94ff;}
-#list .row:is(.is-message-pinned,.is-message-hovered,.is-preview-anchor){background:var(--row-highlight);}
+#list .row:is(.is-message-pinned,.is-message-hovered,.is-preview-anchor):where(:not(:has(.clip-card:is(:active,.is-link-source)))){background:var(--row-highlight);}
+@media (hover:hover){
+  #list .row:has(.clip-card:hover){background:transparent;}
+}
 #list .row .is-nickname-highlighted{background:#53535f;border-radius:3px;-webkit-box-decoration-break:clone;box-decoration-break:clone;}
 #list .row .has-ink-highlight{position:relative;isolation:isolate;background:none;}
 #list .row .has-ink-highlight::before{
@@ -1819,6 +1833,7 @@ function setupLinkConfirmation(){
     const safe=chatLinkHref(link.href);
     if(!safe || !/^https?:\/\//i.test(safe)) return;
     source=link;href=safe;destination.textContent=safe;
+    if(link.classList.contains('clip-card')) link.classList.add('is-link-source');
     document.documentElement.classList.add('confirming-link');
     dialog.showModal();
   }
@@ -1836,6 +1851,7 @@ function setupLinkConfirmation(){
   });
   dialog.addEventListener('close',()=>{
     document.documentElement.classList.remove('confirming-link');
+    source?.classList.remove('is-link-source');
     source?.focus({preventScroll:true});
     source=null;href=null;closing=false;
   });
@@ -1851,6 +1867,20 @@ function isClipThumbnailUrl(url){
   return /^https:\/\/clips-media-assets2?\.twitch\.tv\/(?:[a-zA-Z0-9_./-]|%[0-9A-Fa-f]{2})+\.jpe?g(?![\s\S])/.test(url)
     || /^https:\/\/static-cdn\.jtvnw\.net\/twitch-video-assets\/twitch-vap-video-assets-prod-[a-z]{2}-[a-z]+-[0-9]+\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\/landscape\/thumb\/thumb-[0-9]{10}-[0-9]+x[0-9]+\.jpg(?![\s\S])/.test(url);
 }
+// Only attached virtual blocks register their cards. Watch the side column,
+// whose width is independent of which row the author occupies.
+const clipLayoutObserver=new ResizeObserver(entries=>{
+  const layouts=entries.map(({target,contentRect})=>{
+    const card=target.closest('.clip-card'),measure=card.lastElementChild;
+    return [card,Array.from(measure.children).some(label=>label.getBoundingClientRect().width>contentRect.width)];
+  });
+  for(const [card,below] of layouts) card.classList.toggle('is-author-below',below);
+});
+function observeClipCards(block,start=0){
+  for(let i=start;i<block.children.length;i++){
+    for(const copy of block.children[i].querySelectorAll('.clip-card-copy')) clipLayoutObserver.observe(copy);
+  }
+}
 function appendClipCards(row,document){
   if(!DATA.clips) return;
   const shown=new Set();
@@ -1865,9 +1895,16 @@ function appendClipCards(row,document){
     const title=document.createElement('strong'),creator=document.createElement('small');
     card.className='clip-card';card.href=link.href;card.target='_blank';card.rel='noopener noreferrer';card.draggable=false;
     img.alt='';img.loading='lazy';img.decoding='async';img.referrerPolicy='no-referrer';
-    img.addEventListener('error',()=>card.remove(),{once:true});
-    title.textContent=clip.title;creator.textContent=clip.creator;
-    copy.append(title,creator);card.append(img,copy);row.append(card);
+    img.addEventListener('error',()=>{clipLayoutObserver.unobserve(copy);card.remove();},{once:true});
+    title.textContent=clip.title;creator.textContent='Автор клипа: '+clip.creator;
+    copy.className='clip-card-copy';
+    const measure=document.createElement('span');
+    measure.className='clip-card-measure';measure.setAttribute('aria-hidden','true');
+    for(const text of [title.textContent,creator.textContent]){
+      const label=document.createElement('span');label.textContent=text;measure.append(label);
+    }
+    copy.append(title);
+    card.append(img,copy,creator,measure);row.append(card);
     img.src=clip.thumbnail;
   }
 }
@@ -2137,7 +2174,7 @@ document.addEventListener('pointerup',event=>{
   }
   if(row!==gesture.row || selectionGesture?.active || window.getSelection()?.toString()) return;
   const context=contextTarget(target);
-  pinMessage(row,gesture.touch,context===gesture.target ? context : null);
+  pinMessage(row,gesture.touch,context===gesture.target ? context : null,!!target.closest('.clip-card'));
 },{capture:true,passive:true});
 document.addEventListener('pointercancel',()=>{chatPointer=null;closeContext();},{passive:true});
 document.addEventListener('contextmenu',()=>{chatPointer=null;closeContext();});
@@ -2355,7 +2392,11 @@ async function showWindow(block, force=false){
   // The bottom spacer is estimated until the last blocks are mounted.
   let endScroll=!scrubActive() && end===count && atChatEnd() ? window.scrollY : null;
   for(const [b,node] of blockNodes){
-    if(force || b<start || b>=end){blockObserver.unobserve(node);node.remove();blockNodes.delete(b);}
+    if(force || b<start || b>=end){
+      blockObserver.unobserve(node);
+      for(const copy of node.querySelectorAll('.clip-card-copy')) clipLayoutObserver.unobserve(copy);
+      node.remove();blockNodes.delete(b);
+    }
   }
   if(contextAnchor && !contextAnchor.isConnected) closeContext();
   windowStart=start;windowEnd=end;updateSpaces();
@@ -2377,10 +2418,13 @@ async function showWindow(block, force=false){
     // Build detached in small tasks, so typing/scrolling can cancel old work.
     for(let i=b*CHUNK;i<Math.min((b+1)*CHUNK,rowCount());){
       const until=Math.min(i+100,(b+1)*CHUNK,rowCount());
+      const previousRows=node.children.length;
       for(;i<until;i++) node.appendChild(createRowElement(rowAt(i),SHOW_TIME,i,document,searchTerms));
+      if(early && DATA.clips) observeClipCards(node,previousRows);
       if(b===0 && i===100 && start===0){
         node.style.minHeight=reserved+'px';
         blockNodes.get(b).replaceWith(node);blockNodes.set(b,node);early=true;
+        if(DATA.clips) observeClipCards(node);
         // A real frame lets the first messages paint before filling 2400 rows.
         revealViewer();
         await new Promise(requestAnimationFrame);
@@ -2389,6 +2433,7 @@ async function showWindow(block, force=false){
     }
     if(endScroll!==null && (intent!==scrollIntent || window.scrollY!==endScroll)) endScroll=null;
     if(!early){blockNodes.get(b).replaceWith(node);blockNodes.set(b,node);}
+    if(!early && DATA.clips) observeClipCards(node);
     node.style.minHeight='';
     // Keep map traversal in document order even when restoring earlier blocks.
     const ordered=[...blockNodes].sort((a,b)=>a[0]-b[0]);blockNodes.clear();
@@ -3412,10 +3457,11 @@ function setupMessageSelection(){
     const hit=pointer && document.elementFromPoint(...pointer);
     const hovered=messageRow(hit);
     const hoveredNickname=hovered && messageName(hit);
-    pointerTarget=hoveredNickname || hovered;
+    const hoveredCard=hit?.closest('.clip-card');
+    pointerTarget=hoveredCard || hoveredNickname || hovered;
     const hover=rowIntersects(hovered,bounds) ? hovered : null;
-    pinnedRow=highlight(pinnedRow,pinned,'is-message-pinned');
-    hoveredRow=highlight(hoveredRow,hover,'is-message-hovered');
+    pinnedRow=highlight(pinnedRow,pin?.clipCard ? null : pinned,'is-message-pinned');
+    hoveredRow=highlight(hoveredRow,hoveredCard ? null : hover,'is-message-hovered');
     highlightNicknames(hover ? hoveredNickname : null,pinned ? pin.nickname : null);
     if(mobile && scrubActive()) return;
     const directRow=pinned || hover;
@@ -3446,8 +3492,8 @@ function setupMessageSelection(){
   queueMessageSelection=()=>{
     if(!messageSelectionFrame) messageSelectionFrame=requestAnimationFrame(render);
   };
-  pinMessage=(row,touch,context)=>{
-    pin={identity:rowIdentity(+row.dataset.id),touch,nickname:null,y:window.scrollY};
+  pinMessage=(row,touch,context,clipCard=false)=>{
+    pin={identity:rowIdentity(+row.dataset.id),touch,clipCard,nickname:null,y:window.scrollY};
     if(touch && context){
       showContext(context,true);
       if(context===contextAnchor) pin.nickname=messageName(context);
@@ -3471,7 +3517,7 @@ function setupMessageSelection(){
   elList.addEventListener('pointermove',event=>{
     if(event.pointerType!=='mouse') return;
     pointer=[event.clientX,event.clientY];
-    const target=messageName(event.target) || messageRow(event.target);
+    const target=event.target.closest('.clip-card') || messageName(event.target) || messageRow(event.target);
     if(target!==pointerTarget){
       pointerTarget=target;queueMessageSelection();
     }
