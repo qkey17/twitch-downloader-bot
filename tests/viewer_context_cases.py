@@ -109,6 +109,14 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
         await mouse('mouseReleased')
         await wait("!linkConfirm.open && !document.documentElement.classList.contains('confirming-link')")
         assert await evaluate('linkClicks.length===0')
+        assert await evaluate("""(()=>{
+          const card=elList.querySelector('.clip-card'), link=elList.querySelector('.chat-link');
+          const url=card.querySelector('img').src;
+          if(isClipThumbnailUrl(url.replace('.net/', '.net.evil.test/')) || isClipThumbnailUrl(url+'?q=1')
+             || isClipThumbnailUrl('https://static-cdn.jtvnw.net/other.jpg')) return false;
+          card.querySelector('img').dispatchEvent(new Event('error'));
+          return !card.isConnected && link.isConnected;
+        })()""")
         await evaluate("elList.querySelector('.chat-link').focus();true")
         await call('Input.dispatchKeyEvent',dict(type='keyDown',key='Enter',windowsVirtualKeyCode=13))
         await wait('linkConfirm.open')
