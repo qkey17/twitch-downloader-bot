@@ -1869,16 +1869,20 @@ function isClipThumbnailUrl(url){
 }
 // Only attached virtual blocks register their cards. Watch the side column,
 // whose width is independent of which row the author occupies.
-const clipLayoutObserver=new ResizeObserver(entries=>{
+let clipLayoutObserver;
+function layoutClipCards(entries){
   const layouts=entries.map(({target,contentRect})=>{
     const card=target.closest('.clip-card'),measure=card.lastElementChild;
     return [card,Array.from(measure.children).some(label=>label.getBoundingClientRect().width>contentRect.width)];
   });
   for(const [card,below] of layouts) card.classList.toggle('is-author-below',below);
-});
+}
 function observeClipCards(block,start=0){
   for(let i=start;i<block.children.length;i++){
-    for(const copy of block.children[i].querySelectorAll('.clip-card-copy')) clipLayoutObserver.observe(copy);
+    for(const copy of block.children[i].querySelectorAll('.clip-card-copy')){
+      clipLayoutObserver ??= new ResizeObserver(layoutClipCards);
+      clipLayoutObserver.observe(copy);
+    }
   }
 }
 function appendClipCards(row,document){
@@ -1895,7 +1899,7 @@ function appendClipCards(row,document){
     const title=document.createElement('strong'),creator=document.createElement('small');
     card.className='clip-card';card.href=link.href;card.target='_blank';card.rel='noopener noreferrer';card.draggable=false;
     img.alt='';img.loading='lazy';img.decoding='async';img.referrerPolicy='no-referrer';
-    img.addEventListener('error',()=>{clipLayoutObserver.unobserve(copy);card.remove();},{once:true});
+    img.addEventListener('error',()=>{clipLayoutObserver?.unobserve(copy);card.remove();},{once:true});
     title.textContent=clip.title;creator.textContent='Автор клипа: '+clip.creator;
     copy.className='clip-card-copy';
     const measure=document.createElement('span');
@@ -2394,7 +2398,7 @@ async function showWindow(block, force=false){
   for(const [b,node] of blockNodes){
     if(force || b<start || b>=end){
       blockObserver.unobserve(node);
-      for(const copy of node.querySelectorAll('.clip-card-copy')) clipLayoutObserver.unobserve(copy);
+      for(const copy of node.querySelectorAll('.clip-card-copy')) clipLayoutObserver?.unobserve(copy);
       node.remove();blockNodes.delete(b);
     }
   }
