@@ -69,6 +69,88 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
             await asyncio.sleep(seconds)
         await touch('touchEnd')
 
+    async def check_control_states(touchscreen=False):
+        selectors = '#exportBtn,#toggleTime,#vodLink'
+        sizes = f"Array.from(document.querySelectorAll('{selectors}'),el=>[el.offsetWidth,el.offsetHeight,el.offsetLeft,el.offsetTop])"
+        before = await evaluate(sizes)
+        await call('Emulation.setEmulatedMedia', dict(features=[dict(name='prefers-reduced-motion', value='reduce')]))
+        assert await evaluate("getComputedStyle(elToggleTime).transitionDuration==='0s'")
+        await evaluate("window.controlLinks=[];window.open=(...args)=>controlLinks.push(args);true")
+        if touchscreen:
+            await tap('#toggleTime')
+            await wait("elToggleTime.getAttribute('aria-pressed')==='false'")
+            assert await evaluate("getComputedStyle(elToggleTime).backgroundColor==='rgb(24, 24, 27)'")
+            await tap('#toggleTime')
+            await tap('#vodLink')
+        else:
+            await mouse('mouseMoved', '#toggleTime')
+            await wait("getComputedStyle(elToggleTime).backgroundColor==='rgb(64, 64, 71)' && getComputedStyle(elToggleTime).borderTopColor==='rgb(103, 103, 111)'")
+            await mouse('mousePressed', '#toggleTime')
+            assert await evaluate("""(()=>{const s=getComputedStyle(elToggleTime);
+              return s.backgroundColor==='rgb(80, 80, 90)' && s.borderTopColor==='rgb(191, 148, 255)'
+                && s.transform==='none' && s.boxShadow==='none';})()""")
+            await mouse('mouseReleased', '#toggleTime')
+            await wait("elToggleTime.getAttribute('aria-pressed')==='false'")
+            await mouse('mouseMoved')
+            assert await evaluate("getComputedStyle(elToggleTime).backgroundColor==='rgb(24, 24, 27)'")
+            await call('Input.dispatchKeyEvent', dict(type='keyDown',key='Tab',windowsVirtualKeyCode=9,modifiers=8))
+            await call('Input.dispatchKeyEvent', dict(type='keyUp',key='Tab',windowsVirtualKeyCode=9,modifiers=8))
+            await evaluate("elToggleTime.focus();true")
+            assert await evaluate("elToggleTime.matches(':focus-visible') && getComputedStyle(elToggleTime).outlineWidth==='2px'")
+            await call('Input.dispatchKeyEvent', dict(type='keyDown',key='Enter',code='Enter',text=chr(13),windowsVirtualKeyCode=13))
+            await call('Input.dispatchKeyEvent', dict(type='keyUp',key='Enter',code='Enter',windowsVirtualKeyCode=13))
+            await click('#vodLink')
+            await evaluate("window.alert=message=>window.snapshotPrompt=message;true")
+            await click('#exportBtn')
+            await wait("!!window.snapshotPrompt || !!document.querySelector('.snapshot-overlay')")
+        await wait("elToggleTime.getAttribute('aria-pressed')==='true'")
+        assert await evaluate("controlLinks.length===1 && controlLinks[0][0]==='https://www.twitch.tv/videos/123'")
+        assert await evaluate(sizes) == before
+        await call('Emulation.setEmulatedMedia', dict(features=[]))
+
+    async def check_snapshot_controls(touchscreen=False):
+        await wait("typeof html2canvas==='function'")
+        await evaluate("""openSnapshotOverlay([rowAt(0)]);true""")
+        await wait("!!document.querySelector('.snapshot-actions.is-ready')")
+        await call('Emulation.setEmulatedMedia', dict(features=[dict(name='prefers-reduced-motion', value='reduce')]))
+        for index in (1, 2):
+            selector = f'.snapshot-toggle:nth-child({index})'
+            button = f'document.querySelector({json.dumps(selector)})'
+            geometry = f'[{button}.offsetLeft,{button}.offsetTop,{button}.offsetWidth,{button}.offsetHeight]'
+            before = await evaluate(geometry)
+            initial = await evaluate(f"{button}.getAttribute('aria-pressed')")
+            original = await evaluate("SNAPSHOT_PREVIEW_IMG.src")
+            if touchscreen:
+                await tap(selector)
+            else:
+                await mouse('mouseMoved', selector)
+                await wait(f"""(()=>{{const style=getComputedStyle({button});
+                    return style.backgroundColor==='rgb(64, 64, 71)' && style.borderTopColor==='rgb(103, 103, 111)'
+                      && style.transform==='none' && style.boxShadow==='none';}})()""")
+                await mouse('mousePressed', selector)
+                assert await evaluate(f"""(()=>{{const style=getComputedStyle({button});
+                    return style.backgroundColor==='rgb(80, 80, 90)' && style.borderTopColor==='rgb(191, 148, 255)'
+                      && style.transform==='none' && style.boxShadow==='none';}})()""")
+                assert await evaluate(geometry) == before
+                await mouse('mouseReleased', selector)
+            await wait(f"{button}.getAttribute('aria-pressed')!=={json.dumps(initial)} && SNAPSHOT_PREVIEW_IMG.src!=={json.dumps(original)} && SNAPSHOT_PREVIEW_IMG.style.opacity==='1'")
+            if touchscreen:
+                assert await evaluate(f"getComputedStyle({button}).backgroundColor===({button}.classList.contains('is-active') ? 'rgb(42, 42, 53)' : 'rgb(24, 24, 27)')")
+                await tap(selector)
+            else:
+                await call('Input.dispatchKeyEvent', dict(type='keyDown',key='Tab',windowsVirtualKeyCode=9,modifiers=8))
+                await call('Input.dispatchKeyEvent', dict(type='keyUp',key='Tab',windowsVirtualKeyCode=9,modifiers=8))
+                await evaluate(f"{button}.focus();true")
+                assert await evaluate(f"{button}.matches(':focus-visible') && getComputedStyle({button}).outlineWidth==='2px'")
+                await call('Input.dispatchKeyEvent', dict(type='keyDown',key='Enter',code='Enter',text=chr(13),windowsVirtualKeyCode=13))
+                await call('Input.dispatchKeyEvent', dict(type='keyUp',key='Enter',code='Enter',windowsVirtualKeyCode=13))
+            await wait(f"{button}.getAttribute('aria-pressed')==={json.dumps(initial)} && SNAPSHOT_PREVIEW_IMG.src==={json.dumps(original)} && SNAPSHOT_PREVIEW_IMG.style.opacity==='1'")
+            assert await evaluate(geometry) == before
+        await mouse('mousePressed')
+        await mouse('mouseReleased')
+        await wait("!document.querySelector('.snapshot-overlay')")
+        await call('Emulation.setEmulatedMedia', dict(features=[]))
+
     async def check_link(touchscreen=False):
         await evaluate('elQ.value="kappa?to=@情報";elU.value="";applyFilters()')
         selector = '#list .msg .chat-link'
@@ -137,6 +219,20 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
             from viewer_storyboard_cases import preview_fixture
             frame = preview_fixture(16)['preview_assets']['frames'][1]
             await evaluate(f"storyboardFrames.push({json.dumps(frame)});meta.duration_seconds=60;setupPreviewFrames();setDesktopPreviewCollapsed(false)")
+            await evaluate("elDesktopPreview.style.display='block';setDesktopPreviewCollapsed(false);elVodCard.style.display='block'")
+            cover_size = await evaluate("[elVodCard.offsetWidth,elVodCard.offsetHeight]")
+            await mouse('mouseMoved', '#vodCard')
+            await wait("getComputedStyle(elVodCard).backgroundColor==='rgb(64, 64, 71)'")
+            await mouse('mousePressed', '#vodCard')
+            await wait("""(()=>{const s=getComputedStyle(elVodCard);
+              return s.backgroundColor==='rgb(80, 80, 90)' && s.borderTopColor==='rgb(191, 148, 255)'
+                && s.transform==='none' && s.boxShadow==='none';})()""")
+            assert await evaluate("[elVodCard.offsetWidth,elVodCard.offsetHeight]") == cover_size
+            await mouse('mouseReleased', '#vodCard')
+            await wait('desktopPreviewCollapsed && !elDesktopPreviewToggle.hidden')
+            await evaluate("elDesktopPreviewToggle.click()")
+            await wait('!desktopPreviewCollapsed')
+            await evaluate("elDesktopPreview.style.display='';elVodCard.style.display=''")
             await mouse('mouseMoved', '.row .user')
             await wait("!!elList.querySelector('.row.is-message-hovered')")
             await mouse('mouseMoved', card)
@@ -203,6 +299,9 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
         assert len(set(geometry[width, 'new'])) == 1, geometry
 
     await load(1440)
+    await check_control_states()
+    await check_snapshot_controls()
+    await load(1440)
     await wait("getComputedStyle(document.querySelector('.row')).display!=='none'")
     for selector in (emote, badge, user, mention):
         target = await call('Runtime.evaluate', dict(expression=f'document.querySelector({json.dumps(selector)})'))
@@ -239,10 +338,10 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
             await call('CSS.forcePseudoState', dict(nodeId=node, forcedPseudoClasses=[state]))
         await wait("""(()=>{
           const profile=getComputedStyle(chatContext), control=getComputedStyle(elToggleTime);
-          return profile.boxShadow!=='none'
+          return profile.boxShadow==='none'
             && ['backgroundColor','borderColor','boxShadow','borderRadius','color'].every(k=>profile[k]===control[k])
-            && (%s || profile.transform==='none' && control.transform!=='none');
-        })()""" % ('true' if state == 'active' else 'false'))
+            && profile.transform==='none' && control.transform==='none';
+        })()""")
     for node in (profile_node, control_node):
         await call('CSS.forcePseudoState', dict(nodeId=node, forcedPseudoClasses=[]))
     await wait("getComputedStyle(chatContext).transform==='none'")
@@ -342,6 +441,10 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
     assert not errors, errors
 
     for width, mode in ((320, 'online'), (390, 'offline')):
+        await load(width, mode=mode)
+        await evaluate('syncPanelState(true,false)')
+        await check_control_states(touchscreen=True)
+        await check_snapshot_controls(touchscreen=True)
         await load(width, mode=mode)
         await tap(emote)
         await wait(global_emote)
