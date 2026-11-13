@@ -241,7 +241,7 @@ test('start is distinct from row zero and OFFLINE starts strictly after duration
   const h=sliderContext(20),s=h.slider;
   s.setScrubIndex(null);assert.equal(h.times[0].textContent,'00:00:00 / 05:51:28');
   h.ctx.time='05:51:28';s.setScrubIndex(0);assert.equal(h.times[0].textContent,'05:51:28 / 05:51:28');
-  h.ctx.time='05:51:29';s.setScrubIndex(0);assert.equal(h.times[0].textContent,'OFFLINE / 05:51:28');
+  h.ctx.time='05:51:29';s.setScrubIndex(0);assert.equal(h.times[0].textContent,'OFFLINE');
   assert.equal(s.isOfflineTime('05:51:29',null),false);
 });
 test('end catch-up advances two rows per crossing and stays still without movement',()=>{

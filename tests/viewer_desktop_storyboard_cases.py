@@ -39,6 +39,52 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
 
     ready='elVodPreviewImg.complete && elVodPreviewImg.naturalWidth'
     await motion('no-preference')
+    for width in (320,390):
+        await load('new',width,720)
+        for expanded in (False,True):
+            if expanded:
+                await expand_mobile()
+            await evaluate("requestScrub(rowCount()-1,'end');true")
+            await wait('!scrubActive() && atChatEnd() && scrubIndex===rowCount()-1')
+            await evaluate("""(()=>{window.endSamples=[];
+              const record=()=>{
+                const end=document.scrollingElement.scrollHeight-document.scrollingElement.clientHeight;
+                endSamples.push({y:scrollY,end,padding:elList.style.paddingTop,header:viewportInset(),
+                  hit:document.elementFromPoint(10,1)?.closest('header')===elHeader});
+                if(panelAnimating) requestAnimationFrame(record);
+              };
+              elPanelHandle.click();requestAnimationFrame(record);return true;})()""")
+            await wait('!panelAnimating && atChatEnd() && endSamples.length>1')
+            samples=await evaluate('endSamples')
+            assert all(s['hit'] and abs(s['end']-s['y'])<=1 for s in samples),samples
+            assert len({s['y'] for s in samples[:-1]})==1,samples
+            assert len({s['padding'] for s in samples[:-1]})==1,samples
+            assert await evaluate("""(()=>{
+              const last=elList.querySelector('.row[data-id="'+(rowCount()-1)+'"]').getBoundingClientRect();
+              const css=getComputedStyle(elList);
+              return last.top>=viewportInset() && Math.abs(last.bottom-elList.getBoundingClientRect().bottom)<1
+                && last.bottom<=innerHeight+1 && css.outlineStyle==='none' && css.boxShadow.includes('inset')
+                && parseFloat(css.paddingTop)-viewportInset()<=1.5 && css.paddingBottom==='0px';
+            })()""")
+            if not expanded:
+                await evaluate('elPanelHandle.click();true')
+                await wait('!PANEL_EXPANDED && !panelAnimating && atChatEnd()')
+        before=await evaluate('[scrollY,scrubIndex]')
+        await evaluate("""(()=>{
+          const height=visualViewport.height;
+          Object.defineProperty(visualViewport,'height',{configurable:true,get:()=>height-32});
+          visualViewport.dispatchEvent(new Event('resize'));return true;
+        })()""")
+        await wait('!messageSelectionFrame')
+        assert await evaluate('[scrollY,scrubIndex]')==before
+        await evaluate("delete visualViewport.height;visualViewport.dispatchEvent(new Event('resize'));true")
+        x,y=await evaluate('[innerWidth/2,innerHeight-100]')
+        await call('Input.dispatchTouchEvent',dict(type='touchStart',touchPoints=[dict(x=x,y=y-120)]))
+        for dy in (20,40,70,100,120):
+            await call('Input.dispatchTouchEvent',dict(type='touchMove',touchPoints=[dict(x=x,y=y-120+dy)]))
+        await call('Input.dispatchTouchEvent',dict(type='touchEnd',touchPoints=[]))
+        await wait('!atChatEnd() && !panelAnimating')
+
     for width,mode in ((390,'offline'),(1440,'online')):
         await load('new',width,mode=mode)
         if width<901:
@@ -75,7 +121,9 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
             await evaluate('scrollTo(0,300000);true')
         await wait('elPreviewHome.classList.contains("is-offline") && !elVodPreviewImg.hasAttribute("src")')
         if width<901:
-            assert await evaluate('elScrubber.getAttribute("aria-valuetext").startsWith("OFFLINE / ")')
+            assert await evaluate("""elScrubber.getAttribute('aria-valuetext')==='OFFLINE'
+              && getComputedStyle(elScrubber.querySelector('.scrub-times'),'::before').color
+                ===getComputedStyle(elScrubber.querySelector('.scrub-times')).color""")
         assert await evaluate('elList.querySelectorAll(".row").length<=2400')
 
     for width in (390,1440):
@@ -238,7 +286,7 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
     await mouse('mouseReleased',first[1:])
     await wait(f'desktopFrameIndex==={first[0]}')
     await evaluate("visualViewport.dispatchEvent(new Event('scroll'));true")
-    assert await evaluate(f'elList.querySelector(".is-message-pinned")?.dataset.id==="{first[0]}"')
+    await wait(f'elList.querySelector(".is-message-pinned")?.dataset.id==="{first[0]}"')
     await evaluate('scrollBy(0,15);true')
     await wait('!elList.querySelector(".is-message-pinned")')
     await evaluate('scrollTo(0,0);true')

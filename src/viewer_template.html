@@ -976,7 +976,7 @@ header .meta-buttons :is(button,.button-toggle.is-active):active,.chat-context-p
   .scrub-track{position:absolute;left:var(--scrub-inset);right:var(--scrub-inset);height:28px;border-radius:7px;background:#30313e;overflow:hidden;}
   .scrub-fill{position:absolute;inset:0 auto 0 0;width:calc(100% * var(--scrub-ratio,0));background:#a0a3b7;}
   .scrub-label{position:absolute;inset:0;z-index:2;display:flex;align-items:center;justify-content:center;white-space:nowrap;font:500 12px/1.2 var(--sans);font-variant-numeric:tabular-nums;color:transparent;background:linear-gradient(to right,#20212b 0 var(--scrub-label-edge),#e1e3ed var(--scrub-label-edge) 100%);background-clip:text;-webkit-background-clip:text;pointer-events:none;}
-  .scrub-times.is-offline::before{content:"● ";color:var(--muted);}
+  .scrub-times.is-offline::before{content:"● ";}
   /* Keep the original 11px endpoint centers and 18px border-box capsule.
      Track, fill and thumb share the same travel; dark text also covers the thumb. */
   .scrub-thumb{position:absolute;z-index:1;top:0;height:var(--control-h);left:var(--scrub-center);width:var(--scrub-thumb-width);transform:translateX(-50%);border-radius:9px;border:1px solid #747888;background:#a0a3b7;background-origin:border-box;background-clip:border-box;pointer-events:none;}
@@ -988,6 +988,8 @@ header .meta-buttons :is(button,.button-toggle.is-active):active,.chat-context-p
   .panel-toggle:focus-visible{outline:2px solid #b3adff;outline-offset:0;border-color:transparent;}
   #list{
     padding-top:64px;
+    outline:none;
+    box-shadow:inset 1px 0 var(--border),inset -1px 0 var(--border);
     /* Leave the panel clearance as natural page background. */
     background-color:transparent;
     background-image:linear-gradient(var(--panel),var(--panel));
@@ -1224,6 +1226,7 @@ function syncPanelState(expanded, animate=true){
   const motion=mobile && animate && !matchMedia('(prefers-reduced-motion: reduce)').matches;
   const current=elPanelDetails.getBoundingClientRect().height;
   const currentPadding=parseFloat(getComputedStyle(elList).paddingTop),scrollY=window.scrollY;
+  const keepEnd=mobile && atChatEnd();
   // Freeze the interpolated height on rapid reversal before choosing a new target.
   elHeader.classList.remove('is-panel-animating');
   elList.classList.remove('panel-shifting');
@@ -1257,24 +1260,27 @@ function syncPanelState(expanded, animate=true){
     refreshPreviewFrame();
     if(mobile) elPanelDetails.style.height=PANEL_EXPANDED ? 'auto' : '0px';
     updatePanelGeometry();
-    if(scrolling) window.scrollTo(0,previousY+targetPadding-reserved);
+    if(keepEnd && Math.abs(previousY-scrollY)<=1 && !atChatEnd()) restoreChatEnd();
+    else if(scrolling) window.scrollTo(0,previousY+targetPadding-reserved);
     settle();
   };
   if(panelAnimating){
     // Long chats keep fixed list geometry during the transition. Native scroll
     // compensates the header's interpolated height without repainting all rows
     // or allocating a huge composited layer for the complete virtual window.
-    reserved=Math.max(insetBase+current+1,targetPadding);
+    reserved=keepEnd ? currentPadding : Math.max(insetBase+current+1,targetPadding);
     elList.style.paddingTop=reserved+'px';
     const startY=scrollY+reserved-currentPadding;
-    scrolling=startY>=0 && startY<=document.documentElement.scrollHeight-innerHeight;
+    // At the end the browser clamps scroll writes. Keep the list still during
+    // the animation and commit its reserve and bottom position together.
+    scrolling=!keepEnd && startY>=0 && startY<=document.documentElement.scrollHeight-innerHeight;
     if(scrolling){
       window.scrollTo(0,startY);
       follow=height=>window.scrollTo(0,startY+current-height);
-    }else elList.style.paddingTop=(insetBase+current+1)+'px';
+    }else if(!keepEnd) elList.style.paddingTop=(insetBase+current+1)+'px';
     void elPanelDetails.offsetHeight;
     elHeader.classList.add('is-panel-animating');
-    if(!scrolling) elList.classList.add('panel-shifting');
+    if(!scrolling && !keepEnd) elList.classList.add('panel-shifting');
     void elPanelDetails.offsetHeight;
     const ended=e=>{if(e.target===elPanelDetails && e.propertyName==='height') finish();};
     const timer=setTimeout(finish,350);
@@ -1283,7 +1289,7 @@ function syncPanelState(expanded, animate=true){
     const track=()=>{follow(elPanelDetails.getBoundingClientRect().height);frame=requestAnimationFrame(track);};
     if(scrolling) frame=requestAnimationFrame(track);
     panelCleanup=()=>{clearTimeout(timer);cancelAnimationFrame(frame);elPanelDetails.removeEventListener('transitionend',ended);panelCleanup=()=>{};};
-    if(!scrolling) elList.style.paddingTop=targetPadding+'px';
+    if(!scrolling && !keepEnd) elList.style.paddingTop=targetPadding+'px';
   }
   elPanelDetails.style.height=mobile ? target+'px' : '';
   elPanelDetails.style.opacity=mobile ? (PANEL_EXPANDED ? '1' : '0') : '';
@@ -2561,7 +2567,7 @@ function setScrubIndex(index){
   const offline=isOfflineTime(time,meta.duration_seconds);
   showOfflinePreview(offline,true);
   const current=offline ? 'OFFLINE' : scrubStart && (count || filtered===null) ? '00:00:00' : time;
-  const label=current+' / '+duration;
+  const label=offline ? current : current+' / '+duration;
   elScrubber.style.setProperty('--scrub-progress',percent.toFixed(4)+'%');
   elScrubber.style.setProperty('--scrub-ratio',String(percent/100));
   for(const node of elScrubber.querySelectorAll('.scrub-times')){

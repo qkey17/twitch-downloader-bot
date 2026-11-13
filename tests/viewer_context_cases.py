@@ -423,19 +423,36 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
             const rect=row.getBoundingClientRect();return rect.top>=bounds.top-.5 && rect.bottom<=bounds.bottom+.5;
           });
           const before=[elList.clientWidth,elList.offsetHeight,scrollY];
-          const outline=[style.outlineColor,style.outlineWidth,style.outlineOffset,style.borderRadius];
+          const outline=[style.outlineStyle,style.outlineColor,style.outlineWidth,style.outlineOffset,style.borderRadius,style.boxShadow];
           elList.style.outline='none';
+          elList.style.boxShadow='none';
           const after=[elList.clientWidth,elList.offsetHeight,scrollY];
           elList.style.removeProperty('outline');
+          elList.style.removeProperty('box-shadow');
           return {outline,before,after,scrollWidth:document.documentElement.scrollWidth,innerWidth,
             rows:elList.querySelectorAll('.row').length,full:full.length,
             automatic:desktopAutomaticRow(bounds)?.dataset.id,expected:full[0]?.dataset.id};
         })()""")
-        assert frame['outline']==['rgb(48, 48, 54)','1px','-1px','0px' if width<=900 else '14px'], (width,frame)
+        if width<=900:
+            assert [frame['outline'][0],*frame['outline'][4:]]==['none','0px',
+                'rgb(48, 48, 54) 1px 0px 0px 0px inset, rgb(48, 48, 54) -1px 0px 0px 0px inset'], (width,frame)
+        else:
+            assert frame['outline']==['solid','rgb(48, 48, 54)','1px','-1px','14px','none'], (width,frame)
         assert frame['before']==frame['after'] and frame['scrollWidth']<=frame['innerWidth'], (width,frame)
         assert frame['rows']<=2400 and frame['full']>1 and frame['automatic']==frame['expected'], (width,frame)
         await call('Emulation.setPageScaleFactor',dict(pageScaleFactor=1))
         assert not errors, errors
+    for scale in (1,1.25):
+        await load(1440,mode='offline')
+        await call('Emulation.setPageScaleFactor',dict(pageScaleFactor=scale))
+        await evaluate("elQ.value='unique-last';applyFilters()")
+        await wait('rowCount()===1 && !FILTERING && !windowBusy')
+        gaps=await evaluate("""(()=>{
+          const list=elList.getBoundingClientRect(), row=elList.querySelector('.row').getBoundingClientRect();
+          return [row.top-list.top,list.bottom-row.bottom];
+        })()""")
+        assert abs(gaps[0]-gaps[1])<.5,(scale,gaps)
+    await call('Emulation.setPageScaleFactor',dict(pageScaleFactor=1))
     print(json.dumps(dict(control_heights={w: geometry[w,'new'] for w in (320,390,1440)},
                           search='PASS', mentions='PASS', copy='PASS', png='PASS',
                           desktop='PASS', mobile='PASS', links='PASS', row_activation='PASS',
