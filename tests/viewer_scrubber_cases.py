@@ -43,7 +43,7 @@ async def check_scrubber(call,evaluate,wait,out,args,errors,requests):
     async def touch(fractions,cancel=False):return await gesture(fractions,touching=True,cancel=cancel)
     async def verify_target(index):
         await settled()
-        state=await evaluate('''(()=>{const id='''+str(index)+''',n=elList.querySelector(`.row[data-id="${id}"]`),r=n?.getBoundingClientRect();return {id:scrubIndex,top:r?.top??null,bottom:r?.bottom??null,inset:viewportInset(),rows:elList.querySelectorAll('.row').length,visible:visibleAnchor(),max:window.__maxRows||0,active:scrubActive(),busy:windowBusy,pct:elScrubber.getAttribute('aria-valuenow'),time:elScrubber.querySelector('.scrub-times').textContent,expected:scrubTime(rowAt(id).t)+' / '+durationTime(meta.duration_seconds)}})()''')
+        state=await evaluate('''(()=>{const id='''+str(index)+''',n=elList.querySelector(`.row[data-id="${id}"]`),r=n?.getBoundingClientRect();return {id:scrubIndex,top:r?.top??null,bottom:r?.bottom??null,inset:viewportInset(),rows:elList.querySelectorAll('.row').length,visible:visibleAnchor(),max:window.__maxRows||0,active:scrubActive(),busy:windowBusy,pct:elScrubber.getAttribute('aria-valuenow'),time:elScrubber.querySelector('.scrub-times').textContent,expected:(scrubStart?'00:00:00':scrubTime(rowAt(id).t))+' / '+durationTime(meta.duration_seconds)}})()''')
         assert state['top'] is not None and state['bottom']>state['inset'] and state['top']<900,(index,state)
         assert state['id']==index,(index,state)
         assert state['time']==state['expected'],state
@@ -109,14 +109,16 @@ window.__show=showWindow;showWindow=async(...args)=>{__builders++;__maxBuilders=
                     # A deliberate End jump shows the last row's own time.
                     await key('End');await settled()
                     await verify_target(count-1)
-                    await evaluate('window.scrollBy(0,-70);true');await settled()
-                    await evaluate('window.scrollTo(0,document.documentElement.scrollHeight);true');await settled()
-                    assert await evaluate(f"atChatEnd() && scrubIndex===({automatic_index}) && scrubIndex<rowCount()-1")
-                    await evaluate('window.scrollBy(0,-70);true');await settled()
-                    assert await evaluate(f"!atChatEnd() && scrubIndex===({automatic_index})")
+                    assert await evaluate("atChatEnd() && scrubIndex===rowCount()-1")
+                    await evaluate("""const endAnchor=mobileAutomaticIndex(viewportInset());
+                      const row=elList.querySelector('.row[data-id="'+endAnchor+'"]');
+                      scrollBy(0,-(viewportInset()-row.getBoundingClientRect().bottom+4));true""");await settled()
+                    assert await evaluate(f"!atChatEnd() && scrubIndex>=({automatic_index}) && scrubIndex===rowCount()-3")
+                    await evaluate('scrollBy(0,-1200);true');await settled()
+                    assert await evaluate(f"scrubIndex===({automatic_index})")
                     assert await evaluate("elScrubber.querySelector('.scrub-times').textContent===scrubTime(rowAt(scrubIndex).t)+' / 120:51:28'")
                     await evaluate("elQ.value='unique-last';elQ.dispatchEvent(new Event('input'));true");await settled()
-                    assert await evaluate("elScrubber.querySelector('.scrub-times').textContent==='— / 120:51:28'")
+                    assert await evaluate("elScrubber.querySelector('.scrub-times').textContent==='00:00:00 / 120:51:28'")
                     await evaluate("elQ.value='';elQ.dispatchEvent(new Event('input'));true");await settled()
                     await evaluate("rows[0][0]='105:42:15';setScrubIndex(0);true")
                     assert await evaluate("elScrubber.querySelector('.scrub-times').textContent==='105:42:15 / 120:51:28'")

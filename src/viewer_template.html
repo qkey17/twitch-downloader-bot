@@ -510,7 +510,6 @@ html{overflow-anchor:none;}
   margin-right:auto;
   background:#1f1f23;
   min-height:100vh;
-  padding-bottom:40px;
   margin-top:0;
   border-radius:0;
   overflow-x:hidden;
@@ -869,6 +868,11 @@ html{overflow-anchor:none;}
 .vod-card{padding:0;width:100%;}
 .vod-card[aria-expanded=true]{visibility:hidden;}
 .vod-card-media{display:block;aspect-ratio:var(--preview-ratio,16/9);background:none;}
+.vod-card-media,.vod-zoom-media{position:relative;}
+.vod-card-media.is-offline::after,.vod-zoom-media.is-offline::after{
+  content:"● OFFLINE";position:absolute;inset:0;display:grid;place-items:center;
+  color:var(--muted);background:var(--panel);font:700 14px var(--sans);
+}
 #vodPreviewImg{display:block;width:100%;height:100%;object-fit:contain;}
 #vodPreviewImg:not([src]){visibility:hidden;}
 .desktop-preview{display:none;}
@@ -876,7 +880,7 @@ html{overflow-anchor:none;}
 #vodLink:focus-visible,#desktopPreviewToggle:focus-visible{outline:2px solid #b3adff;outline-offset:2px;}
 #vodPreviewImg.vod-preview-flight{position:fixed;z-index:106;pointer-events:none;transform-origin:top left;}
 @media (min-width:901px){
-  #list{background:var(--panel);}
+  #list{background:var(--panel);min-height:0;}
   .panel-details,.panel-details-content{display:flex;flex-direction:column;gap:var(--control-gap);}
   .panel-details,.desktop-preview{padding:20px;}
   .panel-details{min-height:0;overflow:auto;scrollbar-width:thin;}
@@ -899,7 +903,7 @@ html{overflow-anchor:none;}
   .vod-title{display:block;overflow:visible;-webkit-line-clamp:unset;overflow-wrap:anywhere;}
   .vod-card{margin-bottom:0;}
 }
-.controls input{background:var(--bg);border-color:#67676f;}
+.controls input{background:var(--bg);border-color:#494950;}
 .controls input::placeholder{color:var(--muted);}
 header .meta-buttons button,header .meta-buttons :is(button.is-active,.button-toggle.is-active),.chat-context-profile{
   background:#2f2f35;border-color:#494950;color:var(--text);
@@ -972,6 +976,7 @@ header .meta-buttons :is(button,.button-toggle.is-active):active,.chat-context-p
   .scrub-track{position:absolute;left:var(--scrub-inset);right:var(--scrub-inset);height:28px;border-radius:7px;background:#30313e;overflow:hidden;}
   .scrub-fill{position:absolute;inset:0 auto 0 0;width:calc(100% * var(--scrub-ratio,0));background:#a0a3b7;}
   .scrub-label{position:absolute;inset:0;z-index:2;display:flex;align-items:center;justify-content:center;white-space:nowrap;font:500 12px/1.2 var(--sans);font-variant-numeric:tabular-nums;color:transparent;background:linear-gradient(to right,#20212b 0 var(--scrub-label-edge),#e1e3ed var(--scrub-label-edge) 100%);background-clip:text;-webkit-background-clip:text;pointer-events:none;}
+  .scrub-times.is-offline::before{content:"● ";color:var(--muted);}
   /* Keep the original 11px endpoint centers and 18px border-box capsule.
      Track, fill and thumb share the same travel; dark text also covers the thumb. */
   .scrub-thumb{position:absolute;z-index:1;top:0;height:var(--control-h);left:var(--scrub-center);width:var(--scrub-thumb-width);transform:translateX(-50%);border-radius:9px;border:1px solid #747888;background:#a0a3b7;background-origin:border-box;background-clip:border-box;pointer-events:none;}
@@ -983,14 +988,12 @@ header .meta-buttons :is(button,.button-toggle.is-active):active,.chat-context-p
   .panel-toggle:focus-visible{outline:2px solid #b3adff;outline-offset:0;border-color:transparent;}
   #list{
     padding-top:64px;
-    /* Start paint at content, leaving the panel clearance as natural page background.
-       Extend through the existing 40px bottom padding (content-box clipping
-       alone would also remove that previously painted bottom area). */
+    /* Leave the panel clearance as natural page background. */
     background-color:transparent;
     background-image:linear-gradient(var(--panel),var(--panel));
     background-origin:content-box;
     background-repeat:no-repeat;
-    background-size:100% calc(100% + 40px);
+    background-size:100% 100%;
   }
 }
 @media(max-width:900px) and (any-hover:hover){
@@ -1294,7 +1297,7 @@ new ResizeObserver(()=>{if(!panelAnimating) updatePanelGeometry();}).observe(elH
 function reconcilePanelMode(){
   const mobile=MOBILE_MQ.matches;
   const expanded=mobile!==panelMobile ? !mobile : PANEL_EXPANDED;
-  if(hasVodImage && mobile!==panelMobile){
+  if(mobile!==panelMobile){
     closeVodPreview(false,false);
     placePreviewControl(mobile);
   }
@@ -2169,7 +2172,7 @@ function restoreAnchor(anchor){
 }
 function measureBlocks(anchor=resizeAnchor || stableAnchor || visibleAnchor()){
   const keepScrub=scrubSettled && (resizeAnchor || Math.abs(window.scrollY-scrubSettled.y)<1);
-  const keepEnd=!keepScrub && !scrubActive() && atChatEnd();
+  const keepEnd=!scrubActive() && (keepScrub ? scrubSettled.edge==='end' : atChatEnd());
   let total=0,count=0;
   for(const [b,node] of blockNodes){
     if(node.dataset.pending) continue;
@@ -2181,7 +2184,13 @@ function measureBlocks(anchor=resizeAnchor || stableAnchor || visibleAnchor()){
   if(keepEnd) restoreChatEnd();
   else restoreAnchor(anchor);
   stableAnchor=visibleAnchor();
-  if(keepScrub) rememberScrubPosition();
+  if(keepScrub){
+    rememberScrubPosition(scrubSettled.edge);
+    if(keepEnd && scrubEndCatchup){
+      scrubEndCatchup.anchor=mobileAutomaticIndex(viewportInset()) ?? -1;
+      scrubEndCatchup.y=window.scrollY;
+    }
+  }
   queueMessageSelection();
 }
 const blockObserver=new ResizeObserver(()=>{
@@ -2436,6 +2445,7 @@ elToggleTime.addEventListener('click',async e=>{
 
 /* Logical-index mobile navigation. At most one builder and one pending target. */
 let scrubIndex=0, scrubGesture=null, scrubPending=null, scrubRunning=false, scrubSettled=null;
+let scrubStart=true, scrubEndCatchup=null;
 let scrubRevision=0, scrubFrame=0;
 
 const STORYBOARD_REFRESH_MS=125;
@@ -2518,6 +2528,20 @@ function durationTime(seconds){
   return String(Math.floor(seconds/3600)).padStart(2,'0')+':'+String(Math.floor(seconds/60)%60).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0');
 }
 let scrubLabelSignature='',scrubSelectedTime='—';
+function previewSeconds(time){
+  return time==='—' ? NaN : time.split(':').reduce((total,part)=>60*total+Number(part),0);
+}
+function isOfflineTime(time,duration){
+  return Number.isSafeInteger(duration) && duration>0 && previewSeconds(time)>duration;
+}
+function showOfflinePreview(offline,mobile){
+  if(hasVodImage) return;
+  const changed=elHeader.classList.contains('has-offline-preview')!==offline;
+  elHeader.classList.toggle('has-offline-preview',offline);
+  elDesktopPreview.hidden=mobile || !offline;
+  elVodCard.hidden=!offline || (!mobile && desktopPreviewCollapsed);
+  if(changed) refreshPreviewFrame();
+}
 function fitScrubLabel(){
   const span=elScrubber.querySelector('.scrub-times');
   if(!MOBILE_MQ.matches || !span) return;
@@ -2530,13 +2554,20 @@ function fitScrubLabel(){
 }
 function setScrubIndex(index){
   const count=rowCount();scrubIndex=clampNumber(index,0,Math.max(0,count-1));
+  scrubStart=index===null;
   const percent=scrubPercent(scrubIndex,count),duration=durationTime(meta.duration_seconds);
   const time=count && index!==null ? scrubTime(rowAt(scrubIndex).t) : '—';
   if(time!==scrubSelectedTime){scrubSelectedTime=time;refreshPreviewFrame();}
-  const label=time+' / '+duration;
+  const offline=isOfflineTime(time,meta.duration_seconds);
+  showOfflinePreview(offline,true);
+  const current=offline ? 'OFFLINE' : scrubStart && (count || filtered===null) ? '00:00:00' : time;
+  const label=current+' / '+duration;
   elScrubber.style.setProperty('--scrub-progress',percent.toFixed(4)+'%');
   elScrubber.style.setProperty('--scrub-ratio',String(percent/100));
-  for(const node of elScrubber.querySelectorAll('.scrub-times')) if(node.textContent!==label) node.textContent=label;
+  for(const node of elScrubber.querySelectorAll('.scrub-times')){
+    if(node.textContent!==label) node.textContent=label;
+    node.classList.toggle('is-offline',offline);
+  }
   fitScrubLabel();
   elScrubber.setAttribute('aria-valuenow',String(count>1 ? Math.round(percent) : 0));
   elScrubber.setAttribute('aria-valuetext',label);
@@ -2546,26 +2577,29 @@ function settledScrubIndex(bounds){
   // A clamped jump cannot always top-align its target. Keep it until scrolling
   // or another explicit selection, as long as it is still visible.
   if(scrubSettled?.epoch===FILTER_TOKEN && Math.abs(window.scrollY-scrubSettled.y)<1
-     && rowIntersects(elList.querySelector(`.row[data-id="${scrubSettled.index}"]`),bounds)) return scrubSettled.index;
+     && (scrubSettled.edge==='end' || rowIntersects(elList.querySelector(`.row[data-id="${scrubSettled.index}"]`),bounds))) return scrubSettled.index;
   scrubSettled=null;
   return null;
 }
-function rememberScrubPosition(){
+function rememberScrubPosition(edge=null){
   const rect=elList.querySelector(`.row[data-id="${scrubIndex}"]`)?.getBoundingClientRect();
-  scrubSettled={index:scrubIndex,epoch:FILTER_TOKEN,y:window.scrollY,anchor:rect ? {id:scrubIndex,top:rect.top,inset:viewportInset()} : null};
+  scrubSettled={index:scrubIndex,edge,epoch:FILTER_TOKEN,y:window.scrollY,anchor:rect ? {id:scrubIndex,top:rect.top,inset:viewportInset()} : null};
 }
 function resetScrubber(){
   scrubRevision++;scrubPending=null;scrubSettled=null;elScrubber.classList.remove('is-held');
+  scrubEndCatchup=null;
   const gesture=scrubGesture;scrubGesture=null;
   if(gesture && elScrubber.hasPointerCapture?.(gesture.id)) elScrubber.releasePointerCapture(gesture.id);
   if(MOBILE_MQ.matches) setScrubIndex(null);
   queueMessageSelection();
 }
-function requestScrub(index){
+function requestScrub(index,edge=null){
   if(!MOBILE_MQ.matches || FILTERING || rowCount()<2) return;
-  const request={index:clampNumber(index,0,rowCount()-1),epoch:FILTER_TOKEN,revision:++scrubRevision};
+  if(edge==='end' && scrubSettled?.index===index && scrubEndCatchup && atChatEnd()) return;
+  const request={index:clampNumber(index,0,rowCount()-1),edge,epoch:FILTER_TOKEN,revision:++scrubRevision};
   clearMessagePin();clearMessageHover();
-  scrubPending=request;scrubSettled=null;setScrubIndex(request.index);
+  scrubPending=request;scrubSettled=null;scrubEndCatchup=null;
+  setScrubIndex(edge==='start' ? null : request.index);
   if(!scrubFrame && !scrubRunning){
     scrubFrame=requestAnimationFrame(()=>{scrubFrame=0;runScrubber();});
   }
@@ -2589,14 +2623,20 @@ async function runScrubber(){
       for(let pass=0;pass<3;pass++){
         const node=elList.querySelector(`.row[data-id="${request.index}"]`);
         if(!node) break;
-        window.scrollBy(0,node.getBoundingClientRect().top-viewportInset());
+        if(request.edge==='start') window.scrollTo(0,0);
+        else if(request.edge==='end') restoreChatEnd();
+        else window.scrollBy(0,node.getBoundingClientRect().top-viewportInset());
         stableAnchor=visibleAnchor();
         await new Promise(requestAnimationFrame);
         if(!current()) break;
       }
       if(current()){
-        setScrubIndex(request.index);
-        rememberScrubPosition();
+        setScrubIndex(request.edge==='start' ? null : request.index);
+        rememberScrubPosition(request.edge);
+        if(request.edge==='start') scrubSettled=null;
+        if(request.edge==='end') scrubEndCatchup={
+          anchor:mobileAutomaticIndex(viewportInset()) ?? -1,last:rowCount()-1,y:window.scrollY,index:rowCount()-1
+        };
       }
     }
   }finally{
@@ -2606,6 +2646,7 @@ async function runScrubber(){
 }
 function pointerScrub(x){
   if(!scrubGesture) return;
+  if(x===scrubGesture.x) return;
   if(!scrubGesture.moved && Math.abs(x-scrubGesture.x)<2) return;
   scrubGesture.moved=true;
   const width=Math.max(1,elScrubber.querySelector('.scrub-track').getBoundingClientRect().width);
@@ -2613,14 +2654,24 @@ function pointerScrub(x){
   // consumes overshoot, so reversing at either endpoint responds immediately.
   const fraction=clampNumber(scrubGesture.fraction+(x-scrubGesture.x)/width,0,1);
   scrubGesture.x=x;scrubGesture.fraction=fraction;
-  requestScrub(scrubTarget(fraction,rowCount()));
+  requestScrub(scrubTarget(fraction,rowCount()),scrubEdge(fraction));
+}
+function scrubEdge(fraction){return fraction===0 ? 'start' : fraction===1 ? 'end' : null;}
+function scrubCatchupIndex(catchup,automatic,y){
+  if(y===catchup.y) return catchup.index;
+  const target=automatic ?? -1;
+  const next=Math.max(target,catchup.last-2*Math.max(0,catchup.anchor-target));
+  catchup.index=y<catchup.y ? Math.max(target,Math.min(catchup.index,next)) : Math.max(target,catchup.index);
+  catchup.y=y;
+  return catchup.index;
 }
 function finishScrub(event){
   if(!scrubGesture || event.pointerId!==scrubGesture.id) return;
   if(event.type==='pointerup') pointerScrub(event.clientX);
   const gesture=scrubGesture;scrubGesture=null;elScrubber.classList.remove('is-held');
   if(elScrubber.hasPointerCapture(gesture.id)) elScrubber.releasePointerCapture(gesture.id);
-  if(gesture.moved) requestScrub(scrubIndex);queueMessageSelection();
+  if(gesture.moved) requestScrub(scrubIndex,scrubEdge(gesture.fraction));
+  queueMessageSelection();
 }
 function beginScrub(x,id){
   scrubGesture={id,x,fraction:scrubPercent(scrubIndex,rowCount())/100};
@@ -2643,7 +2694,8 @@ elScrubber.addEventListener('keydown',event=>{
   const step=Math.max(1,Math.round((rowCount()-1)/10));
   const targets={ArrowLeft:scrubIndex-1,ArrowDown:scrubIndex-1,ArrowRight:scrubIndex+1,ArrowUp:scrubIndex+1,PageDown:scrubIndex+step,PageUp:scrubIndex-step,Home:0,End:rowCount()-1};
   if(!Object.prototype.hasOwnProperty.call(targets,event.key)) return;
-  event.preventDefault();event.stopPropagation();requestScrub(targets[event.key]);
+  event.preventDefault();event.stopPropagation();
+  requestScrub(targets[event.key],event.key==='Home' ? 'start' : event.key==='End' ? 'end' : null);
 });
 // Touch fallback for engines without Pointer Events; suppression stays local.
 elScrubber.addEventListener('touchstart',event=>{
@@ -2656,7 +2708,9 @@ elScrubber.addEventListener('touchmove',event=>{
 },{passive:false});
 for(const type of ['touchend','touchcancel']) elScrubber.addEventListener(type,event=>{
   event.stopPropagation();if(scrubGesture?.id!=='touch') return;
-  const moved=scrubGesture.moved;scrubGesture=null;elScrubber.classList.remove('is-held');if(moved) requestScrub(scrubIndex);queueMessageSelection();
+  const gesture=scrubGesture;scrubGesture=null;elScrubber.classList.remove('is-held');
+  if(gesture.moved) requestScrub(scrubIndex,scrubEdge(gesture.fraction));
+  queueMessageSelection();
 });
 MOBILE_MQ.addEventListener('change',resetScrubber);
 /* Selection endpoints belong to logical rows, not ephemeral DOM nodes. A native
@@ -3030,7 +3084,7 @@ const [frameWidth,frameHeight]=storyboardFrames.length && Array.isArray(DATA.vod
 const previewRatio=frameWidth>0 && frameHeight>0 ? frameWidth/frameHeight : 16/9;
 const reducedPreviewMotion=window.matchMedia('(prefers-reduced-motion: reduce)');
 let previewOpened=false,finishPreviewFlight=null;
-let desktopPreviewCollapsed=false,desktopPreviewAnimation,desktopFrameIndex=null;
+let desktopPreviewCollapsed=true,desktopPreviewAnimation,desktopFrameIndex=null;
 
 function movePreview(target,from){
   target.appendChild(elVodPreviewImg);
@@ -3070,10 +3124,10 @@ function closeVodPreview(animate=true,restoreFocus=true){
 
 function placePreviewControl(mobile){
   desktopPreviewAnimation?.cancel();
-  elDesktopPreview.hidden=mobile;
+  elDesktopPreview.hidden=mobile || (!hasVodImage && !elHeader.classList.contains('has-offline-preview'));
   if(mobile) elMobilePreviewHome.prepend(elVodCard);
   else elDesktopPreview.prepend(elVodCard);
-  elVodCard.hidden=!mobile && desktopPreviewCollapsed;
+  elVodCard.hidden=(!hasVodImage && !elHeader.classList.contains('has-offline-preview')) || (!mobile && desktopPreviewCollapsed);
   elVodCard.setAttribute('aria-label',mobile ? 'Увеличить превью VOD' : 'Свернуть превью VOD');
   elDesktopPreviewToggle.hidden=mobile || !desktopPreviewCollapsed;
   queueMessageSelection();
@@ -3091,14 +3145,15 @@ function setDesktopPreviewCollapsed(collapsed){
       [{height:from+'px'},{height:to+'px'}],{duration:250,easing:'ease'});
   }
   queueMessageSelection();
+  refreshPreviewFrame();
 }
-if(hasVodImage){
+function setupPreviewControls(){
   elHeader.style.setProperty('--preview-ratio',previewRatio);
   placePreviewControl(MOBILE_MQ.matches);
   elVodCard.addEventListener('click',()=>{
     if(!MOBILE_MQ.matches){setDesktopPreviewCollapsed(true);return;}
     if(previewOpened){closeVodPreview();return;}
-    if(!elVodPreviewImg.getAttribute('src') || !PANEL_EXPANDED || panelAnimating) return;
+    if((!elVodPreviewImg.getAttribute('src') && !elPreviewHome.classList.contains('is-offline')) || !PANEL_EXPANDED || panelAnimating) return;
     const from=elVodPreviewImg.getBoundingClientRect();
     previewOpened=true;
     elVodCard.setAttribute('aria-expanded','true');
@@ -3118,6 +3173,7 @@ if(hasVodImage){
     finishPreviewFlight?.();desktopPreviewAnimation?.cancel();
   });
 }
+setupPreviewControls();
 function setupNicknameHighlight(){
   const cache=new Map(), active=new Set();
   let canvas;
@@ -3208,16 +3264,26 @@ function setupMessageSelection(){
     hoveredRow=highlight(hoveredRow,hover,'is-message-hovered');
     highlightNicknames(hover ? hoveredNickname : null,pinned ? pin.nickname : null);
     if(mobile && scrubActive()) return;
-    const previewActive=!mobile && hasVodImage && !desktopPreviewCollapsed;
     const directRow=pinned || hover;
-    if(directRow) scrubSettled=null;
-    const index=directRow ? +directRow.dataset.id : mobile ? settledScrubIndex(bounds) : null;
-    const automatic=previewActive && index===null ? desktopAutomaticRow(bounds) : null;
-    automaticRow=highlight(automaticRow,automatic,'is-preview-anchor');
+    if(directRow){scrubSettled=null;scrubEndCatchup=null;}
+    let index=directRow ? +directRow.dataset.id : mobile ? settledScrubIndex(bounds) : null;
+    const automatic=!mobile && index===null ? desktopAutomaticRow(bounds) : null;
     if(mobile){
-      setScrubIndex(index ?? mobileAutomaticIndex(viewportInset()));
+      if(index===null){
+        index=mobileAutomaticIndex(viewportInset());
+        if(scrubEndCatchup && window.scrollY>0){
+          const caught=scrubCatchupIndex(scrubEndCatchup,index,window.scrollY);
+          if(caught===(index ?? -1)) scrubEndCatchup=null;
+          else index=caught;
+        }else if(!window.scrollY) scrubEndCatchup=null;
+      }
+      setScrubIndex(index);
     }
-    const desktopIndex=previewActive ? index ?? (automatic ? +automatic.dataset.id : null) : null;
+    const desktopIndex=mobile ? null : index ?? (automatic ? +automatic.dataset.id : null);
+    const offline=!mobile && !hasVodImage && desktopIndex!==null
+      && isOfflineTime(scrubTime(rowAt(desktopIndex).t),meta.duration_seconds);
+    if(!mobile) showOfflinePreview(offline,false);
+    automaticRow=highlight(automaticRow,!desktopPreviewCollapsed && (hasVodImage || offline) ? automatic : null,'is-preview-anchor');
     if(desktopIndex!==desktopFrameIndex){
       desktopFrameIndex=desktopIndex;
       refreshPreviewFrame();
@@ -3282,7 +3348,7 @@ function setupMessageSelection(){
 setupMessageSelection();
 
 function setupPreviewFrames(){
-  let timer=0,idle=0,lastUpdate=-Infinity,shownFrame,listeners;
+  let timer=0,idle=0,lastUpdate=-Infinity,shownFrame,shownOffline,listeners;
   const observer=new MutationObserver(queueFrame);
   function paintFrame(){
     if(finishPreviewFlight || !listeners || (MOBILE_MQ.matches ? !PANEL_EXPANDED : desktopPreviewCollapsed)) return;
@@ -3290,11 +3356,12 @@ function setupPreviewFrames(){
     const mobile=MOBILE_MQ.matches;
     const desktopSelected=desktopFrameIndex!==null && desktopFrameIndex<rowCount();
     const time=FILTERING ? '—' : mobile ? scrubSelectedTime : desktopSelected ? scrubTime(rowAt(desktopFrameIndex).t) : '—';
-    const seconds=time==='—' ? NaN : time.split(':').reduce((total,part)=>60*total+Number(part),0);
-    const frame=seconds<=meta.duration_seconds ? previewStoryFrame(storyboardFrames,seconds) : undefined;
-    if(frame===shownFrame) return;
-    shownFrame=frame;
-    const src=embeddedJpeg(frame?.[1]) || embeddedCover;
+    const offline=isOfflineTime(time,meta.duration_seconds);
+    const frame=offline ? undefined : previewStoryFrame(storyboardFrames,previewSeconds(time));
+    if(frame===shownFrame && offline===shownOffline) return;
+    shownFrame=frame;shownOffline=offline;
+    for(const media of [elPreviewHome,elMobilePreviewMedia]) media.classList.toggle('is-offline',offline);
+    const src=offline ? null : embeddedJpeg(frame?.[1]) || embeddedCover;
     if(!src) elVodPreviewImg.removeAttribute('src');
     else if(elVodPreviewImg.getAttribute('src')!==src) elVodPreviewImg.src=src;
   }
@@ -3327,7 +3394,7 @@ function setupPreviewFrames(){
   document.addEventListener('visibilitychange',sync);
   sync();
 }
-if(storyboardFrames.length) setupPreviewFrames();
+if(hasVodImage || Number.isSafeInteger(meta.duration_seconds)) setupPreviewFrames();
 applyFilters();
 </script>
 
