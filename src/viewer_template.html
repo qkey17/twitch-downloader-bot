@@ -639,8 +639,8 @@ html{overflow-anchor:none;}
   }
   header{
     position:static;width:100%;min-width:0;max-height:100%;
-    --sidebar-gap:12px;height:100%;justify-content:space-between;gap:var(--sidebar-gap);
-    border:0;padding:0;background:none;pointer-events:none;transition:none;
+    align-self:flex-start;gap:0;overflow:hidden;
+    border:1px solid var(--border);border-radius:14px;padding:0;background:var(--panel);transition:none;
   }
 
   /* make controls vertical and full width of left column */
@@ -878,16 +878,10 @@ html{overflow-anchor:none;}
 @media (min-width:901px){
   #list{background:var(--panel);}
   .panel-details,.panel-details-content{display:flex;flex-direction:column;gap:var(--control-gap);}
-  .panel-details,.desktop-preview{
-    background:var(--panel);border:1px solid var(--border);border-radius:14px;
-    padding:20px;pointer-events:auto;
-  }
-  .panel-details{min-height:0;overflow:auto;scrollbar-width:thin;scrollbar-gutter:stable;}
+  .panel-details,.desktop-preview{padding:20px;}
+  .panel-details{min-height:0;overflow:auto;scrollbar-width:thin;}
   .panel-details-content{flex:none;}
-  .desktop-preview{display:block;flex:none;min-width:0;overflow:hidden;}
-  header.cards-joined{gap:0;}
-  .cards-joined .panel-details{flex:1 1 auto;border-radius:14px 14px 0 0;border-bottom-color:transparent;}
-  .cards-joined .desktop-preview{border-radius:0 0 14px 14px;}
+  .desktop-preview{display:block;flex:none;min-width:0;overflow:hidden;border-bottom:1px solid var(--border);}
   header .meta-buttons button:focus-visible,.controls input:focus-visible{
     outline:2px solid #bf94ff;outline-offset:-2px;
   }
@@ -1012,6 +1006,9 @@ header .meta-buttons :is(button,.button-toggle.is-active):active,.chat-context-p
   <div class="chat">
 
     <div class="sidebar"><header>
+      <div id="desktopPreview" class="desktop-preview" hidden>
+        <div class="meta-buttons"><button id="desktopPreviewToggle" type="button" aria-expanded="false" hidden>🎞️ Превью</button></div>
+      </div>
       <div class="panel-details" id="panelDetails"><div class="panel-details-content">
       <div class="panel-top">
         <button class="vod-card" id="vodCard" type="button" aria-label="Увеличить превью VOD" aria-expanded="false" hidden>
@@ -1066,9 +1063,6 @@ header .meta-buttons :is(button,.button-toggle.is-active):active,.chat-context-p
         <svg class="panel-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6"/></svg>
         <svg class="panel-exit" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="m6 15 6-6 6 6"/></svg>
       </button>
-      </div>
-      <div id="desktopPreview" class="desktop-preview" hidden>
-        <div class="meta-buttons"><button id="desktopPreviewToggle" type="button" aria-expanded="false" hidden>🎞️ Превью</button></div>
       </div>
     </header></div>
 
@@ -2122,48 +2116,44 @@ function restoreChatEnd(){
   const page=document.scrollingElement;
   page.scrollTop=page.scrollHeight;
 }
-function automaticMessageRow(bounds){
+function desktopAutomaticRow(bounds){
   if(bounds.bottom<=bounds.top) return null;
-  let full=null,partial=null;
-  // Three mounted blocks at most. Binary search skips rows below the viewport.
-  for(const node of [...blockNodes.values()].reverse()){
+  const first=blockNodes.get(0)?.children[0]?.getBoundingClientRect();
+  if(first && first.top>=bounds.top-.5 && first.bottom<=bounds.bottom+.5) return null;
+  let partial=null;
+  for(const node of blockNodes.values()){
     const box=node.getBoundingClientRect(),children=node.children;
     if(box.top>=bounds.bottom || box.bottom<=bounds.top || !children.length) continue;
     let left=0,right=children.length;
     while(left<right){
       const middle=(left+right)>>>1;
-      if(children[middle].getBoundingClientRect().bottom<=bounds.bottom+.5) left=middle+1;
+      if(children[middle].getBoundingClientRect().top<bounds.top-.5) left=middle+1;
       else right=middle;
     }
-    const candidate=children[left-1];
-    for(let i=left-1;i>=Math.max(0,left-2);i--){
-      const row=children[i];
-      if(row.getBoundingClientRect().top<bounds.top-.5) break;
-      if(full) return row;
-      full=row;
-    }
-    if(!partial){
-      // The first row crossing the bottom edge can also be the only visible row.
-      const crossing=children[left];
-      if(rowIntersects(crossing,bounds)) partial=crossing;
-      else if(rowIntersects(candidate,bounds)) partial=candidate;
-    }
+    const candidate=children[left];
+    if(candidate && candidate.getBoundingClientRect().bottom<=bounds.bottom+.5) return candidate;
+    const crossing=children[left-1];
+    if(!partial) partial=rowIntersects(crossing,bounds) ? crossing : rowIntersects(candidate,bounds) ? candidate : null;
   }
-  return full || partial;
+  return partial;
 }
-function initialMobileTarget(bottom){
-  const first=blockNodes.get(0)?.children;
-  if(!first?.length) return null;
-  let left=0,right=first.length;
-  while(left<right){
-    const middle=(left+right)>>>1;
-    if(first[middle].getBoundingClientRect().bottom+window.scrollY<=bottom+.5) left=middle+1;
-    else right=middle;
+function mobileAutomaticIndex(top){
+  // Compare rows and sticky header in the same coordinate space. The browser
+  // toolbar can change visualViewport.height without moving either element.
+  for(const [block,node] of [...blockNodes].reverse()){
+    const children=node.children;
+    if(!children.length || node.getBoundingClientRect().top>=top) continue;
+    let left=0,right=children.length;
+    while(left<right){
+      const middle=(left+right)>>>1;
+      if(children[middle].getBoundingClientRect().bottom<=top) left=middle+1;
+      else right=middle;
+    }
+    if(left) return +children[left-1].dataset.id;
+    if(block>0) return block*CHUNK-1;
+    return null;
   }
-  return left ? Math.max(0,left-2) : null;
-}
-function catchUpIndex(target,initial){
-  return initial===null ? target : Math.min(target,2*Math.max(0,target-initial));
+  return windowStart>0 ? windowStart*CHUNK-1 : null;
 }
 
 function restoreAnchor(anchor){
@@ -2450,8 +2440,8 @@ let scrubRevision=0, scrubFrame=0;
 
 const STORYBOARD_REFRESH_MS=125;
 let storyboardScrollTop=0;
-function previewStoryFrame(frames,seconds,identity,count){
-  if(identity===null || identity===0 || identity===count-1 || !Number.isFinite(seconds)) return undefined;
+function previewStoryFrame(frames,seconds){
+  if(!Number.isFinite(seconds)) return undefined;
   let left=0,right=frames.length;
   while(left<right){
     const middle=Math.floor((left+right)/2);
@@ -2527,7 +2517,7 @@ function durationTime(seconds){
   if(!Number.isSafeInteger(seconds) || seconds<=0) return '—';
   return String(Math.floor(seconds/3600)).padStart(2,'0')+':'+String(Math.floor(seconds/60)%60).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0');
 }
-let scrubLabelSignature='',scrubSelectedTime='—',scrubPreviewIdentity=null;
+let scrubLabelSignature='',scrubSelectedTime='—';
 function fitScrubLabel(){
   const span=elScrubber.querySelector('.scrub-times');
   if(!MOBILE_MQ.matches || !span) return;
@@ -2541,11 +2531,8 @@ function fitScrubLabel(){
 function setScrubIndex(index){
   const count=rowCount();scrubIndex=clampNumber(index,0,Math.max(0,count-1));
   const percent=scrubPercent(scrubIndex,count),duration=durationTime(meta.duration_seconds);
-  const time=count ? scrubTime(rowAt(scrubIndex).t) : '—';
-  const identity=count ? rowIdentity(scrubIndex) : null;
-  if(time!==scrubSelectedTime || identity!==scrubPreviewIdentity){
-    scrubSelectedTime=time;scrubPreviewIdentity=identity;refreshPreviewFrame();
-  }
+  const time=count && index!==null ? scrubTime(rowAt(scrubIndex).t) : '—';
+  if(time!==scrubSelectedTime){scrubSelectedTime=time;refreshPreviewFrame();}
   const label=time+' / '+duration;
   elScrubber.style.setProperty('--scrub-progress',percent.toFixed(4)+'%');
   elScrubber.style.setProperty('--scrub-ratio',String(percent/100));
@@ -2571,7 +2558,7 @@ function resetScrubber(){
   scrubRevision++;scrubPending=null;scrubSettled=null;elScrubber.classList.remove('is-held');
   const gesture=scrubGesture;scrubGesture=null;
   if(gesture && elScrubber.hasPointerCapture?.(gesture.id)) elScrubber.releasePointerCapture(gesture.id);
-  if(MOBILE_MQ.matches) setScrubIndex(0);
+  if(MOBILE_MQ.matches) setScrubIndex(null);
   queueMessageSelection();
 }
 function requestScrub(index){
@@ -3045,44 +3032,6 @@ const reducedPreviewMotion=window.matchMedia('(prefers-reduced-motion: reduce)')
 let previewOpened=false,finishPreviewFlight=null;
 let desktopPreviewCollapsed=false,desktopPreviewAnimation,desktopFrameIndex=null;
 
-function setupDesktopCards(){
-  const sidebar=elHeader.parentElement;
-  let frame=0;
-  function update(){
-    if(MOBILE_MQ.matches || elDesktopPreview.hidden){
-      elHeader.classList.remove('cards-joined');
-      return;
-    }
-    const style=getComputedStyle(elPanelDetails);
-    const verticalSpace=['paddingTop','paddingBottom','borderTopWidth','borderBottomWidth']
-      .reduce((total,key)=>total+parseFloat(style[key]),0);
-    const gap=parseFloat(getComputedStyle(elHeader).getPropertyValue('--sidebar-gap'));
-    const needed=elPanelContent.getBoundingClientRect().height+verticalSpace+
-      elDesktopPreview.getBoundingClientRect().height+gap;
-    elHeader.classList.toggle('cards-joined',needed>sidebar.clientHeight+.5);
-  }
-  const queue=()=>{
-    if(frame || desktopPreviewAnimation?.playState==='running') return;
-    frame=requestAnimationFrame(()=>{
-      frame=0;
-      if(desktopPreviewAnimation?.playState!=='running') update();
-    });
-  };
-  const observer=new ResizeObserver(queue);
-  function syncBreakpoint(){
-    observer.disconnect();
-    if(MOBILE_MQ.matches){elHeader.classList.remove('cards-joined');return;}
-    for(const node of [sidebar,elPanelContent,elVodCard,elDesktopPreviewToggle]) observer.observe(node);
-    queue();
-  }
-  MOBILE_MQ.addEventListener('change',syncBreakpoint);
-  syncBreakpoint();
-  // Set the final layout before starting a growing preview, and let a
-  // shrinking preview finish before splitting the cards again.
-  syncDesktopCards=update;
-}
-let syncDesktopCards=()=>{};
-
 function movePreview(target,from){
   target.appendChild(elVodPreviewImg);
   if(!from || reducedPreviewMotion.matches || !elVodPreviewImg.animate) return;
@@ -3137,17 +3086,14 @@ function setDesktopPreviewCollapsed(collapsed){
   elDesktopPreviewToggle.hidden=!collapsed;
   (collapsed ? elDesktopPreviewToggle : elVodCard).focus({preventScroll:true});
   const to=elDesktopPreview.getBoundingClientRect().height;
-  if(!collapsed) syncDesktopCards();
   if(!reducedPreviewMotion.matches && from!==to){
     desktopPreviewAnimation=elDesktopPreview.animate(
       [{height:from+'px'},{height:to+'px'}],{duration:250,easing:'ease'});
-    desktopPreviewAnimation.onfinish=syncDesktopCards;
-  }else syncDesktopCards();
+  }
   queueMessageSelection();
 }
 if(hasVodImage){
   elHeader.style.setProperty('--preview-ratio',previewRatio);
-  setupDesktopCards();
   placePreviewControl(MOBILE_MQ.matches);
   elVodCard.addEventListener('click',()=>{
     if(!MOBILE_MQ.matches){setDesktopPreviewCollapsed(true);return;}
@@ -3169,7 +3115,7 @@ if(hasVodImage){
   });
   window.addEventListener('resize',()=>{if(!storyboardMode) finishPreviewFlight?.();});
   reducedPreviewMotion.addEventListener('change',()=>{
-    finishPreviewFlight?.();desktopPreviewAnimation?.cancel();syncDesktopCards();
+    finishPreviewFlight?.();desktopPreviewAnimation?.cancel();
   });
 }
 function setupNicknameHighlight(){
@@ -3265,17 +3211,13 @@ function setupMessageSelection(){
     const previewActive=!mobile && hasVodImage && !desktopPreviewCollapsed;
     const directRow=pinned || hover;
     if(directRow) scrubSettled=null;
-    let index=directRow ? +directRow.dataset.id : mobile ? settledScrubIndex(bounds) : null;
-    const endIndex=index===null && (mobile || previewActive) && rowCount() && atChatEnd() ? rowCount()-1 : null;
-    const automatic=index===null && (mobile || previewActive)
-      ? endIndex===null ? automaticMessageRow(bounds) : mounted(rowIdentity(endIndex)) : null;
-    automaticRow=highlight(automaticRow,previewActive ? automatic : null,'is-preview-anchor');
+    const index=directRow ? +directRow.dataset.id : mobile ? settledScrubIndex(bounds) : null;
+    const automatic=previewActive && index===null ? desktopAutomaticRow(bounds) : null;
+    automaticRow=highlight(automaticRow,automatic,'is-preview-anchor');
     if(mobile){
-      if(index===null) index=endIndex ?? (!window.scrollY ? 0
-        : automatic ? catchUpIndex(+automatic.dataset.id,initialMobileTarget(bounds.bottom)) : scrubIndex);
-      setScrubIndex(index);
+      setScrubIndex(index ?? mobileAutomaticIndex(viewportInset()));
     }
-    const desktopIndex=previewActive ? index ?? endIndex ?? (automatic ? +automatic.dataset.id : null) : null;
+    const desktopIndex=previewActive ? index ?? (automatic ? +automatic.dataset.id : null) : null;
     if(desktopIndex!==desktopFrameIndex){
       desktopFrameIndex=desktopIndex;
       refreshPreviewFrame();
@@ -3347,10 +3289,9 @@ function setupPreviewFrames(){
     lastUpdate=performance.now();
     const mobile=MOBILE_MQ.matches;
     const desktopSelected=desktopFrameIndex!==null && desktopFrameIndex<rowCount();
-    const identity=FILTERING ? null : mobile ? scrubPreviewIdentity : desktopSelected ? rowIdentity(desktopFrameIndex) : null;
-    const time=mobile ? scrubSelectedTime : identity===null ? '—' : scrubTime(rowAt(desktopFrameIndex).t);
+    const time=FILTERING ? '—' : mobile ? scrubSelectedTime : desktopSelected ? scrubTime(rowAt(desktopFrameIndex).t) : '—';
     const seconds=time==='—' ? NaN : time.split(':').reduce((total,part)=>60*total+Number(part),0);
-    const frame=seconds<=meta.duration_seconds ? previewStoryFrame(storyboardFrames,seconds,identity,rows.length) : undefined;
+    const frame=seconds<=meta.duration_seconds ? previewStoryFrame(storyboardFrames,seconds) : undefined;
     if(frame===shownFrame) return;
     shownFrame=frame;
     const src=embeddedJpeg(frame?.[1]) || embeddedCover;

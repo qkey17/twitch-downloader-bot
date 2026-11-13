@@ -17,9 +17,9 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
             width=width,height=height,deviceScaleFactor=scale,mobile=width<600))
         await call('Emulation.setTouchEmulationEnabled',dict(enabled=width<600,maxTouchPoints=1))
 
-    async def load(version,width,height=900):
+    async def load(version,width,height=900,mode='offline'):
         await resize(width,height)
-        await call('Page.navigate',dict(url=(out/f'{version}-{count}-offline.html').as_uri()))
+        await call('Page.navigate',dict(url=(out/f'{version}-{count}-{mode}.html').as_uri()))
         await wait(f'document.readyState==="complete" && innerWidth==={width} && !windowBusy && rowCount()>1')
 
     async def motion(value):
@@ -40,13 +40,13 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
             await load(version,width)
             if width<901:
                 await expand_mobile()
-            await wait(f'{ready}==={1280 if version=="new" and width<901 else pixels}')
+            await wait(f'{ready}==={1280 if version=="new" else pixels}')
             assert await evaluate("""elVodLink.textContent==='🔗 Ссылка' && !elVodLink.hidden
               && document.documentElement.scrollWidth<=innerWidth
               && document.querySelectorAll('#vodPreviewImg').length===1""")
             if width>=901:
                 assert await evaluate("""(()=>{
-                  const h=elPanelDetails.getBoundingClientRect(),l=elList.getBoundingClientRect();
+                  const h=elHeader.getBoundingClientRect(),l=elList.getBoundingClientRect();
                   return h.width===336 && Math.abs(h.top-24)<1
                     && Math.abs(h.left-(document.documentElement.clientWidth-l.right))<2
                     && h.right<l.left;
@@ -54,10 +54,10 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
                 assert await evaluate(f'elDesktopPreview.hidden==={str(not pixels).lower()}')
                 if pixels:
                     assert await evaluate("""elVodCard.parentElement===elDesktopPreview &&
-                      elPanelDetails.getBoundingClientRect().bottom+12<=elDesktopPreview.getBoundingClientRect().top &&
-                      Math.abs(elDesktopPreview.getBoundingClientRect().bottom-innerHeight+24)<1 &&
-                      !elHeader.classList.contains('cards-joined') &&
-                      getComputedStyle(elPanelDetails).backgroundColor===getComputedStyle(elDesktopPreview).backgroundColor &&
+                      Math.abs(elDesktopPreview.getBoundingClientRect().bottom-elPanelDetails.getBoundingClientRect().top)<1 &&
+                      Math.abs(elDesktopPreview.getBoundingClientRect().top-25)<1 &&
+                      getComputedStyle(elDesktopPreview).borderBottomWidth==='1px' &&
+                      elPanelDetails.scrollHeight===elPanelDetails.clientHeight &&
                       Math.abs(elPreviewHome.clientWidth/elPreviewHome.clientHeight-16/9)<.025""")
                     await evaluate('elVodCard.focus();elVodCard.click();true')
                     assert await evaluate("""desktopPreviewCollapsed && elVodCard.hidden
@@ -77,32 +77,13 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
             else:
                 assert await evaluate('elVodCard.hidden && elTitle.clientWidth>=elHeader.clientWidth-50')
 
-    await load('new',1024)
-    split_limit=await evaluate('Math.floor(elPanelDetails.offsetHeight+elDesktopPreview.offsetHeight+48+12-24)')
-    await resize(1024,split_limit)
-    await wait('elHeader.classList.contains("cards-joined")')
-    assert await evaluate("""Math.abs(elPanelDetails.getBoundingClientRect().bottom-elDesktopPreview.getBoundingClientRect().top)<1
-      && getComputedStyle(elPanelDetails).borderBottomColor==='rgba(0, 0, 0, 0)'
-      && getComputedStyle(elDesktopPreview).borderTopLeftRadius==='0px'""")
-    await evaluate('elVodCard.click();true')
-    await evaluate('new Promise(resolve=>setTimeout(()=>resolve(true),90))')
-    assert await evaluate('Math.abs(elDesktopPreview.getBoundingClientRect().bottom-innerHeight+24)<1')
-    await wait('desktopPreviewCollapsed && !elDesktopPreview.getAnimations().length && !elHeader.classList.contains("cards-joined")')
-    await evaluate('elDesktopPreviewToggle.click();true')
-    await wait('!desktopPreviewCollapsed && !elDesktopPreview.getAnimations().length && elHeader.classList.contains("cards-joined")')
-    await resize(1024)
-    await wait('!elHeader.classList.contains("cards-joined")')
-
     await load('new',1024,190)
-    await wait('elHeader.classList.contains("cards-joined")')
-    assert await evaluate("""elPanelDetails.clientHeight>=46 &&
-      elDesktopPreview.getBoundingClientRect().bottom<=innerHeight-23""")
+    assert await evaluate('elPanelDetails.clientHeight>=46 && elDesktopPreview.getBoundingClientRect().top>=24')
 
     await load('new',1024,320)
     await resize(1024,320,1.25)
     await wait('devicePixelRatio===1.25')
     await evaluate("elTitle.textContent='Long title '.repeat(100);true")
-    await wait('elHeader.classList.contains("cards-joined")')
     assert await evaluate("""elPanelDetails.scrollHeight>elPanelDetails.clientHeight &&
       elHeader.getBoundingClientRect().bottom<=innerHeight-23""")
     before=await evaluate('elDesktopPreview.getBoundingClientRect().toJSON()')
@@ -127,16 +108,16 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
     })()"""
     automatic=f"""(()=>{{
       const all={visible}, full=all.filter(([,r])=>r.top>=Math.max(0,viewportInset())-.5 && r.bottom<=innerHeight+.5);
-      return (full.at(-2) || full.at(-1) || all.at(-1))?.[0];
+      return full[0]?.[0]===0 ? null : (full[0] || all[0])?.[0] ?? null;
     }})()"""
-    selection_matches=f'desktopFrameIndex===({automatic}) && elList.querySelector(".is-preview-anchor")?.dataset.id==desktopFrameIndex'
+    selection_matches=f'desktopFrameIndex===({automatic}) && (elList.querySelector(".is-preview-anchor")?.dataset.id ?? null)==desktopFrameIndex'
     frame_matches="""(()=>{
       const index=MOBILE_MQ.matches ? scrubIndex : desktopFrameIndex;
-      if(index===null) return false;
-      const t=scrubTime(rowAt(index).t), source=filtered===null ? index : filtered[index];
+      if(index===null || (MOBILE_MQ.matches && scrubSelectedTime==='—')) return elVodPreviewImg.getAttribute('src')===(DATA.vod_preview.cover || null);
+      const t=scrubTime(rowAt(index).t);
       if(!t || t==='—')return false;
       const seconds=t.split(':').reduce((n,v)=>60*n+Number(v),0);
-      const frame=source===0 || source===rows.length-1 ? null : DATA.vod_preview.frames.filter(f=>f[0]<=seconds).at(-1);
+      const frame=DATA.vod_preview.frames.filter(f=>f[0]<=seconds).at(-1);
       return elVodPreviewImg.getAttribute('src')===(frame?.[1] || DATA.vod_preview.cover || null);
     })()"""
     async def message_point(index,nickname=False):
@@ -318,25 +299,59 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
             await wait('!elList.querySelector(".is-message-pinned")')
             await evaluate("delete document.hidden;document.dispatchEvent(new Event('visibilitychange'));true")
 
-    for width in (1440,390):
-        await load('new',width)
-        if width<901:
+    mobile_automatic="""([...elList.querySelectorAll('.row')]
+        .filter(row=>row.getBoundingClientRect().bottom<=elHeader.getBoundingClientRect().bottom)
+        .at(-1)?.dataset.id ?? 0)*1"""
+    await load('new',390)
+    await wait("scrubSelectedTime==='—'")
+    await evaluate("""window.touchSamples=[];
+      const recordTouchScroll=()=>touchSamples.push({y:scrollY,index:scrubIndex,time:scrubSelectedTime,
+        expected:[...elList.querySelectorAll('.row')].findLast(row=>row.getBoundingClientRect().bottom<=viewportInset())?.dataset.id ?? null});
+      window.addEventListener('scroll',()=>requestAnimationFrame(recordTouchScroll),{passive:true});true""")
+    await call('Input.dispatchTouchEvent',dict(type='touchStart',touchPoints=[dict(x=190,y=810)]))
+    for y in range(800,79,-8):
+        await call('Input.dispatchTouchEvent',dict(type='touchMove',touchPoints=[dict(x=190,y=y)]))
+    await call('Input.dispatchTouchEvent',dict(type='touchEnd',touchPoints=[]))
+    await wait('scrollY>150 && touchSamples.length>5 && !messageSelectionFrame')
+    samples=await evaluate('touchSamples')
+    assert any(sample['expected'] is not None for sample in samples), samples[-5:]
+    assert all(a['index']<=b['index'] for a,b in zip(samples,samples[1:]) if a['y']<=b['y']),samples
+    # Use a fresh document to isolate a viewport-only change from native fling.
+    await load('new',390)
+    await evaluate('scrollTo({top:240,behavior:"instant"});true')
+    await wait(f'scrollY===240 && !messageSelectionFrame && !windowBusy && scrubIndex===({mobile_automatic})')
+    before=await evaluate('[scrollY,scrubIndex,scrubSelectedTime]')
+    await evaluate("""const vh=visualViewport.height;
+      Object.defineProperty(visualViewport,'height',{configurable:true,get:()=>vh-48});
+      visualViewport.dispatchEvent(new Event('resize'));true""")
+    await wait('!messageSelectionFrame')
+    after=await evaluate('[scrollY,scrubIndex,scrubSelectedTime]')
+    assert after==before,(before,after)
+    await evaluate("delete visualViewport.height;visualViewport.dispatchEvent(new Event('resize'));true")
+    await evaluate('scrollTo(0,0);true')
+    await wait("scrollY===0 && scrubSelectedTime==='—'")
+
+    for width,version in ((1440,'offline'),(390,'offline'),(390,'online')):
+        await load('new',width,mode=version)
+        mobile=width<901
+        if mobile:
             await expand_mobile()
-            await wait('scrubIndex===0 && elVodPreviewImg.src===embeddedCover')
+            await wait("scrubSelectedTime==='—' && elVodPreviewImg.src===embeddedCover")
         await mouse('mouseMoved',[10,10])
-        index='scrubIndex' if width<901 else 'desktopFrameIndex'
-        await evaluate('scrollTo(0,document.scrollingElement.scrollHeight);true')
-        await wait(f'atChatEnd() && !windowBusy && {index}===rowCount()-1')
-        await wait(frame_matches)
-        await evaluate('scrollBy(0,-80);true')
-        await wait(f'!atChatEnd() && !windowBusy && {index}===+automaticMessageRow(chatViewport()).dataset.id')
-        await wait(frame_matches)
-        await evaluate("""elU.value=decodeMessage(rows.at(-1)).user.includes('user1') ? 'user2' : 'user1';applyFilters()""")
-        await wait('!windowBusy && !FILTERING && rowCount()>1 && rowCount()<rows.length')
-        await evaluate('scrollTo(0,document.scrollingElement.scrollHeight);true')
-        await wait(f'atChatEnd() && !windowBusy && {index}===rowCount()-1 && rowIdentity({index})!==rows.length-1')
-        await wait(frame_matches)
-        assert await evaluate('elVodPreviewImg.src!==embeddedCover && elList.querySelectorAll(".row").length<=2400')
+        selection=f'scrubIndex===({mobile_automatic})' if mobile else selection_matches
+        for filter_user in (False,True):
+            if filter_user:
+                await evaluate("elU.value='user1';applyFilters()")
+                await wait('!windowBusy && !FILTERING && rowCount()>1 && rowCount()<rows.length')
+            await evaluate('scrollTo(0,document.scrollingElement.scrollHeight);true')
+            await wait(f'atChatEnd() && !windowBusy && !windowFrame && !messageSelectionFrame && ({selection})')
+            await wait(f'({selection}) && ({frame_matches}) && elVodPreviewImg.getAttribute("src")!==embeddedCover')
+            state=await evaluate("""({hasCover:elVodPreviewImg.src===embeddedCover, rows:elList.querySelectorAll('.row').length,
+              desktopFrameIndex,scrubIndex,scrubSelectedTime,windowStart,windowEnd})""")
+            assert not state['hasCover'] and state['rows']<=2400,(width,version,filter_user,state)
+            await evaluate('scrollBy(0,-130);true')
+            await wait(f'!atChatEnd() && !windowBusy && ({selection})')
+            await wait(frame_matches)
 
     await load('no-cover',390)
     await expand_mobile()
@@ -344,12 +359,14 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
     await evaluate("requestScrub(Math.floor(rowCount()/2));true")
     await wait('!scrubActive() && elVodPreviewImg.hasAttribute("src")')
     await evaluate('requestScrub(rowCount()-1);true')
-    await wait('!scrubActive() && !elVodPreviewImg.hasAttribute("src")')
+    await wait(f'!scrubActive() && ({frame_matches}) && elVodPreviewImg.hasAttribute("src")')
 
     await load('new',1440)
     assert await evaluate("""getComputedStyle(document.body).backgroundColor==='rgb(14, 14, 16)'
       && getComputedStyle(elList).backgroundColor==='rgb(24, 24, 27)'
-      && getComputedStyle(elList.querySelector('.is-preview-anchor')).backgroundColor==='rgb(56, 56, 61)'""")
+      && !elList.querySelector('.is-preview-anchor')""")
+    await evaluate('scrollTo(0,60);true')
+    await wait(selection_matches)
     palette=await evaluate("""[document.body,elList,elQ,elExportBtn,elList.querySelector('.is-preview-anchor')].map(n=>{
       const s=getComputedStyle(n);return [s.color,s.backgroundColor,s.borderColor];
     })""")
@@ -362,6 +379,8 @@ async def check_unified_preview(call,evaluate,wait,out,args,errors,requests):
         return (light+.05)/(dark+.05)
     assert all(contrast(text,background)>=4.5 for text,background,_ in palette)
     assert contrast(palette[2][1],palette[2][2])>=3
+    await evaluate('scrollTo(0,0);true')
+    await wait('scrollY===0 && !windowBusy')
     ink_gaps=[]
     for font,scale in (('Arial',1),('Georgia',1.25)):
         await resize(1440,900,scale)

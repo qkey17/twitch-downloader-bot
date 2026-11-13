@@ -416,7 +416,7 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
         await load(width,mode='offline')
         await call('Emulation.setPageScaleFactor',dict(pageScaleFactor=1.25))
         await evaluate('scrollTo(0,elList.offsetTop+heightBefore(Math.floor(blockCount()/2)));true')
-        await wait('!windowBusy && +automaticMessageRow(chatViewport())?.dataset.id>rowCount()/3')
+        await wait('!windowBusy && +desktopAutomaticRow(chatViewport())?.dataset.id>rowCount()/3')
         frame=await evaluate("""(()=>{
           const style=getComputedStyle(elList), bounds=chatViewport();
           const full=[...elList.querySelectorAll('.row')].filter(row=>{
@@ -429,7 +429,7 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
           elList.style.removeProperty('outline');
           return {outline,before,after,scrollWidth:document.documentElement.scrollWidth,innerWidth,
             rows:elList.querySelectorAll('.row').length,full:full.length,
-            automatic:automaticMessageRow(bounds)?.dataset.id,expected:full.at(-2)?.dataset.id};
+            automatic:desktopAutomaticRow(bounds)?.dataset.id,expected:full[0]?.dataset.id};
         })()""")
         assert frame['outline']==['rgb(48, 48, 54)','1px','-1px','0px' if width<=900 else '14px'], (width,frame)
         assert frame['before']==frame['after'] and frame['scrollWidth']<=frame['innerWidth'], (width,frame)
