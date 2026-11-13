@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from src.html_renderer import render_viewer_html
-from src.twitch_api.clips import MAX_CLIPS, collect_clip_ids, fetch_clip_metadata
+from src.twitch_api.clips import MAX_CLIPS, clip_metadata, collect_clip_ids, fetch_clip_metadata
 from test_storyboard import Response
 from test_viewer_data import payload
 
@@ -19,6 +19,21 @@ class ClipPreviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(["Slug", "Other"], list(ids))
         collect_clip_ids(" ".join(f"clips.twitch.tv/Clip{i}" for i in range(200)), ids)
         self.assertEqual(MAX_CLIPS, len(ids))
+
+    def test_thumbnail_url_path_escapes_and_authority(self):
+        base = "https://clips-media-assets2.twitch.tv"
+        for url, accepted in (
+            (base + "/example%7Cpreview.jpg", True),
+            (base + "/example.jpg", True),
+            (base + "/example%7Gpreview.jpg", False),
+            (base + "/example%.jpg", False),
+            (base + ".evil.test/example%7Cpreview.jpg", False),
+            (base + "@evil.test/example%7Cpreview.jpg", False),
+            (base + "/example.jpg\n", False),
+        ):
+            with self.subTest(url=url):
+                result = clip_metadata(dict(title="Clip", creator_name="Author", thumbnail_url=url))
+                self.assertEqual(url if accepted else None, result and result["thumbnail"])
 
     @patch("src.twitch_api.clips.get_api_headers", return_value={"Authorization": "Bearer fixture-secret"})
     async def test_batched_metadata_and_safe_optional_payload(self, headers):

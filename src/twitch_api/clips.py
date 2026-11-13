@@ -32,7 +32,7 @@ def clip_metadata(item):
     title, creator, thumbnail = (item.get(key) for key in ("title", "creator_name", "thumbnail_url"))
     if not all(isinstance(value, str) and value.strip() for value in (title, creator, thumbnail)):
         return None
-    if len(thumbnail) > 512 or not re.fullmatch(r"https://[a-z0-9.-]+/[a-zA-Z0-9_./-]+\.jpe?g", thumbnail):
+    if len(thumbnail) > 512 or not re.fullmatch(r"https://[a-z0-9.-]+/(?:[a-zA-Z0-9_./-]|%[0-9A-Fa-f]{2})+\.jpe?g", thumbnail):
         return None
     if urlsplit(thumbnail).netloc not in THUMBNAIL_HOSTS:
         return None

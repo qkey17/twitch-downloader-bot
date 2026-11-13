@@ -1854,7 +1854,7 @@ function appendClipCards(row,document){
     if(!id || shown.has(id) || !Object.hasOwn(DATA.clips,id)) continue;
     const clip=DATA.clips[id];
     if(typeof clip?.title!=='string' || !clip.title.trim() || typeof clip.creator!=='string' || !clip.creator.trim() ||
-       typeof clip.thumbnail!=='string' || !/^https:\/\/clips-media-assets2?\.twitch\.tv\/[a-zA-Z0-9_./-]+\.jpe?g$/.test(clip.thumbnail)) continue;
+       typeof clip.thumbnail!=='string' || clip.thumbnail.length>512 || !/^https:\/\/clips-media-assets2?\.twitch\.tv\/(?:[a-zA-Z0-9_./-]|%[0-9A-Fa-f]{2})+\.jpe?g(?![\s\S])/.test(clip.thumbnail)) continue;
     shown.add(id);
     const card=document.createElement('a'),img=document.createElement('img'),copy=document.createElement('span');
     const title=document.createElement('strong'),creator=document.createElement('small');
