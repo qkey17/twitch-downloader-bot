@@ -310,33 +310,24 @@ test('mobile inset follows the actual header boundary without the obsolete extra
   ctx.MOBILE_MQ.matches=false;assert.equal(ctx.viewportInset(),0);
 });
 
-test('mobile catch-up is deterministic from visible indexes, including the tall-row fallback',()=>{
-  const ctx=vm.createContext({});
-  vm.runInContext(part('function catchUpIndex(', 'function restoreAnchor('),ctx);
-  const select=ctx.catchUpIndex;
-  assert.deepEqual(Array.from({length:12},(_,i)=>select(i+9,9)),[0,2,4,6,8,10,12,14,16,18,19,20]);
-  assert.deepEqual([19,17,10,9,17].map(i=>select(i,9)),[19,16,2,0,16]);
-  assert.equal(select(14,null),14);
-});
-
-test('automatic selection uses the penultimate fully visible row across blocks',()=>{
-  const node=(top,bottom,children=[])=>({children,getBoundingClientRect:()=>({top,bottom})});
-  const top=node(-18,12),full=node(12,32),second=node(32,48),bottom=node(48,58);
-  const ctx=vm.createContext({blockNodes:new Map([[0,node(-18,32,[top,full])],[1,node(32,58,[second,bottom])]])});
-  vm.runInContext(part('function rowIntersects(', 'function initialMobileTarget('),ctx);
-  const choose=ctx.automaticMessageRow;
-  assert.equal(choose({top:0,bottom:50}),full);
-  assert.equal(choose({top:0,bottom:58}),second);
-  assert.equal(choose({top:0,bottom:40}),full);
-  assert.equal(choose({top:15,bottom:29}),full);
-  assert.equal(choose({top:50,bottom:54}),bottom);
-  assert.equal(choose({top:59,bottom:70}),null);
+test('top boundary selects passed rows on mobile and fully visible rows on desktop',()=>{
+  const row=(id,top,bottom)=>({dataset:{id},getBoundingClientRect:()=>({top,bottom})});
+  const children=[row(0,0,20),row(1,20,40),row(2,40,60)];
+  const block={children,getBoundingClientRect:()=>({top:0,bottom:60})};
+  const ctx=vm.createContext({blockNodes:new Map([[0,block]]),windowStart:0,CHUNK:800});
+  vm.runInContext(part('function rowIntersects(', 'function restoreAnchor('),ctx);
+  assert.deepEqual([0,19,20,39,40,60,39,19].map(ctx.mobileAutomaticIndex),[null,null,0,0,1,2,0,null]);
+  assert.equal(ctx.desktopAutomaticRow({top:1,bottom:60}),children[1]);
+  assert.equal(ctx.desktopAutomaticRow({top:25,bottom:30}),children[1]);
+  ctx.blockNodes.clear();
+  assert.equal(ctx.mobileAutomaticIndex(80),null);
+  assert.equal(ctx.desktopAutomaticRow({top:0,bottom:60}),null);
 });
 
 test('physical end requires document scrolling and allows pixel rounding',()=>{
   const page={scrollHeight:900,clientHeight:900,scrollTop:0};
   const ctx=vm.createContext({document:{scrollingElement:page}});
-  vm.runInContext(part('function atChatEnd(', 'function automaticMessageRow('),ctx);
+  vm.runInContext(part('function atChatEnd(', 'function desktopAutomaticRow('),ctx);
   assert.equal(ctx.atChatEnd(),false);
   page.scrollHeight=1400;page.scrollTop=495;
   assert.equal(ctx.atChatEnd(),false);
@@ -346,21 +337,17 @@ test('physical end requires document scrolling and allows pixel rounding',()=>{
   assert.equal(ctx.atChatEnd(),false);
 });
 
-test('storyboard uses only preceding frames and reserves source endpoints for the cover',()=>{
+test('storyboard uses only preceding frames and uses the same rule at source endpoints',()=>{
   const ctx=vm.createContext({});
   vm.runInContext(part('function previewStoryFrame(', 'function setStoryboardPanelLimit('),ctx);
   const frames=[[80,'first'],[90,'second'],[120,'last']];
   const choose=ctx.previewStoryFrame;
-  assert.equal(choose(frames,79,1,4),undefined);
-  assert.equal(choose(frames,88,1,4),frames[0]);
-  assert.equal(choose(frames,90,2,4),frames[1]);
-  assert.equal(choose(frames,160,2,4),frames[2]);
-  assert.equal(choose(frames,90,0,4),undefined);
-  assert.equal(choose(frames,90,3,4),undefined);
-  assert.equal(choose(frames,90,0,1),undefined);
-  assert.equal(choose(frames,90,null,0),undefined);
-  assert.equal(choose(frames,NaN,1,4),undefined);
-  assert.equal(choose([],90,1,4),undefined);
+  assert.equal(choose(frames,79),undefined);
+  assert.equal(choose(frames,88),frames[0]);
+  assert.equal(choose(frames,90),frames[1]);
+  assert.equal(choose(frames,160),frames[2]);
+  assert.equal(choose(frames,NaN),undefined);
+  assert.equal(choose([],90),undefined);
 });
 
 test('only the owner resolved from channel metadata gets white mentions',async()=>{

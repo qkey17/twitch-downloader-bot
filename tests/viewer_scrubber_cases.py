@@ -3,15 +3,8 @@ import asyncio,base64,json,time
 
 async def check_scrubber(call,evaluate,wait,out,args,errors,requests):
     results=[]
-    automatic_index="""(()=>{
-      const {top,bottom}=chatViewport(), visible=[], full=[];
-      for(const row of elList.querySelectorAll('.row')){
-        const rect=row.getBoundingClientRect();
-        if(rect.bottom>top && rect.top<bottom) visible.push(row);
-        if(rect.top>=top-.5 && rect.bottom<=bottom+.5) full.push(row);
-      }
-      return +(full.at(-2) || full.at(-1) || visible.at(-1))?.dataset.id;
-    })()"""
+    automatic_index="""([...elList.querySelectorAll('.row')]
+      .filter(row=>row.getBoundingClientRect().bottom<=viewportInset()).at(-1)?.dataset.id ?? 0)*1"""
     async def settled():
         await wait('!FILTERING && !panelAnimating && !windowBusy && !scrubActive() && !scrubFrame && !messageSelectionFrame')
         await asyncio.sleep(.18)
@@ -69,10 +62,12 @@ async def check_scrubber(call,evaluate,wait,out,args,errors,requests):
         for event in ('mousePressed','mouseReleased'):
             await call('Input.dispatchMouseEvent',dict(type=event,button='left',buttons=1 if event=='mousePressed' else 0,clickCount=1,**r))
         await settled()
-    # No change to desktop geometry, including existing controls/messages.
+    # The unified panel changes height and inner width, while the chat column stays put.
     def geometry_js():return "JSON.stringify(['header','.panel-top','.panel-stats','.controls','.panel-actions','#list .row'].map(s=>{const r=document.querySelector(s).getBoundingClientRect();return [s,r.x,r.y,r.width,r.height]}))"
     await load(1440,10000,version='base');base=await evaluate(geometry_js())
-    await load(1440,10000);assert await evaluate(geometry_js())==base,(base,await evaluate(geometry_js()))
+    await load(1440,10000)
+    actual=json.loads(await evaluate(geometry_js()));before=json.loads(base)
+    assert actual[0][:4]==before[0][:4] and actual[-1]==before[-1],(before,actual)
     assert await evaluate("getComputedStyle(document.querySelector('.mobile-control-row')).display==='none'")
     results.append(dict(case='desktop-geometry',status='PASS'))
     # Lightweight instrumentation only in fixtures; observe actual DOM and builder concurrency.
@@ -116,12 +111,12 @@ window.__show=showWindow;showWindow=async(...args)=>{__builders++;__maxBuilders=
                     await verify_target(count-1)
                     await evaluate('window.scrollBy(0,-70);true');await settled()
                     await evaluate('window.scrollTo(0,document.documentElement.scrollHeight);true');await settled()
-                    assert await evaluate("atChatEnd() && scrubIndex===rowCount()-1")
+                    assert await evaluate(f"atChatEnd() && scrubIndex===({automatic_index}) && scrubIndex<rowCount()-1")
                     await evaluate('window.scrollBy(0,-70);true');await settled()
                     assert await evaluate(f"!atChatEnd() && scrubIndex===({automatic_index})")
                     assert await evaluate("elScrubber.querySelector('.scrub-times').textContent===scrubTime(rowAt(scrubIndex).t)+' / 120:51:28'")
                     await evaluate("elQ.value='unique-last';elQ.dispatchEvent(new Event('input'));true");await settled()
-                    assert await evaluate("elScrubber.querySelector('.scrub-times').textContent===scrubTime(rowAt(0).t)+' / 120:51:28'")
+                    assert await evaluate("elScrubber.querySelector('.scrub-times').textContent==='— / 120:51:28'")
                     await evaluate("elQ.value='';elQ.dispatchEvent(new Event('input'));true");await settled()
                     await evaluate("rows[0][0]='105:42:15';setScrubIndex(0);true")
                     assert await evaluate("elScrubber.querySelector('.scrub-times').textContent==='105:42:15 / 120:51:28'")
