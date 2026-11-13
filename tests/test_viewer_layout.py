@@ -224,14 +224,14 @@ class ViewerPreviewLayoutTests(unittest.TestCase):
         self.assertEqual('var(--scrub-inset)',self.properties('.scrub-track')['left'])
         self.assertEqual('var(--scrub-inset)',self.properties('.scrub-track')['right'])
 
-    def test_mobile_list_background_excludes_top_reserve_but_keeps_bottom_padding(self):
+    def test_mobile_list_background_excludes_top_reserve_without_bottom_padding(self):
         for width in (320,390):
             paint=self.responsive_properties('#list',width)
             self.assertEqual('transparent',paint['background-color'])
             self.assertEqual('64px',paint['padding-top'])
             self.assertEqual('content-box',paint['background-origin'])
-            self.assertEqual('100% calc(100% + 40px)',paint['background-size'])
-            self.assertEqual('40px',paint['padding-bottom'])
+            self.assertEqual('100% 100%',paint['background-size'])
+            self.assertNotIn('padding-bottom',paint)
         self.assertNotIn('background-origin',self.responsive_properties('#list',1440))
 
     def test_mobile_focus_is_visible_without_glow_or_pressed_geometry_changes(self):

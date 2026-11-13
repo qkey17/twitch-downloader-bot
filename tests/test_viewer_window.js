@@ -159,10 +159,11 @@ test('PNG selection keeps only range/indices, decoding one requested row at a ti
 });
 
 function sliderContext(count=10000){
-  const events={},frames=[],attributes={},times=[{style:{}},{style:{}}],percents=[{},{}];let mounted=0,activeBuilders=0,maxBuilders=0;
+  const events={},frames=[],attributes={},times=Array.from({length:2},()=>({style:{},classList:{toggle(){}}})),percents=[{},{}];let mounted=0,activeBuilders=0,maxBuilders=0;
   const ctx=vm.createContext({count,filtered:null,meta:{duration_seconds:21088},FILTER_TOKEN:0,FILTERING:false,windowBusy:false,panelAnimating:false,storyboardMode:false,CHUNK:800,averageHeight:40,stableAnchor:null,scrollIntent:0,resizeAnchor:null,
     MOBILE_MQ:{matches:true,addEventListener(){}},refreshPreviewFrame(){},queueMessageSelection(){},clearMessagePin(){},clearMessageHover(){},clampNumber:(n,a,b)=>Math.min(b,Math.max(a,n)),
     rowIntersects:(node,bounds)=>node.getBoundingClientRect().bottom>bounds.top,
+    atChatEnd:()=>true,restoreChatEnd(){},mobileAutomaticIndex:()=>count-8,hasVodImage:true,
     rowCount:()=>ctx.count,rowIdentity:i=>ctx.filtered?.[i] ?? i,rowAt:i=>({t:ctx.time ?? '01 : 42 : 15'}),
     requestAnimationFrame:fn=>{frames.push(fn);return frames.length},yieldViewer:async()=>{},
     elScrubber:{clientWidth:300,getBoundingClientRect:()=>({width:300}),classList:{add(){},remove(){}},style:{setProperty(k,v){attributes[k]=v}},setAttribute(k,v){attributes[k]=v},
@@ -175,7 +176,7 @@ function sliderContext(count=10000){
     visibleAnchor:()=>({id:mounted,top:75,inset:75}),scheduleWindow(){},
     showWindow:async b=>{activeBuilders++;maxBuilders=Math.max(maxBuilders,activeBuilders);await new Promise(r=>setTimeout(r,1));activeBuilders--}
   });
-  vm.runInContext(part('/* Logical-index mobile navigation.', '/* Selection endpoints belong')+`;globalThis.slider={scrubTarget,scrubPercent,scrubTime,durationTime,setScrubIndex,requestScrub,resetScrubber,settledScrubIndex,get state(){return {index:scrubIndex,active:scrubActive(),running:scrubRunning,pending:scrubPending,gesture:scrubGesture}}}`,ctx);
+  vm.runInContext(part('/* Logical-index mobile navigation.', '/* Selection endpoints belong')+`;globalThis.slider={scrubTarget,scrubPercent,scrubTime,durationTime,setScrubIndex,requestScrub,resetScrubber,settledScrubIndex,isOfflineTime,scrubCatchupIndex,get state(){return {index:scrubIndex,active:scrubActive(),running:scrubRunning,pending:scrubPending,gesture:scrubGesture}}}`,ctx);
   return {ctx,slider:ctx.slider,events,attributes,times,percents,get maxBuilders(){return maxBuilders},
     async drain(){for(let i=0;i<100;i++){frames.splice(0).forEach(fn=>fn());await new Promise(r=>setTimeout(r,2));if(!frames.length && !ctx.slider.state.active)return;}throw Error('Slider did not settle');}};
 }
@@ -236,6 +237,19 @@ test('duration and timestamps normalize unlimited hours without inventing unknow
   assert.equal(s.scrubTime('105 : 42 : 15'),'105:42:15');assert.equal(s.scrubTime('5:02:03'),'05:02:03');
   for(const bad of [null,undefined,true,'5h',-1,NaN,Infinity,3.4,0])assert.equal(s.durationTime(bad),'—');
 });
+test('start is distinct from row zero and OFFLINE starts strictly after duration',()=>{
+  const h=sliderContext(20),s=h.slider;
+  s.setScrubIndex(null);assert.equal(h.times[0].textContent,'00:00:00 / 05:51:28');
+  h.ctx.time='05:51:28';s.setScrubIndex(0);assert.equal(h.times[0].textContent,'05:51:28 / 05:51:28');
+  h.ctx.time='05:51:29';s.setScrubIndex(0);assert.equal(h.times[0].textContent,'OFFLINE / 05:51:28');
+  assert.equal(s.isOfflineTime('05:51:29',null),false);
+});
+test('end catch-up advances two rows per crossing and stays still without movement',()=>{
+  const {slider:s}=sliderContext(100);
+  const catchup={anchor:90,last:99,y:1000,index:99};
+  assert.deepEqual([[90,999],[89,990],[88,980],[87,980],[86,970],[80,910]].map(
+    ([index,y])=>s.scrubCatchupIndex(catchup,index,y)),[99,97,95,95,91,80]);
+});
 test('selected row always supplies time at the physical end, including a manual last-row jump',()=>{
   const h=sliderContext(20);h.ctx.document.documentElement.scrollHeight=1000;h.ctx.window.scrollY=100;
   h.slider.setScrubIndex(18);assert.equal(h.times[0].textContent,'01:42:15 / 05:51:28');
@@ -282,7 +296,7 @@ test('endpoint reversal immediately consumes motion in both directions without h
   }
 });
 test('media-query crossings reset mobile compact, while mobile width changes preserve intent',()=>{
-  const ctx=vm.createContext({MOBILE_MQ:{matches:true},panelMobile:true,PANEL_EXPANDED:false,storyboardMode:false,hasVodImage:false,calls:[]});
+  const ctx=vm.createContext({MOBILE_MQ:{matches:true},panelMobile:true,PANEL_EXPANDED:false,storyboardMode:false,calls:[],closeVodPreview(){},placePreviewControl(){}});
   ctx.syncPanelState=(expanded,animate)=>{ctx.PANEL_EXPANDED=expanded;ctx.calls.push([expanded,animate]);};
   vm.runInContext(part('function reconcilePanelMode()',"MOBILE_MQ.addEventListener('change'"),ctx);
   ctx.reconcilePanelMode();assert.equal(ctx.PANEL_EXPANDED,false);

@@ -517,3 +517,8 @@ locks, hold, таймауты остановки/старта и readiness ос�
 **Deployment guard tests**. Runtime-тесты создают временную изолированную `.venv`
 без pip bootstrap и используют синтетические PIL/pip-модули; Pillow не устанавливается.
 Это проверка самой пробы/путей отказа, не проверка production wheel или Oracle.
+
+При технической приёмке HTML сравнивайте SHA-256 установленного
+`src/viewer_template.html` с хешем Git blob проверенного HEAD PR. В сценарии
+приёмки PR #89 проверки `automaticMessageRow` и `catchUpIndex` устарели:
+актуальные функции выбора — `desktopAutomaticRow` и `mobileAutomaticIndex`.
