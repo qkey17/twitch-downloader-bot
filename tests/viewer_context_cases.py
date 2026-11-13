@@ -108,6 +108,49 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
         assert await evaluate(sizes) == before
         await call('Emulation.setEmulatedMedia', dict(features=[]))
 
+    async def check_snapshot_controls(touchscreen=False):
+        await wait("typeof html2canvas==='function'")
+        await evaluate("""openSnapshotOverlay([rowAt(0)]);true""")
+        await wait("!!document.querySelector('.snapshot-actions.is-ready')")
+        await call('Emulation.setEmulatedMedia', dict(features=[dict(name='prefers-reduced-motion', value='reduce')]))
+        for index in (1, 2):
+            selector = f'.snapshot-toggle:nth-child({index})'
+            button = f'document.querySelector({json.dumps(selector)})'
+            geometry = f'[{button}.offsetLeft,{button}.offsetTop,{button}.offsetWidth,{button}.offsetHeight]'
+            before = await evaluate(geometry)
+            initial = await evaluate(f"{button}.getAttribute('aria-pressed')")
+            original = await evaluate("SNAPSHOT_PREVIEW_IMG.src")
+            if touchscreen:
+                await tap(selector)
+            else:
+                await mouse('mouseMoved', selector)
+                await wait(f"""(()=>{{const style=getComputedStyle({button});
+                    return style.backgroundColor==='rgb(64, 64, 71)' && style.borderTopColor==='rgb(103, 103, 111)'
+                      && style.transform==='none' && style.boxShadow==='none';}})()""")
+                await mouse('mousePressed', selector)
+                assert await evaluate(f"""(()=>{{const style=getComputedStyle({button});
+                    return style.backgroundColor==='rgb(80, 80, 90)' && style.borderTopColor==='rgb(191, 148, 255)'
+                      && style.transform==='none' && style.boxShadow==='none';}})()""")
+                assert await evaluate(geometry) == before
+                await mouse('mouseReleased', selector)
+            await wait(f"{button}.getAttribute('aria-pressed')!=={json.dumps(initial)} && SNAPSHOT_PREVIEW_IMG.src!=={json.dumps(original)} && SNAPSHOT_PREVIEW_IMG.style.opacity==='1'")
+            if touchscreen:
+                assert await evaluate(f"getComputedStyle({button}).backgroundColor===({button}.classList.contains('is-active') ? 'rgb(42, 42, 53)' : 'rgb(24, 24, 27)')")
+                await tap(selector)
+            else:
+                await call('Input.dispatchKeyEvent', dict(type='keyDown',key='Tab',windowsVirtualKeyCode=9,modifiers=8))
+                await call('Input.dispatchKeyEvent', dict(type='keyUp',key='Tab',windowsVirtualKeyCode=9,modifiers=8))
+                await evaluate(f"{button}.focus();true")
+                assert await evaluate(f"{button}.matches(':focus-visible') && getComputedStyle({button}).outlineWidth==='2px'")
+                await call('Input.dispatchKeyEvent', dict(type='keyDown',key='Enter',code='Enter',text=chr(13),windowsVirtualKeyCode=13))
+                await call('Input.dispatchKeyEvent', dict(type='keyUp',key='Enter',code='Enter',windowsVirtualKeyCode=13))
+            await wait(f"{button}.getAttribute('aria-pressed')==={json.dumps(initial)} && SNAPSHOT_PREVIEW_IMG.src==={json.dumps(original)} && SNAPSHOT_PREVIEW_IMG.style.opacity==='1'")
+            assert await evaluate(geometry) == before
+        await mouse('mousePressed')
+        await mouse('mouseReleased')
+        await wait("!document.querySelector('.snapshot-overlay')")
+        await call('Emulation.setEmulatedMedia', dict(features=[]))
+
     async def check_link(touchscreen=False):
         await evaluate('elQ.value="kappa?to=@情報";elU.value="";applyFilters()')
         selector = '#list .msg .chat-link'
@@ -257,6 +300,8 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
 
     await load(1440)
     await check_control_states()
+    await check_snapshot_controls()
+    await load(1440)
     await wait("getComputedStyle(document.querySelector('.row')).display!=='none'")
     for selector in (emote, badge, user, mention):
         target = await call('Runtime.evaluate', dict(expression=f'document.querySelector({json.dumps(selector)})'))
@@ -399,6 +444,7 @@ async def check_context(call, evaluate, wait, out, args, errors, requests):
         await load(width, mode=mode)
         await evaluate('syncPanelState(true,false)')
         await check_control_states(touchscreen=True)
+        await check_snapshot_controls(touchscreen=True)
         await load(width, mode=mode)
         await tap(emote)
         await wait(global_emote)

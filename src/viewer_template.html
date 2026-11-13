@@ -433,22 +433,6 @@ button, .vod-card{
   opacity:.7;
 }
 
-/* нажатие */
-.snapshot-toggle:active{
-  transform:scale(0.96);
-  border-color:rgba(145,70,255,0.9);
-  box-shadow:0 0 0 3px rgba(145,70,255,0.35);
-}
-
-/* hover (не ломает active) */
-.snapshot-toggle:hover{
-  transform:translateY(-1px);
-  border-color:rgba(145,70,255,0.8);
-  box-shadow:
-    0 0 0 2px rgba(145,70,255,0.35),
-    0 14px 34px rgba(0,0,0,.28);
-}
-
 /* Measured rows, not the browser's fallback anchor, own document positioning. */
 html{overflow-anchor:none;}
 
@@ -857,27 +841,27 @@ header .meta-buttons button,.chat-context-profile{
   background:#2f2f35;border-color:#494950;color:var(--text);
 }
 header .meta-buttons button.is-inactive{background:var(--panel);}
-:is(header .meta-buttons button,.vod-card,.panel-toggle,.chat-context-profile){
+:is(header .meta-buttons button,.vod-card,.panel-toggle,.snapshot-toggle,.chat-context-profile){
   transition:background-color .12s ease,border-color .12s ease;
 }
-:is(header .meta-buttons button,.vod-card,.panel-toggle):is(:disabled,[aria-disabled="true"]){
+:is(header .meta-buttons button,.vod-card,.panel-toggle,.snapshot-toggle):is(:disabled,[aria-disabled="true"]){
   opacity:.65;cursor:default;
 }
 @media (hover:hover){
-  :is(header .meta-buttons button,.vod-card,.panel-toggle,.chat-context-profile):hover:where(:not(:disabled,[aria-disabled="true"])){
+  :is(header .meta-buttons button,.vod-card,.panel-toggle,.snapshot-toggle,.chat-context-profile):hover:where(:not(:disabled,[aria-disabled="true"])){
     background-color:#404047;border-color:#67676f;
   }
   .vod-card:hover:where(:not(:disabled,[aria-disabled="true"])){background-image:none;}
 }
-:is(header .meta-buttons button,.vod-card,.panel-toggle,.chat-context-profile):active:where(:not(:disabled,[aria-disabled="true"])){
+:is(header .meta-buttons button,.vod-card,.panel-toggle,.snapshot-toggle,.chat-context-profile):active:where(:not(:disabled,[aria-disabled="true"])){
   background-color:#50505a;border-color:#bf94ff;
 }
 .vod-card:active:where(:not(:disabled,[aria-disabled="true"])){background-image:none;}
-:is(header .meta-buttons button,.vod-card,.panel-toggle):focus-visible,
+:is(header .meta-buttons button,.vod-card,.panel-toggle,.snapshot-toggle):focus-visible,
 .chat-context-profile:has(>a:focus-visible){outline:2px solid #bf94ff;outline-offset:-2px;}
 .chat-context-profile:has(>a:focus-visible){outline-offset:2px;}
 @media(prefers-reduced-motion:reduce){
-  :is(header .meta-buttons button,.vod-card,.panel-toggle,.chat-context-profile){transition:none;}
+  :is(header .meta-buttons button,.vod-card,.panel-toggle,.snapshot-toggle,.chat-context-profile){transition:none;}
 }
 #list .row:is(.is-message-pinned,.is-message-hovered,.is-preview-anchor):where(:not(:has(.clip-card:is(:active,.is-link-source)))){background:var(--row-highlight);}
 @media (hover:hover){
