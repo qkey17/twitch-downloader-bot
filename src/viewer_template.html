@@ -2658,16 +2658,19 @@ function setScrubIndex(index){
   elScrubber.setAttribute('aria-disabled',String(FILTERING || count<2));
 }
 function settledScrubIndex(bounds){
-  // A clamped jump cannot always top-align its target. Keep it until scrolling
-  // or another explicit selection, as long as it is still visible.
-  if(scrubSettled?.epoch===FILTER_TOKEN && Math.abs(window.scrollY-scrubSettled.y)<1
-     && (scrubSettled.edge==='end' || rowIntersects(elList.querySelector(`.row[data-id="${scrubSettled.index}"]`),bounds))) return scrubSettled.index;
+  // A normal jump hides the chosen row above the header. Near the physical
+  // end, a clamped jump can leave it visible; retain the existing selection.
+  if(scrubSettled?.epoch===FILTER_TOKEN && Math.abs(window.scrollY-scrubSettled.y)<1){
+    const node=elList.querySelector(`.row[data-id="${scrubSettled.index}"]`);
+    if(scrubSettled.edge==='end' || mobileAutomaticIndex(viewportInset())===scrubSettled.index
+       || rowIntersects(node,bounds)) return scrubSettled.index;
+  }
   scrubSettled=null;
   return null;
 }
 function rememberScrubPosition(edge=null){
   const rect=elList.querySelector(`.row[data-id="${scrubIndex}"]`)?.getBoundingClientRect();
-  scrubSettled={index:scrubIndex,edge,epoch:FILTER_TOKEN,y:window.scrollY,anchor:rect ? {id:scrubIndex,top:rect.top,inset:viewportInset()} : null};
+  scrubSettled={index:scrubIndex,edge,epoch:FILTER_TOKEN,y:window.scrollY,anchor:edge===null ? visibleAnchor() : rect ? {id:scrubIndex,top:rect.top,inset:viewportInset()} : null};
 }
 function resetScrubber(){
   scrubRevision++;scrubPending=null;scrubSettled=null;elScrubber.classList.remove('is-held');
@@ -2716,7 +2719,7 @@ async function runScrubber(){
         if(!node) break;
         if(request.edge==='start') window.scrollTo(0,0);
         else if(request.edge==='end') restoreChatEnd();
-        else window.scrollBy(0,node.getBoundingClientRect().top-viewportInset());
+        else window.scrollBy(0,Math.ceil(node.getBoundingClientRect().bottom-viewportInset()));
         stableAnchor=visibleAnchor();
         await new Promise(requestAnimationFrame);
         if(!current()) break;
