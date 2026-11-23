@@ -117,6 +117,7 @@ class External:
         self.cancel = cancel or threading.Event()
         self.age, self.rclone = age, rclone
         self.lock_fd = None
+        self.additional_lock_fds = ()
         self.env = {k: v for k, v in os.environ.items()
                     if not k.startswith('RCLONE_') or k in ('RCLONE_CONFIG', 'RCLONE_CONFIG_PASS')}
         self.env.update(GOMAXPROCS='1', GOGC='50', GOMEMLIMIT=f'{limits.go_memory_mib}MiB')
@@ -161,7 +162,7 @@ class External:
         options = dict(stdin=stdin, stdout=stdout, stderr=subprocess.DEVNULL, env=self.env,
                        start_new_session=os.name == 'posix')
         if os.name == 'posix' and self.lock_fd is not None:
-            options['pass_fds'] = (self.lock_fd,)
+            options['pass_fds'] = (*self.additional_lock_fds, self.lock_fd)
         process = subprocess.Popen(argv, **options)  # argv list only; never shell=True.
         finished, failures = threading.Event(), []
 

@@ -233,6 +233,7 @@ class Runtime:
         self.commands.deadline = time.monotonic()+timeout
         # Holding an inherited lease also protects against a killed parent while a child drains.
         self.commands.lock_fd = self.lock_fds[-1] if self.lock_fds else None
+        self.commands.additional_lock_fds = tuple(self.lock_fds[:-1])
         try:
             return self.commands.run(argv)
         except offsite.OffsiteError:
@@ -603,19 +604,42 @@ class Controller:
         self.store.write('pending',None)
         return result
 
-    def _finish_offsite(self):
+    def _finish_offsite(self, completed=None):
         if not self._ready(): raise DailyError('bot_not_ready_before_offsite')
         result = None
         pending = self.store.read('pending')
-        if pending is not None: result = self._send_pending(pending)
+        if pending is not None:
+            result = self._send_pending(pending)
+            if completed is not None:
+                completed.append(dict(date=pending['date'], id=result['id']))
         candidate = self.store.read('candidate')
         if candidate is not None:
             self._candidate(candidate)
             pending = dict(**candidate,baseline=self.runtime.job_ids())
             self.store.write('pending',pending)
             result = self._send_pending(pending)
+            if completed is not None:
+                completed.append(dict(date=pending['date'], id=result['id']))
         if not self._ready(): raise DailyError('bot_not_ready_after_offsite')
         return result
+
+    def finish_offsite(self):
+        with self.locked():
+            if self._owner() is not None:
+                raise DailyError('recovery_required_before_offsite')
+            if self._held():
+                raise DailyError('manual_hold')
+            if os.path.lexists(self.config.socket.with_name(self.config.socket.name+'.committed')):
+                raise DailyError('maintenance_commit_pending')
+            completed = []
+            try:
+                self._finish_offsite(completed)
+            except Exception:
+                self.report('error','finish_offsite_failed',completed=completed)
+                raise
+            if not completed:
+                return dict(status='ok',code='offsite_queue_empty',completed=completed)
+            return self.report('ok','offsite_queue_verified',completed=completed)
 
     def run(self):
         self.runtime.ensure_supervised()
@@ -739,7 +763,7 @@ class Controller:
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config',required=True,type=Path)
-    parser.add_argument('action',choices=('run','recover','hold','unhold','status'))
+    parser.add_argument('action',choices=('run','recover','hold','unhold','status','finish-offsite'))
     args = parser.parse_args(argv)
     previous = {}
     try:
@@ -750,7 +774,7 @@ def main(argv=None):
         for name in ('SIGINT','SIGTERM'):
             sig = getattr(signal,name,None)
             if sig is not None: previous[sig]=signal.signal(sig,lambda *_:runtime.cancel.set())
-        result = getattr(Controller(config,runtime),args.action)()
+        result = getattr(Controller(config,runtime),args.action.replace('-','_'))()
     except Exception as error:
         code = error.code if isinstance(error,DailyError) else 'administrative_operation_failed'
         parser.exit(1,json.dumps(dict(status='error',code=code))+ '\n')
