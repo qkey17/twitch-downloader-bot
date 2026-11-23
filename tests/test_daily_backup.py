@@ -2,6 +2,7 @@
 from contextlib import closing, contextmanager
 import configparser
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import io
 import os
@@ -651,6 +652,106 @@ class DailyBackupTests(unittest.TestCase):
         self.assertEqual(first_path,self.runtime.offsite_calls[-1][0])
         self.assertIsNone(self.controller().store.read('pending'))
         self.assert_originals_unchanged()
+
+    def rotation_copy(self, kind, day, name=None):
+        suffix = f'{day:032x}' if kind == 'daily' else f'{day:08x}'
+        name = name or f'{kind}-202612{day:02d}T100000Z-{suffix}'
+        path = self.config.backup_dir/name
+        path.mkdir(mode=0o700)
+        (path/'html').mkdir(mode=0o700)
+        data = name.encode('ascii')
+        manifest = dict(format='tdb-backup-v1', source_database=str(self.config.database),
+                        roots=list(map(str,self.config.html_roots)),
+                        files=[dict(path='database.sqlite3', identity=None, size=len(data),
+                                    sha256=hashlib.sha256(data).hexdigest())],
+                        directories=[dict(path='html', identity=None)])
+        content = json.dumps(manifest).encode('ascii')
+        digest = hashlib.sha256(content).hexdigest()
+        for part, blob in (('database.sqlite3',data), ('manifest.json',content),
+                           ('COMPLETE',(digest+'\n').encode('ascii'))):
+            (path/part).write_bytes(blob)
+            (path/part).chmod(0o600)
+        return path,digest
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'requires Linux mount and inode checks')
+    def test_rotation_keeps_three_verified_daily_and_conservative_exclusions(self):
+        c = self.controller()
+        copies = [self.rotation_copy('daily',day) for day in range(1,9)]
+        built_in = self.rotation_copy('daily',9,'daily-20261121T100000Z-9d376e56f77542959cea61d18627b72c')
+        pins = self.config.state_dir/'snapshot-pins.json'
+        pins.write_text(json.dumps([copies[0][0].name]),encoding='ascii')
+        pins.chmod(0o600)
+        c.store.write('day',dict(snapshot=str(copies[1][0])))
+        unfinished = copies[2][1]
+        jobs = [(None,dict(manifest_sha256=digest, state='pruned', remote=self.config.remote))
+                for _,digest in copies[:-1]+[built_in]]
+        jobs.append((None,dict(manifest_sha256=unfinished, state='packing', remote=self.config.remote)))
+        (self.config.offsite_state/'jobs').mkdir(mode=0o700)
+        (self.config.offsite_state/'offsite.lock').touch(mode=0o600)
+        other,_ = self.rotation_copy('predeploy',1)
+        with patch.object(daily.offsite,'_jobs',return_value=jobs), c.locked():
+            self.assertEqual([copies[3][0].name],c._rotate_local('daily'))
+            self.assertEqual([],c._rotate_local('daily'))
+        self.assertTrue(all(path.is_dir() for path,_ in copies[:3]+copies[4:]+[built_in]))
+        self.assertTrue(other.is_dir())
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'requires Linux mount and inode checks')
+    def test_predeploy_checks_accepted_release_boundary_and_defers_for_conflicts(self):
+        c = self.controller()
+        copies = [self.rotation_copy('predeploy',day)[0] for day in range(1,7)]
+        (copies[1]/'unexpected').symlink_to(self.database)
+        (self.config.offsite_state/'offsite.lock').touch(mode=0o600)
+        with self.assertRaisesRegex(daily.DailyError,'accepted_predeploy_snapshot_unconfirmed'):
+            c.rotate_predeploy('predeploy-20261209T100000Z-00000009')
+        for marker in ('pending','candidate','owner','hold'):
+            value = dict(snapshot=str(copies[0])) if marker != 'hold' else True
+            c.store.write(marker,value)
+            with self.assertRaises(daily.DailyError):
+                c.rotate_predeploy(copies[4].name)
+            c.store.write(marker,False if marker == 'hold' else None)
+        marker = self.config.socket.with_name(self.config.socket.name+'.committed')
+        marker.touch()
+        with self.assertRaisesRegex(daily.DailyError,'snapshot_rotation_not_idle'):
+            c.rotate_predeploy(copies[4].name)
+        marker.unlink()
+        for path in (self.config.deploy_lock,self.config.offsite_state/'offsite.lock'):
+            with daily.file_lock(path), self.assertRaises(daily.DailyError):
+                c.rotate_predeploy(copies[4].name)
+        with patch.object(self.runtime,'verify',side_effect=daily.DailyError('verification_failed')):
+            with self.assertRaisesRegex(daily.DailyError,'retained_predeploy_verification_failed'):
+                c.rotate_predeploy(copies[4].name)
+        self.assertTrue(all(path.exists() for path in copies))
+        self.assertEqual([copies[0].name],c.rotate_predeploy(copies[4].name)['removed'])
+        self.assertEqual([],c.rotate_predeploy(copies[4].name)['removed'])
+        self.assertTrue(all(path.exists() for path in copies[1:]))
+        self.assert_originals_unchanged()
+
+    def test_predeploy_cli_requires_explicit_release_acceptance(self):
+        with self.assertRaises(SystemExit) as error:
+            daily.main(['--config',str(self.root/'unused.json'),'rotate-predeploy'])
+        self.assertEqual(2,error.exception.code)
+
+    def test_daily_rotation_runs_only_after_the_offsite_queue_is_verified(self):
+        c = self.controller()
+        with patch.object(c,'_rotate_local',return_value=[]) as rotation:
+            self.runtime.fail = 'offsite'
+            with self.assertRaises(daily.DailyError):
+                c.run()
+            rotation.assert_not_called()
+            self.runtime.fail = None
+            self.assertEqual('pending_offsite_verified',c.run()['code'])
+            rotation.assert_called_once_with('daily')
+
+        c, _, _ = self.queued_offsite()
+        with patch.object(c,'_rotate_local',return_value=[]) as rotation:
+            self.runtime.fail = 'offsite'
+            with self.assertRaises(daily.DailyError):
+                c.finish_offsite()
+            rotation.assert_not_called()
+            self.runtime.fail = None
+            c.finish_offsite()
+            c.finish_offsite()
+            rotation.assert_called_once_with('daily')
 
     def test_lost_successful_offsite_response_resumes_known_new_job(self):
         original = self.runtime.offsite

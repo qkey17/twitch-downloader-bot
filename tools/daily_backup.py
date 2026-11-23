@@ -1,6 +1,6 @@
 """Systemd-supervised daily maintenance; never starts the bot in this process."""
 import argparse
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 import importlib.util
 import hashlib
@@ -38,6 +38,42 @@ DEFAULTS = dict(service='tdb.service', database='/home/ubuntu/twitch-downloader-
 PROPERTIES = ('LoadState','ActiveState','SubState','MainPID','InvocationID','Job','TimeoutStopUSec',
               'KillSignal','KillMode','SendSIGKILL','RuntimeDirectoryPreserve','Result','ExecMainStatus','NRestarts')
 FORMAT = 'tdb-daily-state-v1'
+
+LOCAL_SNAPSHOTS = {
+    'daily': re.compile(r'daily-(\d{8}T\d{6}Z)-[0-9a-f]{32}'),
+    'predeploy': re.compile(r'predeploy-(\d{8}T\d{6}Z)-[0-9a-f]{8}'),
+}
+# Recovery points explicitly retained during the first production cleanup.
+LOCAL_RECOVERY_PINS = frozenset({
+    'daily-20261121T100000Z-9d376e56f77542959cea61d18627b72c',
+    'daily-20261122T100000Z-f110b67b22bc4ddda6c0c1c466c503e6',
+    'predeploy-20261113T182735Z-664d2a1a',
+    'predeploy-20261113T192439Z-9040ed3c',
+    'predeploy-20261113T210719Z-4e63a077',
+    'predeploy-20261113T212540Z-e9dbb391',
+    'predeploy-20261114T013103Z-4d6db5a3',
+})
+
+
+def _snapshot_time(name, kind):
+    match = LOCAL_SNAPSHOTS[kind].fullmatch(name)
+    if match is None:
+        return None
+    try:
+        return datetime.strptime(match[1], '%Y%m%dT%H%M%SZ')
+    except ValueError:
+        return None
+
+
+def _snapshot_mounts():
+    # st_dev alone does not identify bind mounts of the same filesystem.
+    with open('/proc/self/mountinfo', encoding='utf-8', errors='surrogateescape') as source:
+        return {Path(re.sub(r'\\([0-7]{3})', lambda m: chr(int(m[1], 8)), line.split()[4]))
+                for line in source}
+
+
+def _has_snapshot_mount(path, mounts):
+    return any(path == mount or path in mount.parents for mount in mounts)
 
 
 class DailyError(RuntimeError):
@@ -639,7 +675,163 @@ class Controller:
                 raise
             if not completed:
                 return dict(status='ok',code='offsite_queue_empty',completed=completed)
-            return self.report('ok','offsite_queue_verified',completed=completed)
+            return self._after_daily_offsite('offsite_queue_verified',
+                                            deployment_locked=True, completed=completed)
+
+    def _rotation_pins(self):
+        pins = set(LOCAL_RECOVERY_PINS)
+        path = self.config.state_dir/'snapshot-pins.json'
+        if os.path.lexists(path):
+            offsite._private_file(path)
+            names = json.loads(snapshots._read_small(path, 65536))
+            if (not isinstance(names, list) or any(not isinstance(n, str)
+                    or not n or n in ('.','..') or '/' in n or '\\' in n or '\x00' in n
+                    for n in names)):
+                raise DailyError('invalid_snapshot_pins')
+            pins.update(names)
+        for label in ('day','receipt','status'):
+            record = self.store.read(label)
+            if record is None:
+                continue
+            if not isinstance(record, dict):
+                raise DailyError('invalid_snapshot_reference')
+            reference = record.get('snapshot')
+            if reference is not None:
+                if not isinstance(reference, str):
+                    raise DailyError('invalid_snapshot_reference')
+                path = snapshots._absolute(reference)
+                if path.parent != self.config.backup_dir:
+                    raise DailyError('invalid_snapshot_reference')
+                pins.add(path.name)
+        return pins
+
+    def _rotation_gate(self):
+        if (self._owner() is not None or self._held()
+                or any(self.store.read(name) is not None for name in ('pending','candidate'))
+                or os.path.lexists(self.config.socket.with_name(self.config.socket.name+'.committed'))
+                or not self._ready()):
+            raise DailyError('snapshot_rotation_not_idle')
+        # A record left by deployment might contain a recovery reference.
+        if any(path != self.config.deploy_lock for path in self.config.deploy_lock.parent.iterdir()):
+            raise DailyError('unknown_deployment_state')
+
+    def _local_snapshot(self, path, device, mounts):
+        if _has_snapshot_mount(path, mounts):
+            return None
+        try:
+            offsite._private(path)
+            manifest = snapshots._manifest(path)
+            if (manifest['source_database'] != str(self.config.database)
+                    or manifest['roots'] != list(map(str, self.config.html_roots))):
+                return None
+            snapshots._check_tree(path, manifest)
+            entries = [path.lstat()]
+            for entry in manifest['directories']:
+                member = path/entry['path']
+                offsite._private(member)
+                entries.append(member.lstat())
+            files = [(entry['path'], entry['size']) for entry in manifest['files']]
+            for name, size in (*files, ('manifest.json',None), ('COMPLETE',65)):
+                info = offsite._private_file(path/name)
+                if size is not None and info.st_size != size:
+                    return None
+                entries.append(info)
+            if any(info.st_dev != device for info in entries):
+                return None
+            digest = snapshots._read_small(path/'COMPLETE',65).decode('ascii').strip()
+            return digest, tuple(snapshots._stamp(info) for info in entries)
+        except (OSError, ValueError, snapshots.BackupError, offsite.OffsiteError):
+            return None
+
+    def _rotate_local(self, kind, accepted=None):
+        """Called with the daily and deployment leases already held."""
+        if os.name != 'posix' or not shutil.rmtree.avoids_symlink_attacks:
+            raise DailyError('safe_snapshot_removal_unavailable')
+        root = self.config.backup_dir
+        with file_lock(self.config.offsite_state/'offsite.lock'):
+            self._rotation_gate()
+            pinned = self._rotation_pins()
+            journal = self.config.offsite_state/'jobs'
+            records = offsite._jobs(journal) if os.path.lexists(journal) else []
+            verified = {job['manifest_sha256'] for _,job in records
+                        if job['remote'] == self.config.remote and job['state'] in ('verified','pruned')}
+            in_use = {job['manifest_sha256'] for _,job in records
+                      if job['state'] not in ('verified','pruned')}
+            offsite._private(root)
+            with snapshots._open_input(root, directory=True) as fd:
+                opened = os.fstat(fd)
+                mounts = _snapshot_mounts()
+                known = {}
+                for name in os.listdir(fd):
+                    when = _snapshot_time(name, kind)
+                    if when is None:
+                        continue
+                    info = self._local_snapshot(root/name, opened.st_dev, mounts)
+                    if info is not None and (kind != 'daily' or info[0] in verified):
+                        known[name] = (when, info)
+                if kind == 'predeploy':
+                    if accepted not in known:
+                        raise DailyError('accepted_predeploy_snapshot_unconfirmed')
+                    # Later snapshots may belong to another unfinished release.
+                    limit = known[accepted][0]
+                    known = {name: value for name,value in known.items() if value[0] <= limit}
+                newest = sorted(known, key=lambda n: (known[n][0],n), reverse=True)
+                if len(newest) <= 3:
+                    return []
+                retained = []
+                if kind == 'predeploy':
+                    # Predeploy has no on-server offsite proof. Check only
+                    # the copies needed to establish the retention boundary.
+                    for name in newest[:5]:
+                        try:
+                            self.runtime.verify(root/name)
+                        except DailyError:
+                            pinned.add(name)
+                            continue
+                        retained.append(name)
+                        if len(retained) == 3:
+                            break
+                    if accepted not in retained or len(retained) != 3:
+                        raise DailyError('retained_predeploy_verification_failed')
+                else:
+                    retained = newest[:3]
+                if any(self._local_snapshot(root/n, opened.st_dev, _snapshot_mounts())
+                       != known[n][1] for n in retained):
+                    raise DailyError('retained_snapshot_changed')
+                self._rotation_gate()
+                boundary = known[retained[-1]][0]
+                removed = []
+                for name in reversed(newest):
+                    when, info = known[name]
+                    if when >= boundary or name in pinned or info[0] in in_use:
+                        continue
+                    now = root.lstat()
+                    if (now.st_dev, now.st_ino) != (opened.st_dev, opened.st_ino):
+                        raise DailyError('snapshot_root_changed')
+                    if self._local_snapshot(root/name, opened.st_dev, _snapshot_mounts()) != info:
+                        continue
+                    entry = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                    if snapshots._stamp(entry) != info[1][0]:
+                        continue
+                    # Linux rmtree anchors traversal to fd and rejects symlink swaps.
+                    shutil.rmtree(name, dir_fd=fd)
+                    removed.append(name)
+                return removed
+
+    def rotate_predeploy(self, accepted):
+        with self.locked():
+            removed = self._rotate_local('predeploy', accepted)
+            return dict(status='ok', code='predeploy_snapshots_rotated', removed=removed)
+
+    def _after_daily_offsite(self, code, *, deployment_locked=False, **details):
+        lock = nullcontext() if deployment_locked else file_lock(self.config.deploy_lock)
+        try:
+            with lock:
+                rotation = dict(status='ok', removed=self._rotate_local('daily'))
+        except (DailyError, offsite.OffsiteError, snapshots.BackupError, OSError, ValueError):
+            # Preserve verified backup success when local cleanup is inadmissible.
+            rotation = dict(status='deferred')
+        return self.report('ok',code,local_rotation=rotation,**details)
 
     def run(self):
         self.runtime.ensure_supervised()
@@ -676,13 +868,13 @@ class Controller:
                     result = self._finish_offsite()
                     day['state']='ok'
                     self.store.write('day',day)
-                    return self.report('ok','pending_offsite_verified',offsite=result)
+                    return self._after_daily_offsite('pending_offsite_verified',offsite=result)
                 receipt = self.store.read('receipt')
                 if (isinstance(receipt,dict) and receipt.get('snapshot')==day['snapshot']
                         and receipt.get('date')==date and self._ready()):
                     day['state']='ok'
                     self.store.write('day',day)
-                    return self.report('ok','previous_offsite_verified',offsite=receipt['offsite'])
+                    return self._after_daily_offsite('previous_offsite_verified',offsite=receipt['offsite'])
                 return self.report('skipped','day_already_attempted')
             destination = None
             try:
@@ -745,7 +937,7 @@ class Controller:
                 # TDB is running and healthy before any Dropbox work, including retries.
                 result = self._finish_offsite()
                 self.store.write('day',dict(date=date,state='ok',snapshot=str(destination)))
-                return self.report('ok','backup_verified_offsite',snapshot=str(destination),offsite=result)
+                return self._after_daily_offsite('backup_verified_offsite',snapshot=str(destination),offsite=result)
             except BaseException:
                 # SIGKILL/power loss bypass this handler; ExecStopPost/boot recover
                 # use the durable owner record, with the same finite attempt budget.
@@ -763,8 +955,15 @@ class Controller:
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config',required=True,type=Path)
-    parser.add_argument('action',choices=('run','recover','hold','unhold','status','finish-offsite'))
+    parser.add_argument('action',choices=('run','recover','hold','unhold','status','finish-offsite','rotate-predeploy'))
+    parser.add_argument('--accepted-predeploy', metavar='SNAPSHOT',
+                        help='Completed predeploy snapshot from an accepted release')
     args = parser.parse_args(argv)
+    if args.action == 'rotate-predeploy':
+        if args.accepted_predeploy is None or _snapshot_time(args.accepted_predeploy,'predeploy') is None:
+            parser.error('rotate-predeploy requires --accepted-predeploy with the exact accepted snapshot name')
+    elif args.accepted_predeploy is not None:
+        parser.error('--accepted-predeploy is only valid for rotate-predeploy')
     previous = {}
     try:
         path = snapshots._absolute(args.config)
@@ -774,7 +973,11 @@ def main(argv=None):
         for name in ('SIGINT','SIGTERM'):
             sig = getattr(signal,name,None)
             if sig is not None: previous[sig]=signal.signal(sig,lambda *_:runtime.cancel.set())
-        result = getattr(Controller(config,runtime),args.action.replace('-','_'))()
+        controller = Controller(config,runtime)
+        if args.action == 'rotate-predeploy':
+            result = controller.rotate_predeploy(args.accepted_predeploy)
+        else:
+            result = getattr(controller,args.action.replace('-','_'))()
     except Exception as error:
         code = error.code if isinstance(error,DailyError) else 'administrative_operation_failed'
         parser.exit(1,json.dumps(dict(status='error',code=code))+ '\n')
