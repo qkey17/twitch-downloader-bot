@@ -543,6 +543,100 @@ class DailyBackupTests(unittest.TestCase):
         self.assertIsNone(self.controller().store.read('owner'))
         self.assert_originals_unchanged()
 
+    def queued_offsite(self):
+        c = self.controller()
+        older, newer = [
+            {'date': date, 'snapshot': str(self.config.backup_dir/name)}
+            for date, name in [('2026-10-26','older'),('2026-10-27','newer')]
+        ]
+        for copy in (older, newer):
+            self.runtime.snapshot(copy['snapshot'])
+        self.runtime.events.clear()
+        c.store.write('pending', dict(older, baseline=[]))
+        c.store.write('candidate', newer)
+        c.store.write('day', dict(newer, state='failed'))
+        self.runtime.clock = self.runtime.clock.replace(hour=2)
+        return c, older, newer
+
+    def test_finish_offsite_drains_old_queue_without_a_daily_cycle(self):
+        c, older, newer = self.queued_offsite()
+        day = c.store.read('day')
+        result = c.finish_offsite()
+        self.assertEqual('offsite_queue_verified', result['code'])
+        self.assertEqual([older['date'], newer['date']], [x['date'] for x in result['completed']])
+        self.assertEqual([(older['snapshot'], None), (newer['snapshot'], None)], self.runtime.offsite_calls)
+        self.assertIsNone(c.store.read('pending'))
+        self.assertIsNone(c.store.read('candidate'))
+        self.assertEqual(day, c.store.read('day'))
+        self.assertEqual('offsite_queue_empty', c.finish_offsite()['code'])
+        self.assertEqual(result, c.store.read('status'))
+        self.assertEqual(2, len(self.runtime.offsite_calls))
+        self.assertFalse({'prepare', 'commit', 'stop', 'snapshot', 'start'} & set(self.runtime.events))
+
+    def test_finish_offsite_preserves_first_receipt_and_resumes_second_job(self):
+        c, older, newer = self.queued_offsite()
+        send = self.runtime.offsite
+
+        def lose_second_result(path, resume=None):
+            result = send(path, resume)
+            if str(path) == newer['snapshot']:
+                raise daily.DailyError('synthetic_lost_successful_cloud_response')
+            return result
+
+        with patch.object(self.runtime, 'offsite', side_effect=lose_second_result):
+            with self.assertRaisesRegex(daily.DailyError, 'synthetic_lost_successful_cloud_response'):
+                c.finish_offsite()
+        first, second = self.runtime.job_ids()
+        self.assertEqual(first, c.store.read('receipt')['offsite']['id'])
+        self.assertEqual([{'date': older['date'], 'id': first}], c.store.read('status')['completed'])
+        self.assertEqual(newer, c.store.read('candidate'))
+        self.assertEqual(dict(newer, baseline=[first]), c.store.read('pending'))
+
+        self.assertEqual([{'date': newer['date'], 'id': second}], c.finish_offsite()['completed'])
+        self.assertEqual((newer['snapshot'], second), self.runtime.offsite_calls[-1])
+        self.assertEqual([first, second], self.runtime.job_ids())
+        self.assertIsNone(c.store.read('pending'))
+        self.assertIsNone(c.store.read('candidate'))
+        self.assertFalse({'stop', 'snapshot', 'start'} & set(self.runtime.events))
+
+    def test_finish_offsite_refuses_conflicting_maintenance_and_both_locks(self):
+        c, _, newer = self.queued_offsite()
+        for path in (self.config.state_dir/'offsite.lock', self.config.deploy_lock):
+            lock = daily.offsite._lease(path.parent) if path.name == 'offsite.lock' else daily.file_lock(path)
+            with lock, self.assertRaises((daily.DailyError, daily.offsite.OffsiteError)):
+                c.finish_offsite()
+        c.store.write('hold', True)
+        with self.assertRaisesRegex(daily.DailyError, 'manual_hold'):
+            c.finish_offsite()
+        c.store.write('hold', False)
+        owner = dict(token='e'*32, boot_id=self.runtime.boot, invocation='a'*32, pid=401,
+                     attempts=0, snapshot=newer['snapshot'], binding=self.config.binding)
+        c.store.write('owner', owner)
+        with self.assertRaisesRegex(daily.DailyError, 'recovery_required_before_offsite'):
+            c.finish_offsite()
+        c.store.write('owner', None)
+        marker = self.config.socket.with_name(self.config.socket.name+'.committed')
+        marker.touch()
+        with self.assertRaisesRegex(daily.DailyError, 'maintenance_commit_pending'):
+            c.finish_offsite()
+        marker.unlink()
+        self.runtime.committed = True
+        with self.assertRaisesRegex(daily.DailyError, 'bot_not_ready_before_offsite'):
+            c.finish_offsite()
+        self.assertEqual(newer, c.store.read('candidate'))
+        self.assertEqual([], self.runtime.offsite_calls)
+        self.assertNotIn('snapshot', self.runtime.events)
+
+    @unittest.skipUnless(os.name == 'posix', 'requires inherited Unix file descriptors')
+    def test_offsite_child_inherits_both_administration_locks(self):
+        runtime = daily.Runtime(self.config)
+        c = self.controller(runtime)
+        with c.locked():
+            fds = runtime.lock_fds
+            code = 'import os, sys; [os.fstat(int(fd)) for fd in sys.argv[1:]]'
+            runtime.command([sys.executable, '-c', code, *map(str,fds)])
+            self.assertEqual(2, len(fds))
+
     def test_same_day_retry_after_cloud_failure_reuses_snapshot_without_stopping_again(self):
         self.runtime.fail = 'offsite'
         with self.assertRaises(daily.DailyError): self.controller().run()
